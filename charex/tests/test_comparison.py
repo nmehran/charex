@@ -1,7 +1,7 @@
-from charex.numpy.overloads import char
 from charex.tests.support import measure_performance
 from numba import njit
 import numpy as np
+import charex
 
 
 def test_equal():

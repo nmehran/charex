@@ -3,8 +3,16 @@ from numba.extending import overload, register_jitable
 from numba.core import types
 import numpy as np
 
+OPTIONS = dict(
+    jit_options=dict(
+        nogil=True
+    ),
+    prefer_literal=True,
+    strict=True
+)
 
-@overload(np.char.equal, strict=True)
+
+@overload(np.char.equal, **OPTIONS)
 def ov_nb_char_equal(x1, x2):
     """Native Implementation of np.character.equal"""
 
