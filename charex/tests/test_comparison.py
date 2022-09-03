@@ -119,7 +119,7 @@ def main():
 if __name__ == '__main__':
     np.random.seed(1)
 
-    B = np.random.choice([b'hello', b'all', b'worlds'], 10_000).astype('S200')
+    B = np.random.choice([b'hello', b'all', b'worlds'], 10_000)
     C = np.random.choice([b'hello', b'all', b'worlds'], 10_000).astype('S200')
     D = np.random.choice([chr(__i) for __i in range(1, 255)], 10_000)
     E = np.random.choice([chr(__i) for __i in range(1, 255)], 10_000)
