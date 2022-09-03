@@ -50,14 +50,14 @@ def ov_nb_char_equal(x1, x2):
             iy = 0
             if size_chr < size_cmp:
                 for i in range(len_chr):
-                    equal_to[i] = cmp_array[iy + size_chr] == 0 and (
-                            chr_array[ix:ix + size_chr] - cmp_array[iy:iy + size_chr]).sum() == 0
+                    equal_to[i] = (cmp_array[iy + size_chr] == 0
+                                   and (chr_array[ix:ix + size_chr] - cmp_array[iy:iy + size_chr]).sum() == 0)
                     ix += size_chr
                     iy += size_cmp
             elif size_chr > size_cmp:
                 for i in range(len_chr):
-                    equal_to[i] = chr_array[ix + size_cmp] == 0 and (
-                            chr_array[ix:ix + size_cmp] - cmp_array[iy:iy + size_cmp]).sum() == 0
+                    equal_to[i] = (chr_array[ix + size_cmp] == 0
+                                   and (chr_array[ix:ix + size_cmp] - cmp_array[iy:iy + size_cmp]).sum() == 0)
                     ix += size_chr
                     iy += size_cmp
             else:
