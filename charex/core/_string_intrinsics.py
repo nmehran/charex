@@ -28,7 +28,7 @@ def register_strings(x1, x2):
     if isinstance(x1, str):
         len_chr = 1
         size_chr = len(x1)
-        chr_array = array([ord(_c) for _c in x1], dtype='uint8')
+        chr_array = array(list(map(ord, x1)), dtype='uint8')
     else:
         len_chr = x1.size
         size_chr = x1.itemsize // 4
@@ -37,7 +37,7 @@ def register_strings(x1, x2):
     if isinstance(x2, str):
         len_cmp = 1
         size_cmp = len(x2)
-        cmp_array = array([ord(_c) for _c in x2], dtype='uint8')
+        cmp_array = array(list(map(ord, x2)), dtype='uint8')
     else:
         len_cmp = x2.size
         size_cmp = x2.itemsize // 4
