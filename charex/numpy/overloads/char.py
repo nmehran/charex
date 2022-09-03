@@ -1,3 +1,8 @@
+"""
+Numba overloads for numpy.character routines
+Copyright (c) 2022, Nima Mehrani
+"""
+
 from charex.core._string_intrinsics import register_bytes, register_strings
 from numba.extending import overload, register_jitable
 from numba.core import types
@@ -5,10 +10,11 @@ import numpy as np
 
 OPTIONS = dict(
     jit_options=dict(
-        nogil=True
+        cache=True,
+        nogil=True,
     ),
     prefer_literal=True,
-    strict=True
+    strict=True,
 )
 
 
@@ -55,6 +61,8 @@ def ov_nb_char_equal(x1, x2):
                     ix += size_chr
                     iy += size_cmp
             else:
+                if size_chr == 1:
+                    return chr_array == cmp_array
                 for i in range(len_chr):
                     equal_to[i] = (chr_array[ix:ix + size_chr] - cmp_array[ix:ix + size_chr]).sum() == 0
                     ix += size_chr
