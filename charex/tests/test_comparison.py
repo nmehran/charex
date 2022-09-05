@@ -1,3 +1,5 @@
+"""Test numpy character comparison operators"""
+
 from charex.tests.support import measure_performance
 from numba import njit, jit
 import numpy as np
@@ -46,8 +48,39 @@ def test_equal():
         measure_tests(numba_char_equal, np.char.equal, *arguments)
 
 
+def test_not_equal():
+    """Test numpy.char.not_equal"""
+
+    @njit(nogil=True, cache=True)
+    def numba_char_not_equal(x1, x2):
+        return np.char.not_equal(x1, x2)
+
+    print('\ntest_not_equal::Byte Tests:')
+
+    test_arguments = [
+        (B, B), (B, C), (B, D), (D, B), (E, F),
+        (B, b'hello'), (b'hello', B), (D, b'hello'),
+        (b'hello', b'hella'), (b'hello' * 1000, b'hello' * 1000)
+    ]
+    for i, arguments in enumerate(test_arguments):
+        run_tests(numba_char_not_equal, np.char.not_equal, *arguments, __iter=i)
+        measure_tests(numba_char_not_equal, np.char.not_equal, *arguments)
+
+    print('\ntest_not_equal::String Tests:')
+
+    test_arguments = [
+        (S, S), (S, T), (S, U), (U, S), (V, W),
+        (S, 'hello'), ('hello', S), (U, 'hello'),
+        ('hello', 'hella'), ('hello' * 1000, 'hello' * 1000)
+    ]
+    for i, arguments in enumerate(test_arguments):
+        run_tests(numba_char_not_equal, np.char.not_equal, *arguments, __iter=i)
+        measure_tests(numba_char_not_equal, np.char.not_equal, *arguments)
+
+
 def main():
     test_equal()
+    test_not_equal()
 
 
 if __name__ == '__main__':
@@ -56,8 +89,8 @@ if __name__ == '__main__':
     B = np.random.choice([b'hello', b'all', b'worlds'], 10_000)
     C = np.random.choice([b'hello', b'all', b'worlds'], 10_000)
     D = np.random.choice([b'hello', b'all', b'worlds'], 10_000).astype('S200')
-    E = np.random.choice([chr(__i) for __i in range(1, 255)], 10_000)
-    F = np.random.choice([chr(__i) for __i in range(1, 255)], 10_000)
+    E = np.random.choice([chr(__i) for __i in range(1, 256)], 10_000)
+    F = np.random.choice([chr(__i) for __i in range(1, 256)], 10_000)
 
     S = B.astype('U')
     T = C.astype('U')
