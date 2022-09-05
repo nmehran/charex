@@ -1,5 +1,5 @@
 from numba.extending import register_jitable
-from numpy import array, ctypeslib
+from numpy import array, frombuffer
 
 
 @register_jitable
@@ -18,8 +18,8 @@ def register_bytes(x1, x2):
         len_cmp = x2.size
         size_cmp = x2.itemsize
 
-    chr_array = ctypeslib.frombuffer(x1, dtype='uint8')
-    cmp_array = ctypeslib.frombuffer(x2, dtype='uint8')
+    chr_array = frombuffer(x1, dtype='uint8')
+    cmp_array = frombuffer(x2, dtype='uint8')
     return chr_array, cmp_array, len_chr, len_cmp, size_chr, size_cmp
 
 
@@ -32,7 +32,7 @@ def register_strings(x1, x2):
     else:
         len_chr = x1.size
         size_chr = x1.itemsize // 4
-        chr_array = ctypeslib.frombuffer(x1, dtype='uint8')[::4].ravel()
+        chr_array = frombuffer(x1, dtype='uint8')[::4].ravel()
 
     if isinstance(x2, str):
         len_cmp = 1
@@ -41,6 +41,6 @@ def register_strings(x1, x2):
     else:
         len_cmp = x2.size
         size_cmp = x2.itemsize // 4
-        cmp_array = ctypeslib.frombuffer(x2, dtype='uint8')[::4].ravel()
+        cmp_array = frombuffer(x2, dtype='uint8')[::4].ravel()
 
     return chr_array, cmp_array, len_chr, len_cmp, size_chr, size_cmp
