@@ -18,7 +18,7 @@ def measure_tests(implementation, baseline, *args, **kwargs):
     measure_performance(baseline, 10, *args, **kwargs)
 
 
-def test_equal():
+def test_equal(byte_arguments, string_arguments):
     """Test numpy.char.equal"""
 
     @njit(nogil=True, cache=True)
@@ -26,29 +26,17 @@ def test_equal():
         return np.char.equal(x1, x2)
 
     print('\ntest_equal::Byte Tests:')
-
-    test_arguments = [
-        (B, B), (B, C), (B, D), (D, B), (E, F),
-        (B, b'hello'), (b'hello', B), (D, b'hello'),
-        (b'hello', b'hella'), (b'hello'*1000, b'hello'*1000)
-    ]
-    for i, arguments in enumerate(test_arguments):
+    for i, arguments in enumerate(byte_arguments):
         run_tests(numba_char_equal, np.char.equal, *arguments, __iter=i)
         measure_tests(numba_char_equal, np.char.equal, *arguments)
 
     print('\ntest_equal::String Tests:')
-
-    test_arguments = [
-        (S, S), (S, T), (S, U), (U, S), (V, W),
-        (S, 'hello'), ('hello', S), (U, 'hello'),
-        ('hello', 'hella'), ('hello'*1000, 'hello'*1000)
-    ]
-    for i, arguments in enumerate(test_arguments):
+    for i, arguments in enumerate(string_arguments):
         run_tests(numba_char_equal, np.char.equal, *arguments, __iter=i)
         measure_tests(numba_char_equal, np.char.equal, *arguments)
 
 
-def test_not_equal():
+def test_not_equal(byte_arguments, string_arguments):
     """Test numpy.char.not_equal"""
 
     @njit(nogil=True, cache=True)
@@ -56,31 +44,29 @@ def test_not_equal():
         return np.char.not_equal(x1, x2)
 
     print('\ntest_not_equal::Byte Tests:')
-
-    test_arguments = [
-        (B, B), (B, C), (B, D), (D, B), (E, F),
-        (B, b'hello'), (b'hello', B), (D, b'hello'),
-        (b'hello', b'hella'), (b'hello' * 1000, b'hello' * 1000)
-    ]
-    for i, arguments in enumerate(test_arguments):
+    for i, arguments in enumerate(byte_arguments):
         run_tests(numba_char_not_equal, np.char.not_equal, *arguments, __iter=i)
         measure_tests(numba_char_not_equal, np.char.not_equal, *arguments)
 
     print('\ntest_not_equal::String Tests:')
-
-    test_arguments = [
-        (S, S), (S, T), (S, U), (U, S), (V, W),
-        (S, 'hello'), ('hello', S), (U, 'hello'),
-        ('hello', 'hella'), ('hello' * 1000, 'hello' * 1000)
-    ]
-    for i, arguments in enumerate(test_arguments):
+    for i, arguments in enumerate(string_arguments):
         run_tests(numba_char_not_equal, np.char.not_equal, *arguments, __iter=i)
         measure_tests(numba_char_not_equal, np.char.not_equal, *arguments)
 
 
 def main():
-    test_equal()
-    test_not_equal()
+    byte_arguments = [
+        (B, B), (B, C), (B, D), (D, B), (E, F),
+        (B, b'hello'), (b'hello', B), (D, b'hello'),
+        (b'hello', b'hella'), (b'hello' * 1000, b'hello' * 1000)
+    ]
+    string_arguments = [
+        (S, S), (S, T), (S, U), (U, S), (V, W),
+        (S, 'hello'), ('hello', S), (U, 'hello'),
+        ('hello', 'hella'), ('hello' * 1000, 'hello' * 1000)
+    ]
+    test_equal(byte_arguments, string_arguments)
+    test_not_equal(byte_arguments, string_arguments)
 
 
 if __name__ == '__main__':
