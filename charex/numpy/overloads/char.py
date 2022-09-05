@@ -31,6 +31,12 @@ def ov_nb_char_equal(x1, x2):
             return np.array(len(x1) == len(x2) and x1 == x2, dtype='bool')
         return impl
 
+    if isinstance(x1, types.Bytes) and isinstance(x2, types.Bytes):
+        def impl(x1, x2):
+            return np.array((np.frombuffer(x1, dtype='uint8') - np.frombuffer(x2, dtype='uint8')).sum() == 0,
+                            dtype='bool')
+        return impl
+
     @register_jitable
     def character_equal(chr_array, cmp_array, len_chr, len_cmp, size_chr, size_cmp):
         ix = 0
