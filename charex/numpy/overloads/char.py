@@ -39,7 +39,7 @@ def ov_nb_char_equal(x1, x2):
     if isinstance(x1, types.Bytes) and isinstance(x2, types.Bytes):
         def impl(x1, x2):
             return np.array(len(x1) == len(x2)
-                            and (np.frombuffer(x1, dtype='uint8') - np.frombuffer(x2, dtype='uint8')).sum() == 0,
+                            and (np.frombuffer(x1, dtype='int8') - np.frombuffer(x2, dtype='int8')).sum() == 0,
                             dtype='bool')
         return impl
 
@@ -51,7 +51,7 @@ def ov_nb_char_equal(x1, x2):
                 return np.zeros(len_chr, dtype='bool')
             elif size_chr > size_cmp:
                 if size_chr < 30:
-                    cmp_stride = np.zeros(size_chr, dtype='uint8')
+                    cmp_stride = np.zeros(size_chr, dtype='int8')
                     cmp_stride[:size_cmp] = cmp_array
                     return (chr_array.reshape(len_chr, size_chr) - cmp_stride).sum(axis=1) == 0
                 equal_to = np.zeros(len_chr, dtype='bool')
@@ -125,7 +125,7 @@ def ov_nb_char_not_equal(x1, x2):
     if isinstance(x1, types.Bytes) and isinstance(x2, types.Bytes):
         def impl(x1, x2):
             return np.array(len(x1) != len(x2)
-                            or (np.frombuffer(x1, dtype='uint8') - np.frombuffer(x2, dtype='uint8')).sum() != 0,
+                            or (np.frombuffer(x1, dtype='int8') - np.frombuffer(x2, dtype='int8')).sum() != 0,
                             dtype='bool')
         return impl
 
@@ -137,7 +137,7 @@ def ov_nb_char_not_equal(x1, x2):
                 return np.ones(len_chr, dtype='bool')
             elif size_chr > size_cmp:
                 if size_chr < 30:
-                    cmp_stride = np.zeros(size_chr, dtype='uint8')
+                    cmp_stride = np.zeros(size_chr, dtype='int8')
                     cmp_stride[:size_cmp] = cmp_array
                     return (chr_array.reshape(len_chr, size_chr) - cmp_stride).sum(axis=1) != 0
                 not_equal_to = np.zeros(len_chr, dtype='bool')
@@ -222,10 +222,8 @@ def ov_nb_char_greater(x1, x2):
             cmp = chr_array.reshape(len_chr, size_chr)[:, :size_cmp].ravel() - cmp_array
         else:
             cmp = chr_array - cmp_array
-
         if inv:
             cmp = -cmp
-
         size_chr = min(size_chr, size_cmp)
 
         for i in range(len_chr):

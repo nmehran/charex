@@ -1,19 +1,19 @@
 """Test numpy character comparison operators"""
 
 from charex.tests.support import measure_performance
-from numba import njit, jit
+from numba import njit
 import numpy as np
 import charex
 
 
-def run_tests(implementation, baseline, *args, **kwargs):
-    if '__iter' in kwargs:
-        print(__iter := kwargs.pop('__iter'))
+def run_test(implementation, baseline, *args, **kwargs):
+    if '__msg' in kwargs:
+        print(__msg := kwargs.pop('__msg'))
     comparison = implementation(*args, **kwargs) == baseline(*args, **kwargs)
     assert np.all(comparison)
 
 
-def measure_tests(implementation, baseline, *args, **kwargs):
+def measure_test(implementation, baseline, *args, **kwargs):
     measure_performance(implementation, 10, *args, **kwargs)
     measure_performance(baseline, 10, *args, **kwargs)
 
@@ -27,13 +27,13 @@ def test_equal(byte_arguments, string_arguments):
 
     print('\ntest_equal::Byte Tests:')
     for i, arguments in enumerate(byte_arguments):
-        run_tests(numba_char_equal, np.char.equal, *arguments, __iter=i)
-        measure_tests(numba_char_equal, np.char.equal, *arguments)
+        run_test(numba_char_equal, np.char.equal, *arguments, __msg=i)
+        measure_test(numba_char_equal, np.char.equal, *arguments)
 
     print('\ntest_equal::String Tests:')
     for i, arguments in enumerate(string_arguments):
-        run_tests(numba_char_equal, np.char.equal, *arguments, __iter=i)
-        measure_tests(numba_char_equal, np.char.equal, *arguments)
+        run_test(numba_char_equal, np.char.equal, *arguments, __msg=i)
+        measure_test(numba_char_equal, np.char.equal, *arguments)
 
 
 def test_not_equal(byte_arguments, string_arguments):
@@ -45,43 +45,66 @@ def test_not_equal(byte_arguments, string_arguments):
 
     print('\ntest_not_equal::Byte Tests:')
     for i, arguments in enumerate(byte_arguments):
-        run_tests(numba_char_not_equal, np.char.not_equal, *arguments, __iter=i)
-        measure_tests(numba_char_not_equal, np.char.not_equal, *arguments)
+        run_test(numba_char_not_equal, np.char.not_equal, *arguments, __msg=i)
+        measure_test(numba_char_not_equal, np.char.not_equal, *arguments)
 
     print('\ntest_not_equal::String Tests:')
     for i, arguments in enumerate(string_arguments):
-        run_tests(numba_char_not_equal, np.char.not_equal, *arguments, __iter=i)
-        measure_tests(numba_char_not_equal, np.char.not_equal, *arguments)
+        run_test(numba_char_not_equal, np.char.not_equal, *arguments, __msg=i)
+        measure_test(numba_char_not_equal, np.char.not_equal, *arguments)
+
+
+def test_greater(byte_arguments, string_arguments):
+    """Test numpy.char.greater"""
+
+    @njit(nogil=True, cache=True)
+    def numba_char_greater(x1, x2):
+        return np.char.greater(x1, x2)
+
+    print('\ntest_not_equal::Byte Tests:')
+    for i, arguments in enumerate(byte_arguments):
+        run_test(numba_char_greater, np.char.greater, *arguments, __msg=i)
+        measure_test(numba_char_greater, np.char.greater, *arguments)
+
+    print('\ntest_not_equal::String Tests:')
+    for i, arguments in enumerate(string_arguments):
+        run_test(numba_char_greater, np.char.greater, *arguments, __msg=i)
+        measure_test(numba_char_greater, np.char.greater, *arguments)
 
 
 def main():
     byte_arguments = [
-        (B, B), (B, C), (B, D), (D, B), (E, F),
+        (B, B), (B, C), (B, D), (D, B), (E, F), (X.astype('S'), Y.astype('S')),
         (B, b'hello'), (b'hello', B), (D, b'hello'),
         (b'hello', b'hella'), (b'hello' * 1000, b'hello' * 1000)
     ]
     string_arguments = [
-        (S, S), (S, T), (S, U), (U, S), (V, W),
+        (S, S), (S, T), (S, U), (U, S), (V, W), (X, Y),
         (S, 'hello'), ('hello', S), (U, 'hello'),
         ('hello', 'hella'), ('hello' * 1000, 'hello' * 1000)
     ]
     test_equal(byte_arguments, string_arguments)
     test_not_equal(byte_arguments, string_arguments)
+    test_greater(byte_arguments, string_arguments)
 
 
 if __name__ == '__main__':
     np.random.seed(1)
 
     B = np.random.choice([b'hello', b'all', b'worlds'], 10_000)
-    C = np.random.choice([b'hello', b'all', b'worlds'], 10_000)
+    C = np.random.choice([b'hello', b'\tFrom', b'all', b'Around', b'\nthe' b' World'], 10_000)
     D = np.random.choice([b'hello', b'all', b'worlds'], 10_000).astype('S200')
-    E = np.random.choice([chr(__i) for __i in range(1, 256)], 10_000)
-    F = np.random.choice([chr(__i) for __i in range(1, 256)], 10_000)
+    E = np.random.choice([chr(__i) for __i in range(1, 128)], 10_000)
+    F = np.random.choice(E, 10_000)
 
     S = B.astype('U')
     T = C.astype('U')
     U = D.astype('U')
     V = E.astype('U')
     W = F.astype('U')
+
+    X = np.random.choice([''.join([chr(np.random.randint(32, 128)) for _ in range(np.random.randint(1, 50))])
+                          for _ in range(100)], 10_000)
+    Y = np.random.choice(X, 10_000)
 
     main()
