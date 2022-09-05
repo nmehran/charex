@@ -33,21 +33,28 @@ def ov_nb_char_equal(x1, x2):
 
     @register_jitable
     def character_equal(chr_array, cmp_array, len_chr, len_cmp, size_chr, size_cmp):
-        equal_to = np.zeros(len_chr, dtype='bool')
         ix = 0
         if len_cmp == 1:
             if size_chr < size_cmp:
-                return equal_to
+                return np.zeros(len_chr, dtype='bool')
             elif size_chr > size_cmp:
+                if size_chr < 30:
+                    cmp_stride = np.zeros(size_chr, dtype='uint8')
+                    cmp_stride[:size_cmp] = cmp_array
+                    return (chr_array.reshape(len_chr, size_chr) - cmp_stride).sum(axis=1) == 0
+                equal_to = np.zeros(len_chr, dtype='bool')
                 for i in range(len_chr):
-                    equal_to[i] = chr_array[ix + size_cmp] == 0 and (chr_array[ix:ix + size_cmp] - cmp_array).sum() == 0
+                    equal_to[i] = chr_array[ix + size_cmp] == 0 and (cmp_array - chr_array[ix:ix + size_cmp]).sum() == 0
                     ix += size_chr
             else:
-                for i in range(len_chr):
-                    equal_to[i] = (chr_array[ix:ix + size_chr] - cmp_array).sum() == 0
-                    ix += size_chr
+                return (chr_array.reshape(len_chr, size_chr) - cmp_array).sum(axis=1) == 0
         elif len_chr == len_cmp:
+            if size_chr == size_cmp:
+                if size_chr == 1:
+                    return chr_array == cmp_array
+                return (chr_array - cmp_array).reshape(-1, size_chr).sum(axis=1) == 0
             iy = 0
+            equal_to = np.zeros(len_chr, dtype='bool')
             if size_chr < size_cmp:
                 for i in range(len_chr):
                     equal_to[i] = (cmp_array[iy + size_chr] == 0
@@ -60,12 +67,6 @@ def ov_nb_char_equal(x1, x2):
                                    and (chr_array[ix:ix + size_cmp] - cmp_array[iy:iy + size_cmp]).sum() == 0)
                     ix += size_chr
                     iy += size_cmp
-            else:
-                if size_chr == 1:
-                    return chr_array == cmp_array
-                for i in range(len_chr):
-                    equal_to[i] = (chr_array[ix:ix + size_chr] - cmp_array[ix:ix + size_chr]).sum() == 0
-                    ix += size_chr
         else:
             msg = 'shape mismatch: objects cannot be broadcast to a single shape.  Mismatch is between arg 0 and arg 1.'
             raise ValueError(msg)
