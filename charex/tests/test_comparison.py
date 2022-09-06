@@ -90,6 +90,42 @@ def test_greater_equal(byte_arguments, string_arguments):
         measure_test(numba_char_greater_equal, np.char.greater_equal, *arguments)
 
 
+def test_less(byte_arguments, string_arguments):
+    """Test numpy.char.less"""
+
+    @njit(nogil=True, cache=True)
+    def numba_char_less(x1, x2):
+        return np.char.less(x1, x2)
+
+    print('\ntest_less::Byte Tests:')
+    for i, arguments in enumerate(byte_arguments):
+        run_test(numba_char_less, np.char.less, *arguments, __msg=i)
+        measure_test(numba_char_less, np.char.less, *arguments)
+
+    print('\ntest_less::String Tests:')
+    for i, arguments in enumerate(string_arguments):
+        run_test(numba_char_less, np.char.less, *arguments, __msg=i)
+        measure_test(numba_char_less, np.char.less, *arguments)
+
+
+def test_less_equal(byte_arguments, string_arguments):
+    """Test numpy.char.less_equal"""
+
+    @njit(nogil=True, cache=True)
+    def numba_char_less_equal(x1, x2):
+        return np.char.less_equal(x1, x2)
+
+    print('\ntest_less_equal::Byte Tests:')
+    for i, arguments in enumerate(byte_arguments):
+        run_test(numba_char_less_equal, np.char.less_equal, *arguments, __msg=i)
+        measure_test(numba_char_less_equal, np.char.less_equal, *arguments)
+
+    print('\ntest_less_equal::String Tests:')
+    for i, arguments in enumerate(string_arguments):
+        run_test(numba_char_less_equal, np.char.less_equal, *arguments, __msg=i)
+        measure_test(numba_char_less_equal, np.char.less_equal, *arguments)
+
+
 def main():
     byte_arguments = [
         (B, B), (B, C), (B, D), (D, B), (E, F), (X.astype('S'), Y.astype('S')),
@@ -105,6 +141,8 @@ def main():
     test_not_equal(byte_arguments, string_arguments)
     test_greater(byte_arguments, string_arguments)
     test_greater_equal(byte_arguments, string_arguments)
+    test_less(byte_arguments, string_arguments)
+    test_less_equal(byte_arguments, string_arguments)
 
 
 if __name__ == '__main__':
@@ -122,7 +160,8 @@ if __name__ == '__main__':
     V = E.astype('U')
     W = F.astype('U')
 
-    X = np.random.choice([''.join([chr(np.random.randint(32, 127)) for _ in range(np.random.randint(1, 50))])
+    # With an efficient implementation of whitespace removal, trailing \t\n\r\f\v characters can be supported.
+    X = np.random.choice([''.join([chr(np.random.randint(33, 127)) for _ in range(np.random.randint(1, 50))])
                           for _ in range(100)], 10_000)
     Y = np.random.choice(X, 10_000)
 

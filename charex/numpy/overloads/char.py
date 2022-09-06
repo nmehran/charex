@@ -272,3 +272,80 @@ def ov_nb_char_greater_equal(x1, x2):
             return greater_equal(*register_type(x2), *register_type(x1), True)
         return greater_equal(*register_type(x1), *register_type(x2))
     return impl
+
+
+@overload(np.char.less, **OPTIONS)
+def ov_nb_char_less(x1, x2):
+    """Native Implementation of np.char.less"""
+
+    accepted_types = (types.Array, types.Bytes, types.UnicodeType)
+    if not isinstance(x1, accepted_types) or not isinstance(x2, accepted_types):
+        raise TypeError('comparison of non-string arrays')
+
+    @register_jitable(**JIT_OPTIONS)
+    def less(chr_array, len_chr, size_chr, cmp_array, len_cmp, size_cmp, inv=False):
+        cmp, size_cmp = set_comparison(chr_array, len_chr, size_chr, cmp_array, len_cmp, size_cmp, inv)
+        less_than = np.zeros(len_chr, dtype='bool')
+        size_chr = min(size_chr, size_cmp)
+        stride = 0
+        for i in range(len_chr):
+            for j in range(size_chr):
+                cmp_ord = cmp[stride + j]
+                if cmp_ord == 0:
+                    continue
+                if cmp_ord > 0:
+                    break
+                less_than[i] = 1
+                break
+            stride += size_chr
+        return less_than
+
+    register_type, cmp_type = register_types(x1, x2)
+    if not register_type:
+        def impl(x1, x2):
+            raise NotImplementedError('NotImplemented')
+        return impl
+
+    def impl(x1, x2):
+        if isinstance(x1, cmp_type) and not isinstance(x2, cmp_type):
+            return less(*register_type(x2), *register_type(x1), True)
+        return less(*register_type(x1), *register_type(x2))
+    return impl
+
+
+@overload(np.char.less_equal, **OPTIONS)
+def ov_nb_char_less_equal(x1, x2):
+    """Native Implementation of np.char.less_equal"""
+
+    accepted_types = (types.Array, types.Bytes, types.UnicodeType)
+    if not isinstance(x1, accepted_types) or not isinstance(x2, accepted_types):
+        raise TypeError('comparison of non-string arrays')
+
+    @register_jitable(**JIT_OPTIONS)
+    def less_equal(chr_array, len_chr, size_chr, cmp_array, len_cmp, size_cmp, inv=False):
+        cmp, size_cmp = set_comparison(chr_array, len_chr, size_chr, cmp_array, len_cmp, size_cmp, inv)
+        less_equal_than = np.ones(len_chr, dtype='bool')
+        size_chr = min(size_chr, size_cmp)
+        stride = 0
+        for i in range(len_chr):
+            for j in range(size_chr):
+                cmp_ord = cmp[stride + j]
+                if cmp_ord < 0:
+                    break
+                if cmp_ord > 0:
+                    less_equal_than[i] = 0
+                    break
+            stride += size_chr
+        return less_equal_than
+
+    register_type, cmp_type = register_types(x1, x2)
+    if not register_type:
+        def impl(x1, x2):
+            raise NotImplementedError('NotImplemented')
+        return impl
+
+    def impl(x1, x2):
+        if isinstance(x1, cmp_type) and not isinstance(x2, cmp_type):
+            return less_equal(*register_type(x2), *register_type(x1), True)
+        return less_equal(*register_type(x1), *register_type(x2))
+    return impl
