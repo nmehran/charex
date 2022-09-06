@@ -1,46 +1,29 @@
+from charex.core import JIT_OPTIONS
 from numba.extending import register_jitable
-from numpy import array, frombuffer
+from numpy import empty, frombuffer
 
 
-@register_jitable
-def register_bytes(x1, x2):
-    if isinstance(x1, bytes):
+@register_jitable(**JIT_OPTIONS)
+def register_bytes(b):
+    if isinstance(b, bytes):
         len_chr = 1
-        size_chr = len(x1)
+        size_chr = len(b)
     else:
-        len_chr = x1.size
-        size_chr = x1.itemsize
-
-    if isinstance(x2, bytes):
-        len_cmp = 1
-        size_cmp = len(x2)
-    else:
-        len_cmp = x2.size
-        size_cmp = x2.itemsize
-
-    chr_array = frombuffer(x1, dtype='int8')
-    cmp_array = frombuffer(x2, dtype='int8')
-    return chr_array, cmp_array, len_chr, len_cmp, size_chr, size_cmp
+        len_chr = b.size
+        size_chr = b.itemsize
+    return frombuffer(b, dtype='int8'), len_chr, size_chr
 
 
-@register_jitable
-def register_strings(x1, x2):
-    if isinstance(x1, str):
+@register_jitable(**JIT_OPTIONS)
+def register_strings(s):
+    if isinstance(s, str):
         len_chr = 1
-        size_chr = len(x1)
-        chr_array = array(list(map(ord, x1)), dtype='int8')
+        size_chr = len(s)
+        chr_array = empty(size_chr, dtype='int8')
+        for i in range(size_chr):
+            chr_array[i] = ord(s[i])
     else:
-        len_chr = x1.size
-        size_chr = x1.itemsize // 4
-        chr_array = frombuffer(x1, dtype='int8')[::4].ravel()
-
-    if isinstance(x2, str):
-        len_cmp = 1
-        size_cmp = len(x2)
-        cmp_array = array(list(map(ord, x2)), dtype='int8')
-    else:
-        len_cmp = x2.size
-        size_cmp = x2.itemsize // 4
-        cmp_array = frombuffer(x2, dtype='int8')[::4].ravel()
-
-    return chr_array, cmp_array, len_chr, len_cmp, size_chr, size_cmp
+        len_chr = s.size
+        size_chr = s.itemsize // 4
+        chr_array = frombuffer(s, dtype='int8')[::4].ravel()
+    return chr_array, len_chr, size_chr
