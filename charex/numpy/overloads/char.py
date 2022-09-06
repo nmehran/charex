@@ -10,6 +10,45 @@ from numba.core import types
 import numpy as np
 
 
+@register_jitable(**JIT_OPTIONS)
+def register_types(x1, x2):
+    byte_types = (types.Bytes, types.CharSeq)
+    str_types = (types.UnicodeType, types.UnicodeCharSeq)
+
+    x1_type = x1.dtype if isinstance(x1, types.Array) else x1
+    x2_type = x2.dtype if isinstance(x2, types.Array) else x2
+
+    register_type = cmp_type = None
+    if isinstance(x1_type, byte_types) and isinstance(x2_type, byte_types):
+        register_type = register_bytes
+        cmp_type = bytes
+    elif isinstance(x1_type, str_types) and isinstance(x2_type, str_types):
+        register_type = register_strings
+        cmp_type = str
+    return register_type, cmp_type
+
+
+@register_jitable(**JIT_OPTIONS)
+def set_comparison(chr_array, len_chr, size_chr, cmp_array, len_cmp, size_cmp, inv):
+    if len_cmp > 1 and len_cmp != len_chr:
+        msg = 'shape mismatch: objects cannot be broadcast to a single shape.  Mismatch is between arg 0 and arg 1.'
+        raise ValueError(msg)
+    if len_cmp == 1 and len_chr > 1:
+        cmp_stride = np.zeros(size_chr, dtype='int8')
+        cmp_stride[:size_cmp] = cmp_array
+        cmp = (chr_array.reshape(len_chr, size_chr) - cmp_stride).ravel()
+        size_cmp = size_chr
+    elif size_chr < size_cmp:
+        cmp = chr_array - cmp_array.reshape(len_chr, size_cmp)[:, :size_chr].ravel()
+    elif size_chr > size_cmp:
+        cmp = chr_array.reshape(len_chr, size_chr)[:, :size_cmp].ravel() - cmp_array
+    else:
+        cmp = chr_array - cmp_array
+    if inv:
+        cmp = -cmp
+    return cmp, size_cmp
+
+
 @overload(np.char.equal, **OPTIONS)
 def ov_nb_char_equal(x1, x2):
     """Native Implementation of np.char.equal"""
@@ -71,19 +110,8 @@ def ov_nb_char_equal(x1, x2):
             raise ValueError(msg)
         return equal_to
 
-    byte_types = (types.Bytes, types.CharSeq)
-    str_types = (types.UnicodeType, types.UnicodeCharSeq)
-
-    x1_type = x1.dtype if isinstance(x1, types.Array) else x1
-    x2_type = x2.dtype if isinstance(x2, types.Array) else x2
-
-    if isinstance(x1_type, byte_types) and isinstance(x2_type, byte_types):
-        register_type = register_bytes
-        cmp_type = bytes
-    elif isinstance(x1_type, str_types) and isinstance(x2_type, str_types):
-        register_type = register_strings
-        cmp_type = str
-    else:
+    register_type, cmp_type = register_types(x1, x2)
+    if not register_type:
         def impl(x1, x2):
             raise NotImplementedError('NotImplemented')
         return impl
@@ -92,7 +120,6 @@ def ov_nb_char_equal(x1, x2):
         if isinstance(x1, cmp_type) and not isinstance(x2, cmp_type):
             return equal(*register_type(x2), *register_type(x1))
         return equal(*register_type(x1), *register_type(x2))
-
     return impl
 
 
@@ -157,19 +184,8 @@ def ov_nb_char_not_equal(x1, x2):
             raise ValueError(msg)
         return not_equal_to
 
-    byte_types = (types.Bytes, types.CharSeq)
-    str_types = (types.UnicodeType, types.UnicodeCharSeq)
-
-    x1_type = x1.dtype if isinstance(x1, types.Array) else x1
-    x2_type = x2.dtype if isinstance(x2, types.Array) else x2
-
-    if isinstance(x1_type, byte_types) and isinstance(x2_type, byte_types):
-        register_type = register_bytes
-        cmp_type = bytes
-    elif isinstance(x1_type, str_types) and isinstance(x2_type, str_types):
-        register_type = register_strings
-        cmp_type = str
-    else:
+    register_type, cmp_type = register_types(x1, x2)
+    if not register_type:
         def impl(x1, x2):
             raise NotImplementedError('NotImplemented')
         return impl
@@ -178,7 +194,6 @@ def ov_nb_char_not_equal(x1, x2):
         if isinstance(x1, cmp_type) and not isinstance(x2, cmp_type):
             return not_equal(*register_type(x2), *register_type(x1))
         return not_equal(*register_type(x1), *register_type(x2))
-
     return impl
 
 
@@ -192,24 +207,7 @@ def ov_nb_char_greater(x1, x2):
 
     @register_jitable(**JIT_OPTIONS)
     def greater(chr_array, len_chr, size_chr, cmp_array, len_cmp, size_cmp, inv=False):
-        if len_cmp > 1 and len_cmp != len_chr:
-            msg = 'shape mismatch: objects cannot be broadcast to a single shape.  Mismatch is between arg 0 and arg 1.'
-            raise ValueError(msg)
-
-        if len_cmp == 1 and len_chr > 1:
-            cmp_stride = np.zeros(size_chr, dtype='int8')
-            cmp_stride[:size_cmp] = cmp_array
-            cmp = (chr_array.reshape(len_chr, size_chr) - cmp_stride).ravel()
-            size_cmp = size_chr
-        elif size_chr < size_cmp:
-            cmp = chr_array - cmp_array.reshape(len_chr, size_cmp)[:, :size_chr].ravel()
-        elif size_chr > size_cmp:
-            cmp = chr_array.reshape(len_chr, size_chr)[:, :size_cmp].ravel() - cmp_array
-        else:
-            cmp = chr_array - cmp_array
-        if inv:
-            cmp = -cmp
-
+        cmp, size_cmp = set_comparison(chr_array, len_chr, size_chr, cmp_array, len_cmp, size_cmp, inv)
         greater_than = np.zeros(len_chr, dtype='bool')
         size_chr = min(size_chr, size_cmp)
         stride = 0
@@ -225,19 +223,8 @@ def ov_nb_char_greater(x1, x2):
             stride += size_chr
         return greater_than
 
-    byte_types = (types.Bytes, types.CharSeq)
-    str_types = (types.UnicodeType, types.UnicodeCharSeq)
-
-    x1_type = x1.dtype if isinstance(x1, types.Array) else x1
-    x2_type = x2.dtype if isinstance(x2, types.Array) else x2
-
-    if isinstance(x1_type, byte_types) and isinstance(x2_type, byte_types):
-        register_type = register_bytes
-        cmp_type = bytes
-    elif isinstance(x1_type, str_types) and isinstance(x2_type, str_types):
-        register_type = register_strings
-        cmp_type = str
-    else:
+    register_type, cmp_type = register_types(x1, x2)
+    if not register_type:
         def impl(x1, x2):
             raise NotImplementedError('NotImplemented')
         return impl
@@ -246,7 +233,6 @@ def ov_nb_char_greater(x1, x2):
         if isinstance(x1, cmp_type) and not isinstance(x2, cmp_type):
             return greater(*register_type(x2), *register_type(x1), True)
         return greater(*register_type(x1), *register_type(x2))
-
     return impl
 
 
@@ -260,24 +246,7 @@ def ov_nb_char_greater_equal(x1, x2):
 
     @register_jitable(**JIT_OPTIONS)
     def greater_equal(chr_array, len_chr, size_chr, cmp_array, len_cmp, size_cmp, inv=False):
-        if len_cmp > 1 and len_cmp != len_chr:
-            msg = 'shape mismatch: objects cannot be broadcast to a single shape.  Mismatch is between arg 0 and arg 1.'
-            raise ValueError(msg)
-
-        if len_cmp == 1 and len_chr > 1:
-            cmp_stride = np.zeros(size_chr, dtype='int8')
-            cmp_stride[:size_cmp] = cmp_array
-            cmp = (chr_array.reshape(len_chr, size_chr) - cmp_stride).ravel()
-            size_cmp = size_chr
-        elif size_chr < size_cmp:
-            cmp = chr_array - cmp_array.reshape(len_chr, size_cmp)[:, :size_chr].ravel()
-        elif size_chr > size_cmp:
-            cmp = chr_array.reshape(len_chr, size_chr)[:, :size_cmp].ravel() - cmp_array
-        else:
-            cmp = chr_array - cmp_array
-        if inv:
-            cmp = -cmp
-
+        cmp, size_cmp = set_comparison(chr_array, len_chr, size_chr, cmp_array, len_cmp, size_cmp, inv)
         greater_equal_than = np.ones(len_chr, dtype='bool')
         size_chr = min(size_chr, size_cmp)
         stride = 0
@@ -292,19 +261,8 @@ def ov_nb_char_greater_equal(x1, x2):
             stride += size_chr
         return greater_equal_than
 
-    byte_types = (types.Bytes, types.CharSeq)
-    str_types = (types.UnicodeType, types.UnicodeCharSeq)
-
-    x1_type = x1.dtype if isinstance(x1, types.Array) else x1
-    x2_type = x2.dtype if isinstance(x2, types.Array) else x2
-
-    if isinstance(x1_type, byte_types) and isinstance(x2_type, byte_types):
-        register_type = register_bytes
-        cmp_type = bytes
-    elif isinstance(x1_type, str_types) and isinstance(x2_type, str_types):
-        register_type = register_strings
-        cmp_type = str
-    else:
+    register_type, cmp_type = register_types(x1, x2)
+    if not register_type:
         def impl(x1, x2):
             raise NotImplementedError('NotImplemented')
         return impl
@@ -313,5 +271,4 @@ def ov_nb_char_greater_equal(x1, x2):
         if isinstance(x1, cmp_type) and not isinstance(x2, cmp_type):
             return greater_equal(*register_type(x2), *register_type(x1), True)
         return greater_equal(*register_type(x1), *register_type(x2))
-
     return impl
