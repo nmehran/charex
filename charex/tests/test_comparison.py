@@ -61,15 +61,33 @@ def test_greater(byte_arguments, string_arguments):
     def numba_char_greater(x1, x2):
         return np.char.greater(x1, x2)
 
-    print('\ntest_not_equal::Byte Tests:')
+    print('\ntest_greater::Byte Tests:')
     for i, arguments in enumerate(byte_arguments):
         run_test(numba_char_greater, np.char.greater, *arguments, __msg=i)
         measure_test(numba_char_greater, np.char.greater, *arguments)
 
-    print('\ntest_not_equal::String Tests:')
+    print('\ntest_greater::String Tests:')
     for i, arguments in enumerate(string_arguments):
         run_test(numba_char_greater, np.char.greater, *arguments, __msg=i)
         measure_test(numba_char_greater, np.char.greater, *arguments)
+
+
+def test_greater_equal(byte_arguments, string_arguments):
+    """Test numpy.char.greater_equal"""
+
+    @njit(nogil=True, cache=True)
+    def numba_char_greater_equal(x1, x2):
+        return np.char.greater_equal(x1, x2)
+
+    print('\ntest_greater_equal::Byte Tests:')
+    for i, arguments in enumerate(byte_arguments):
+        run_test(numba_char_greater_equal, np.char.greater_equal, *arguments, __msg=i)
+        measure_test(numba_char_greater_equal, np.char.greater_equal, *arguments)
+
+    print('\ntest_greater_equal::String Tests:')
+    for i, arguments in enumerate(string_arguments):
+        run_test(numba_char_greater_equal, np.char.greater_equal, *arguments, __msg=i)
+        measure_test(numba_char_greater_equal, np.char.greater_equal, *arguments)
 
 
 def main():
@@ -86,6 +104,7 @@ def main():
     test_equal(byte_arguments, string_arguments)
     test_not_equal(byte_arguments, string_arguments)
     test_greater(byte_arguments, string_arguments)
+    test_greater_equal(byte_arguments, string_arguments)
 
 
 if __name__ == '__main__':
@@ -103,7 +122,7 @@ if __name__ == '__main__':
     V = E.astype('U')
     W = F.astype('U')
 
-    X = np.random.choice([''.join([chr(np.random.randint(32, 128)) for _ in range(np.random.randint(1, 50))])
+    X = np.random.choice([''.join([chr(np.random.randint(32, 127)) for _ in range(np.random.randint(1, 50))])
                           for _ in range(100)], 10_000)
     Y = np.random.choice(X, 10_000)
 

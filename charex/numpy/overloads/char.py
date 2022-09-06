@@ -210,7 +210,7 @@ def ov_nb_char_greater(x1, x2):
         if inv:
             cmp = -cmp
 
-        greater_than = np.zeros(len_chr, dtype='int8')
+        greater_than = np.zeros(len_chr, dtype='bool')
         size_chr = min(size_chr, size_cmp)
         stride = 0
         for i in range(len_chr):
@@ -278,13 +278,16 @@ def ov_nb_char_greater_equal(x1, x2):
         if inv:
             cmp = -cmp
 
-        greater_equal_than = np.zeros(len_chr, dtype='int8')
+        greater_equal_than = np.ones(len_chr, dtype='bool')
         size_chr = min(size_chr, size_cmp)
         stride = 0
         for i in range(len_chr):
             for j in range(size_chr):
-                if cmp[stride + j] != 0:
-                    greater_equal_than[i] = ~cmp[stride + j] < 0
+                cmp_ord = cmp[stride + j]
+                if cmp_ord > 0:
+                    break
+                if cmp_ord < 0:
+                    greater_equal_than[i] = 0
                     break
             stride += size_chr
         return greater_equal_than
