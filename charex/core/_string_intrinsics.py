@@ -1,9 +1,10 @@
 from charex.core import JIT_OPTIONS
 from numba.extending import register_jitable
-from numpy import empty, frombuffer
+from numba import objmode
+from numpy import frombuffer
 
 
-@register_jitable(**JIT_OPTIONS)
+@register_jitable('int8[::1](int8[::1])', **JIT_OPTIONS)
 def register_bytes(b):
     if isinstance(b, bytes):
         len_chr = 1
@@ -16,12 +17,12 @@ def register_bytes(b):
 
 @register_jitable(**JIT_OPTIONS)
 def register_strings(s):
+    """Restricted to ASCII encoding (expandable with performance penalty)."""
     if isinstance(s, str):
         len_chr = 1
         size_chr = len(s)
-        chr_array = empty(size_chr, dtype='int8')
-        for i in range(size_chr):
-            chr_array[i] = ord(s[i])
+        with objmode(chr_array='int8[::1]'):
+            chr_array = frombuffer(bytes(s, 'ASCII'), dtype='int8')
     else:
         len_chr = s.size
         size_chr = s.itemsize // 4
