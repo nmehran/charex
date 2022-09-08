@@ -18,134 +18,58 @@ def measure_test(implementation, baseline, *args, **kwargs):
     measure_performance(baseline, 10, *args, **kwargs)
 
 
-def test_equal(byte_arguments, string_arguments):
-    """Test numpy.char.equal"""
-
-    @njit(nogil=True, cache=True)
-    def numba_char_equal(x1, x2):
-        return np.char.equal(x1, x2)
-
-    print('\ntest_equal::Byte Tests:')
-    for i, arguments in enumerate(byte_arguments):
-        run_test(numba_char_equal, np.char.equal, *arguments, __msg=i)
-        measure_test(numba_char_equal, np.char.equal, *arguments)
-
-    print('\ntest_equal::String Tests:')
-    for i, arguments in enumerate(string_arguments):
-        run_test(numba_char_equal, np.char.equal, *arguments, __msg=i)
-        measure_test(numba_char_equal, np.char.equal, *arguments)
+def test_and_measure(func, baseline, *args, **kwargs):
+    if '__msg' in kwargs:
+        print(f"\n{func.__name__!r}::{kwargs.pop('__msg')}:")
+    for i, arguments in enumerate(*args):
+        run_test(func, baseline, *arguments, __msg=i)
+        measure_test(func, baseline, *arguments)
+    for i, arguments in enumerate(*args):
+        run_test(func, baseline, *arguments[::-1], __msg=i)
+        measure_test(func, baseline, *arguments[::-1])
 
 
-def test_not_equal(byte_arguments, string_arguments):
-    """Test numpy.char.not_equal"""
-
-    @njit(nogil=True, cache=True)
-    def numba_char_not_equal(x1, x2):
-        return np.char.not_equal(x1, x2)
-
-    print('\ntest_not_equal::Byte Tests:')
-    for i, arguments in enumerate(byte_arguments):
-        run_test(numba_char_not_equal, np.char.not_equal, *arguments, __msg=i)
-        measure_test(numba_char_not_equal, np.char.not_equal, *arguments)
-
-    print('\ntest_not_equal::String Tests:')
-    for i, arguments in enumerate(string_arguments):
-        run_test(numba_char_not_equal, np.char.not_equal, *arguments, __msg=i)
-        measure_test(numba_char_not_equal, np.char.not_equal, *arguments)
+def test_char_function(func, baseline, byte_arguments, string_arguments):
+    test_and_measure(func, baseline, byte_arguments, __msg='Byte Tests')
+    test_and_measure(func, baseline, string_arguments, __msg='String Tests')
 
 
-def test_greater(byte_arguments, string_arguments):
-    """Test numpy.char.greater"""
-
-    @njit(nogil=True, cache=True)
-    def numba_char_greater(x1, x2):
-        return np.char.greater(x1, x2)
-
-    print('\ntest_greater::Byte Tests:')
-    for i, arguments in enumerate(byte_arguments):
-        run_test(numba_char_greater, np.char.greater, *arguments, __msg=i)
-        measure_test(numba_char_greater, np.char.greater, *arguments)
-
-    print('\ntest_greater::String Tests:')
-    for i, arguments in enumerate(string_arguments):
-        run_test(numba_char_greater, np.char.greater, *arguments, __msg=i)
-        measure_test(numba_char_greater, np.char.greater, *arguments)
+@njit(nogil=True, cache=True)
+def numba_char_equal(x1, x2):
+    return np.char.equal(x1, x2)
 
 
-def test_greater_equal(byte_arguments, string_arguments):
-    """Test numpy.char.greater_equal"""
-
-    @njit(nogil=True, cache=True)
-    def numba_char_greater_equal(x1, x2):
-        return np.char.greater_equal(x1, x2)
-
-    print('\ntest_greater_equal::Byte Tests:')
-    for i, arguments in enumerate(byte_arguments):
-        run_test(numba_char_greater_equal, np.char.greater_equal, *arguments, __msg=i)
-        measure_test(numba_char_greater_equal, np.char.greater_equal, *arguments)
-
-    print('\ntest_greater_equal::String Tests:')
-    for i, arguments in enumerate(string_arguments):
-        run_test(numba_char_greater_equal, np.char.greater_equal, *arguments, __msg=i)
-        measure_test(numba_char_greater_equal, np.char.greater_equal, *arguments)
+@njit(nogil=True, cache=True)
+def numba_char_not_equal(x1, x2):
+    return np.char.not_equal(x1, x2)
 
 
-def test_less(byte_arguments, string_arguments):
-    """Test numpy.char.less"""
-
-    @njit(nogil=True, cache=True)
-    def numba_char_less(x1, x2):
-        return np.char.less(x1, x2)
-
-    print('\ntest_less::Byte Tests:')
-    for i, arguments in enumerate(byte_arguments):
-        run_test(numba_char_less, np.char.less, *arguments, __msg=i)
-        measure_test(numba_char_less, np.char.less, *arguments)
-
-    print('\ntest_less::String Tests:')
-    for i, arguments in enumerate(string_arguments):
-        run_test(numba_char_less, np.char.less, *arguments, __msg=i)
-        measure_test(numba_char_less, np.char.less, *arguments)
+@njit(nogil=True, cache=True)
+def numba_char_greater(x1, x2):
+    return np.char.greater(x1, x2)
 
 
-def test_less_equal(byte_arguments, string_arguments):
-    """Test numpy.char.less_equal"""
+@njit(nogil=True, cache=True)
+def numba_char_greater_equal(x1, x2):
+    return np.char.greater_equal(x1, x2)
 
-    @njit(nogil=True, cache=True)
-    def numba_char_less_equal(x1, x2):
-        return np.char.less_equal(x1, x2)
 
-    print('\ntest_less_equal::Byte Tests:')
-    for i, arguments in enumerate(byte_arguments):
-        run_test(numba_char_less_equal, np.char.less_equal, *arguments, __msg=i)
-        measure_test(numba_char_less_equal, np.char.less_equal, *arguments)
+@njit(nogil=True, cache=True)
+def numba_char_less(x1, x2):
+    return np.char.less(x1, x2)
 
-    print('\ntest_less_equal::String Tests:')
-    for i, arguments in enumerate(string_arguments):
-        run_test(numba_char_less_equal, np.char.less_equal, *arguments, __msg=i)
-        measure_test(numba_char_less_equal, np.char.less_equal, *arguments)
+
+@njit(nogil=True, cache=True)
+def numba_char_less_equal(x1, x2):
+    return np.char.less_equal(x1, x2)
+
+
+@njit(nogil=True, cache=True)
+def compare_chararrays(a1, b1, cmp, rstrip):
+    return np.char.compare_chararrays(a1, b1, cmp, rstrip)
 
 
 def main():
-    byte_arguments = [
-        (B, B), (B, C), (B, D), (D, B), (E, F), (X.astype('S'), Y.astype('S')),
-        (B, b'hello'), (b'hello', B), (D, b'hello'),
-        (b'hello', b'hella'), (b'hello' * 1000, b'hello' * 1000)
-    ]
-    string_arguments = [
-        (S, S), (S, T), (S, U), (U, S), (V, W), (X, Y),
-        (S, 'hello'), ('hello', S), (U, 'hello'),
-        ('hello', 'hella'), ('hello' * 1000, 'hello' * 1000)
-    ]
-    test_equal(byte_arguments, string_arguments)
-    test_not_equal(byte_arguments, string_arguments)
-    test_greater(byte_arguments, string_arguments)
-    test_greater_equal(byte_arguments, string_arguments)
-    test_less(byte_arguments, string_arguments)
-    test_less_equal(byte_arguments, string_arguments)
-
-
-if __name__ == '__main__':
     np.random.seed(1)
 
     B = np.random.choice([b'hello', b'all', b'worlds'], 10_000)
@@ -164,5 +88,29 @@ if __name__ == '__main__':
     X = np.random.choice([''.join([chr(np.random.randint(33, 127)) for _ in range(np.random.randint(1, 50))])
                           for _ in range(100)], 10_000)
     Y = np.random.choice(X, 10_000)
+    G, H = X.astype('S'), Y.astype('S')
 
+    byte_arguments = [
+        (B, B), (B, C), (B, D), (E, F), (G, H),
+        (B, b'hello'), (D, b'hello'), (D, b'hello'*100), (D, b'hello'*10_000),
+        (b'hello', b'hella'), (b'hello', b'aello'),  (b'hello', b'yello'), 
+        (b'hello' * 1000, b'hello' * 1000), (b'hello', b'hello'*100), (b'hello', b'jello'*10), (b'hello', b'bello'*10),
+        (np.array(b'hello', dtype='S200'), np.array(b'elo', dtype='S60'))
+    ]
+    string_arguments = [
+        (S, S), (S, T), (S, U), (V, W), (X, Y),
+        (S, 'hello'), (U, 'hello'), (U, 'hello'*100), (U, 'hello'*10_000),
+        ('hello', 'hella'), ('hello', 'aello'),  ('hello', 'yello'),
+        ('hello' * 1000, 'hello' * 1000), ('hello', 'hello'*100), ('hello', 'jello'*10), ('hello', 'bello'*10),
+        (np.array('hello', dtype='U200'), np.array('elo', dtype='U60'))
+    ]
+    test_char_function(numba_char_equal, np.char.equal, byte_arguments, string_arguments)
+    test_char_function(numba_char_not_equal, np.char.not_equal, byte_arguments, string_arguments)
+    test_char_function(numba_char_greater_equal, np.char.greater_equal, byte_arguments, string_arguments)
+    test_char_function(numba_char_greater, np.char.greater, byte_arguments, string_arguments)
+    test_char_function(numba_char_less, np.char.less, byte_arguments, string_arguments)
+    test_char_function(numba_char_less_equal, np.char.less_equal, byte_arguments, string_arguments)
+
+
+if __name__ == '__main__':
     main()

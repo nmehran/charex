@@ -35,7 +35,7 @@ def set_comparison(chr_array, len_chr, size_chr, cmp_array, len_cmp, size_cmp, i
         raise ValueError(msg)
     if len_cmp == 1 and len_chr > 1:
         cmp_stride = np.zeros(size_chr, dtype='int8')
-        cmp_stride[:size_cmp] = cmp_array
+        cmp_stride[:size_cmp] = cmp_array[:size_chr]
         cmp = (chr_array.reshape(len_chr, size_chr) - cmp_stride).ravel()
         size_cmp = size_chr
     elif size_chr < size_cmp:
@@ -209,10 +209,10 @@ def ov_nb_char_greater(x1, x2):
     def greater(chr_array, len_chr, size_chr, cmp_array, len_cmp, size_cmp, inv=False):
         cmp, size_cmp = set_comparison(chr_array, len_chr, size_chr, cmp_array, len_cmp, size_cmp, inv)
         greater_than = np.zeros(len_chr, dtype='bool')
-        size_chr = min(size_chr, size_cmp)
+        size_stride = min(size_chr, size_cmp)
         stride = 0
         for i in range(len_chr):
-            for j in range(size_chr):
+            for j in range(size_stride):
                 cmp_ord = cmp[stride + j]
                 if cmp_ord == 0:
                     continue
@@ -220,7 +220,9 @@ def ov_nb_char_greater(x1, x2):
                     break
                 greater_than[i] = 1
                 break
-            stride += size_chr
+            stride += size_stride
+        if len_chr == 1 and size_chr > size_cmp and not greater_than and np.flatnonzero(cmp == 0).size == size_stride:
+            return ~greater_than
         return greater_than
 
     register_type, cmp_type = register_types(x1, x2)
@@ -248,17 +250,19 @@ def ov_nb_char_greater_equal(x1, x2):
     def greater_equal(chr_array, len_chr, size_chr, cmp_array, len_cmp, size_cmp, inv=False):
         cmp, size_cmp = set_comparison(chr_array, len_chr, size_chr, cmp_array, len_cmp, size_cmp, inv)
         greater_equal_than = np.ones(len_chr, dtype='bool')
-        size_chr = min(size_chr, size_cmp)
+        size_stride = min(size_chr, size_cmp)
         stride = 0
         for i in range(len_chr):
-            for j in range(size_chr):
+            for j in range(size_stride):
                 cmp_ord = cmp[stride + j]
                 if cmp_ord > 0:
                     break
                 if cmp_ord < 0:
                     greater_equal_than[i] = 0
                     break
-            stride += size_chr
+            stride += size_stride
+        if len_chr == 1 and size_chr < size_cmp and greater_equal_than and np.flatnonzero(cmp == 0).size == size_stride:
+            return ~greater_equal_than
         return greater_equal_than
 
     register_type, cmp_type = register_types(x1, x2)
@@ -286,10 +290,10 @@ def ov_nb_char_less(x1, x2):
     def less(chr_array, len_chr, size_chr, cmp_array, len_cmp, size_cmp, inv=False):
         cmp, size_cmp = set_comparison(chr_array, len_chr, size_chr, cmp_array, len_cmp, size_cmp, inv)
         less_than = np.zeros(len_chr, dtype='bool')
-        size_chr = min(size_chr, size_cmp)
+        size_stride = min(size_chr, size_cmp)
         stride = 0
         for i in range(len_chr):
-            for j in range(size_chr):
+            for j in range(size_stride):
                 cmp_ord = cmp[stride + j]
                 if cmp_ord == 0:
                     continue
@@ -297,7 +301,9 @@ def ov_nb_char_less(x1, x2):
                     break
                 less_than[i] = 1
                 break
-            stride += size_chr
+            stride += size_stride
+        if len_chr == 1 and size_chr < size_cmp and not less_than and np.flatnonzero(cmp == 0).size == size_stride:
+            return ~less_than
         return less_than
 
     register_type, cmp_type = register_types(x1, x2)
@@ -325,17 +331,19 @@ def ov_nb_char_less_equal(x1, x2):
     def less_equal(chr_array, len_chr, size_chr, cmp_array, len_cmp, size_cmp, inv=False):
         cmp, size_cmp = set_comparison(chr_array, len_chr, size_chr, cmp_array, len_cmp, size_cmp, inv)
         less_equal_than = np.ones(len_chr, dtype='bool')
-        size_chr = min(size_chr, size_cmp)
+        size_stride = min(size_chr, size_cmp)
         stride = 0
         for i in range(len_chr):
-            for j in range(size_chr):
+            for j in range(size_stride):
                 cmp_ord = cmp[stride + j]
                 if cmp_ord < 0:
                     break
                 if cmp_ord > 0:
                     less_equal_than[i] = 0
                     break
-            stride += size_chr
+            stride += size_stride
+        if len_chr == 1 and size_chr > size_cmp and less_equal_than and np.flatnonzero(cmp == 0).size == size_stride:
+            return ~less_equal_than
         return less_equal_than
 
     register_type, cmp_type = register_types(x1, x2)
