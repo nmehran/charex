@@ -145,6 +145,8 @@ def measure_performance(func, n: int = 5, *args, **kwargs) -> ndarray:
 
 
 def graph_performance(measurements, func_count: int, test_names: list):
+    if not len(measurements):
+        return []
 
     def set_fig_size(test_count, columns, rows, scale_factor=0.6, size_y=7):
         x_dim = scale_factor * test_count * columns
@@ -180,10 +182,10 @@ def graph_performance(measurements, func_count: int, test_names: list):
                 figs.append(fp)
                 f += 1
         plt.suptitle(main_title, fontsize=int(fig_size[0]+8))
-        if not as_subplot:
-            plt.show()
-            return figs
-        return fig
+        if axes and as_subplot:
+            return fig
+        plt.show()
+        return figs
 
     test_names = Series(test_names)
     figures = plot_graph(graph=DataFrame(measurements, columns=['implementation', 'baseline']),
