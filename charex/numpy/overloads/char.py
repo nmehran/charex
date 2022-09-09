@@ -65,7 +65,7 @@ def ov_nb_char_equal(x1, x2):
     if isinstance(x1, types.Bytes) and isinstance(x2, types.Bytes):
         def impl(x1, x2):
             return np.array(len(x1) == len(x2)
-                            and (np.frombuffer(x1, dtype='int8') - np.frombuffer(x2, dtype='int8')).sum() == 0,
+                            and not np.any(np.frombuffer(x1, dtype='int8') - np.frombuffer(x2, dtype='int8')),
                             dtype='bool')
         return impl
 
@@ -79,30 +79,30 @@ def ov_nb_char_equal(x1, x2):
                 if size_chr < 30:
                     cmp_stride = np.zeros(size_chr, dtype='int8')
                     cmp_stride[:size_cmp] = cmp_array
-                    return (chr_array.reshape(len_chr, size_chr) - cmp_stride).sum(axis=1) == 0
+                    return ~np.any(chr_array.reshape(len_chr, size_chr) - cmp_stride, axis=1)
                 equal_to = np.empty(len_chr, dtype='bool')
                 for i in range(len_chr):
-                    equal_to[i] = chr_array[ix + size_cmp] == 0 and (cmp_array - chr_array[ix:ix + size_cmp]).sum() == 0
+                    equal_to[i] = chr_array[ix + size_cmp] == 0 and not np.any(cmp_array - chr_array[ix:ix + size_cmp])
                     ix += size_chr
             else:
-                return (chr_array.reshape(len_chr, size_chr) - cmp_array).sum(axis=1) == 0
+                return ~np.any(chr_array.reshape(len_chr, size_chr) - cmp_array, axis=1)
         elif len_chr == len_cmp:
             if size_chr == size_cmp:
                 if size_chr == 1:
                     return chr_array == cmp_array
-                return (chr_array - cmp_array).reshape(-1, size_chr).sum(axis=1) == 0
+                return ~np.any((chr_array - cmp_array).reshape(-1, size_chr), axis=1)
             iy = 0
             equal_to = np.empty(len_chr, dtype='bool')
             if size_chr < size_cmp:
                 for i in range(len_chr):
                     equal_to[i] = (cmp_array[iy + size_chr] == 0
-                                   and (chr_array[ix:ix + size_chr] - cmp_array[iy:iy + size_chr]).sum() == 0)
+                                   and not np.any(chr_array[ix:ix + size_chr] - cmp_array[iy:iy + size_chr]))
                     ix += size_chr
                     iy += size_cmp
             elif size_chr > size_cmp:
                 for i in range(len_chr):
                     equal_to[i] = (chr_array[ix + size_cmp] == 0
-                                   and (chr_array[ix:ix + size_cmp] - cmp_array[iy:iy + size_cmp]).sum() == 0)
+                                   and not np.any(chr_array[ix:ix + size_cmp] - cmp_array[iy:iy + size_cmp]))
                     ix += size_chr
                     iy += size_cmp
         else:
@@ -139,7 +139,7 @@ def ov_nb_char_not_equal(x1, x2):
     if isinstance(x1, types.Bytes) and isinstance(x2, types.Bytes):
         def impl(x1, x2):
             return np.array(len(x1) != len(x2)
-                            or (np.frombuffer(x1, dtype='int8') - np.frombuffer(x2, dtype='int8')).sum() != 0,
+                            or np.any(np.frombuffer(x1, dtype='int8') - np.frombuffer(x2, dtype='int8')),
                             dtype='bool')
         return impl
 
@@ -153,30 +153,30 @@ def ov_nb_char_not_equal(x1, x2):
                 if size_chr < 30:
                     cmp_stride = np.zeros(size_chr, dtype='int8')
                     cmp_stride[:size_cmp] = cmp_array
-                    return (chr_array.reshape(len_chr, size_chr) - cmp_stride).sum(axis=1) != 0
+                    return np.any(chr_array.reshape(len_chr, size_chr) - cmp_stride, axis=1)
                 not_equal_to = np.empty(len_chr, dtype='bool')
                 for i in range(len_chr):
-                    not_equal_to[i] = chr_array[ix + size_cmp] != 0 or (cmp_array - chr_array[ix:ix + size_cmp]).sum() != 0
+                    not_equal_to[i] = chr_array[ix + size_cmp] != 0 or np.any(cmp_array - chr_array[ix:ix + size_cmp])
                     ix += size_chr
             else:
-                return (chr_array.reshape(len_chr, size_chr) - cmp_array).sum(axis=1) != 0
+                return np.any(chr_array.reshape(len_chr, size_chr) - cmp_array, axis=1)
         elif len_chr == len_cmp:
             if size_chr == size_cmp:
                 if size_chr == 1:
                     return chr_array != cmp_array
-                return (chr_array - cmp_array).reshape(-1, size_chr).sum(axis=1) != 0
+                return np.any((chr_array - cmp_array).reshape(-1, size_chr), axis=1)
             iy = 0
             not_equal_to = np.empty(len_chr, dtype='bool')
             if size_chr < size_cmp:
                 for i in range(len_chr):
                     not_equal_to[i] = (cmp_array[iy + size_chr] != 0
-                                       or (chr_array[ix:ix + size_chr] - cmp_array[iy:iy + size_chr]).sum() != 0)
+                                       or np.any(chr_array[ix:ix + size_chr] - cmp_array[iy:iy + size_chr]))
                     ix += size_chr
                     iy += size_cmp
             elif size_chr > size_cmp:
                 for i in range(len_chr):
                     not_equal_to[i] = (chr_array[ix + size_cmp] != 0
-                                       or (chr_array[ix:ix + size_cmp] - cmp_array[iy:iy + size_cmp]).sum() != 0)
+                                       or np.any(chr_array[ix:ix + size_cmp] - cmp_array[iy:iy + size_cmp]))
                     ix += size_chr
                     iy += size_cmp
         else:
