@@ -38,3 +38,10 @@ class ComparisonOperators:
     @njit(nogil=True, cache=True)
     def compare_chararrays(a1, b1, cmp, rstrip):
         return np.char.compare_chararrays(a1, b1, cmp, rstrip)
+
+
+class LogicalOperators:
+    @staticmethod
+    @njit(nogil=True, cache=True)
+    def numba_any(a, axis=None):
+        return np.any(a, axis)
