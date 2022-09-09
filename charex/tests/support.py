@@ -274,3 +274,16 @@ def signature(arg):
         sig = next(iter(arg.items()))
         return f'dict({type(sig[0]).__name__}, {type(sig[1]).__name__}])*{n}'
     return type_arg
+
+
+def arguments_as_bytes(args: list):
+    for pair in args:
+        as_bytes = []
+        for arg in pair:
+            if isinstance(arg, np.ndarray):
+                as_bytes.append(arg.astype('S'))
+            elif isinstance(arg, str):
+                as_bytes.append(bytes(arg, 'UTF-8'))
+            else:
+                as_bytes.append(arg)
+        yield as_bytes

@@ -1,7 +1,7 @@
 """Test numpy character comparison operators"""
 
 from charex.tests.definitions import ComparisonOperators
-from charex.tests.support import CharacterTest
+from charex.tests.support import arguments_as_bytes, CharacterTest
 import numpy as np
 
 TEST_BYTES = True
@@ -13,39 +13,42 @@ def main(method='graph'):
     ch = ComparisonOperators()
 
     length = 10_001
-
-    b = np.random.choice([b'hello', b'all', b'worlds'], length)
-    c = np.random.choice([b'hello', b'\tFrom', b'all', b'Around', b'\nthe' b' World'], length)
-    d = np.random.choice([b'hello', b'all', b'worlds'], length).astype('S200')
-    e = np.random.choice([chr(__i) for __i in range(1, 128)], length)
-    f = np.random.choice(e, length)
-
-    s = b.astype('U')
-    t = c.astype('U')
-    u = d.astype('U')
-    v = e.astype('U')
-    w = f.astype('U')
-
-    # With an efficient implementation of whitespace removal, trailing \t\n\r\f\v characters can be supported.
-    x = np.random.choice([''.join([chr(np.random.randint(33, 127)) for _ in range(np.random.randint(1, 50))])
+    # Generate 100 ASCII strings of length 1 to 50
+    r = np.random.choice([''.join([chr(np.random.randint(1, 127)) for _ in range(np.random.randint(1, 50))])
                           for _ in range(100)], length)
-    y = np.random.choice(x, length)
+    s: tuple = np.array(['abc', 'def'] * length), np.array(['cba', 'fed'] * length),
+    t: tuple = np.array(['ab', 'bc'] * length), np.array(['bc', 'ab'] * length),
+    u: tuple = np.array(['ba', 'cb'] * length), np.array(['cb', 'ba'] * length)
+    v = np.random.choice(['abcd', 'abc', 'abcde'], length)
+    w = np.random.choice([chr(__i) for __i in range(1, 128)], length)
 
-    byte_args = TEST_BYTES and [
-        (b, b), (b, c), (b, d), (c, d), (e, f), (x.astype('S'), y.astype('S')),
-        (b, b'hello'), (d, b'hello'), (d, b'hello'*100), (d, b'hello'*length),
-        (np.array(b'hello', dtype='S200'), np.array(b'ello', dtype='S60')),
-        (b'hello', b'hella'), (b'hello', b'aello'),  (b'hello', b'yello'),
-        (b'hello' * 1000, b'hello' * 1000), (b'hello', b'hello'*100), (b'hello', b'jello'*10), (b'hello', b'bello'*10),
-    ] or []
-    string_args = TEST_STRINGS and [
-        (s, s), (s, t), (s, u), (t, u), (v, w), (x, y),
-        (s, 'hello'), (u, 'hello'), (u, 'hello' * 100), (u, 'hello' * length),
-        (np.array('hello', dtype='U200'), np.array('ello', dtype='U60')),
-        ('hello', 'hella'), ('hello', 'aello'),  ('hello', 'yello'),
-        ('hello' * 1000, 'hello' * 1000), ('hello', 'hello'*100), ('hello', 'jello'*10), ('hello', 'bello'*10),
-    ] or []
-    
+    # With an efficient implementation of whitespace removal, trailing \t\n\r\f\v characters can be supported
+    x = np.char.add(r, 'z')
+
+    arrays = [
+        s, t, u,
+        (v, np.random.choice(v, length)),
+        (w, np.random.choice(w, length)),
+        (w, w), (x, x),
+        (x, np.random.choice(x, length)),
+        (x, 'abcdefg'), (x, 'gfedcba'),
+        ('abc', 'abc'), ('abc', 'abd'), ('abc', 'abb'),
+        ('abc', 'abc'*100), ('ab', 'ba'),
+    ]
+
+    # Character buffers of different length
+    arrays += [
+        (x, x.astype('U200')),
+        (s[0].astype('U20'), s[1].astype('U40')),
+        (x.astype('U60'), x.astype('U61')),
+        (np.array('hello'*100, dtype='U200'), np.array('hello'*100, dtype='U100'))
+    ]
+
+    byte_args, string_args = [], []
+    if TEST_STRINGS:
+        string_args = arrays
+    if TEST_BYTES:
+        byte_args = arguments_as_bytes(arrays)
 
     CharacterTest(ch.numba_char_equal, np.char.equal, byte_args, string_args).run(method)
     CharacterTest(ch.numba_char_not_equal, np.char.not_equal, byte_args, string_args).run(method)
