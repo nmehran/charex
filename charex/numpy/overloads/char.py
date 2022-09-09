@@ -49,6 +49,23 @@ def set_comparison(chr_array, len_chr, size_chr, cmp_array, len_cmp, size_cmp, i
     return cmp, size_cmp
 
 
+@register_jitable(**JIT_OPTIONS)
+def compare_any(x1: np.ndarray, x2: np.ndarray) -> int:
+    for i in range(x1.size):
+        difference = x1[i] - x2[i]
+        if difference:
+            return difference
+    return 0
+
+
+@register_jitable(**JIT_OPTIONS)
+def compare_bool(x1: np.ndarray, x2: np.ndarray) -> np.ndarray:
+    cmp = np.empty(x1.size, dtype='bool')
+    for i in range(x1.size):
+        cmp[i] = x1[i] - x2[i]
+    return cmp
+
+
 @overload(np.char.equal, **OPTIONS)
 def ov_nb_char_equal(x1, x2):
     """Native Implementation of np.char.equal"""
@@ -76,33 +93,30 @@ def ov_nb_char_equal(x1, x2):
             if size_chr < size_cmp:
                 return np.zeros(len_chr, dtype='bool')
             elif size_chr > size_cmp:
-                if size_chr < 30:
-                    cmp_stride = np.zeros(size_chr, dtype='int8')
-                    cmp_stride[:size_cmp] = cmp_array
-                    return ~np.any(chr_array.reshape(len_chr, size_chr) - cmp_stride, axis=1)
                 equal_to = np.empty(len_chr, dtype='bool')
                 for i in range(len_chr):
-                    equal_to[i] = chr_array[ix + size_cmp] == 0 and not np.any(cmp_array - chr_array[ix:ix + size_cmp])
+                    equal_to[i] = (chr_array[ix + size_cmp] == 0
+                                   and not compare_any(cmp_array, chr_array[ix:ix + size_cmp]))
                     ix += size_chr
             else:
-                return ~np.any(chr_array.reshape(len_chr, size_chr) - cmp_array, axis=1)
+                return ~np.array([compare_any(chr_array, cmp_array)], dtype='bool')
         elif len_chr == len_cmp:
             if size_chr == size_cmp:
                 if size_chr == 1:
                     return chr_array == cmp_array
-                return ~np.any((chr_array - cmp_array).reshape(-1, size_chr), axis=1)
+                return compare_bool(chr_array, cmp_array).reshape(len_chr, size_chr).sum(axis=1) == 0
             iy = 0
             equal_to = np.empty(len_chr, dtype='bool')
             if size_chr < size_cmp:
                 for i in range(len_chr):
                     equal_to[i] = (cmp_array[iy + size_chr] == 0
-                                   and not np.any(chr_array[ix:ix + size_chr] - cmp_array[iy:iy + size_chr]))
+                                   and not compare_any(chr_array[ix:ix + size_chr], cmp_array[iy:iy + size_chr]))
                     ix += size_chr
                     iy += size_cmp
             elif size_chr > size_cmp:
                 for i in range(len_chr):
                     equal_to[i] = (chr_array[ix + size_cmp] == 0
-                                   and not np.any(chr_array[ix:ix + size_cmp] - cmp_array[iy:iy + size_cmp]))
+                                   and not compare_any(chr_array[ix:ix + size_cmp], cmp_array[iy:iy + size_cmp]))
                     ix += size_chr
                     iy += size_cmp
         else:
@@ -150,33 +164,30 @@ def ov_nb_char_not_equal(x1, x2):
             if size_chr < size_cmp:
                 return np.ones(len_chr, dtype='bool')
             elif size_chr > size_cmp:
-                if size_chr < 30:
-                    cmp_stride = np.zeros(size_chr, dtype='int8')
-                    cmp_stride[:size_cmp] = cmp_array
-                    return np.any(chr_array.reshape(len_chr, size_chr) - cmp_stride, axis=1)
                 not_equal_to = np.empty(len_chr, dtype='bool')
                 for i in range(len_chr):
-                    not_equal_to[i] = chr_array[ix + size_cmp] != 0 or np.any(cmp_array - chr_array[ix:ix + size_cmp])
+                    not_equal_to[i] = (chr_array[ix + size_cmp] != 0
+                                       or compare_any(cmp_array, chr_array[ix:ix + size_cmp]))
                     ix += size_chr
             else:
-                return np.any(chr_array.reshape(len_chr, size_chr) - cmp_array, axis=1)
+                return np.array([compare_any(chr_array, cmp_array)], dtype='bool')
         elif len_chr == len_cmp:
             if size_chr == size_cmp:
                 if size_chr == 1:
                     return chr_array != cmp_array
-                return np.any((chr_array - cmp_array).reshape(-1, size_chr), axis=1)
+                return compare_bool(chr_array, cmp_array).reshape(len_chr, size_chr).sum(axis=1) != 0
             iy = 0
             not_equal_to = np.empty(len_chr, dtype='bool')
             if size_chr < size_cmp:
                 for i in range(len_chr):
                     not_equal_to[i] = (cmp_array[iy + size_chr] != 0
-                                       or np.any(chr_array[ix:ix + size_chr] - cmp_array[iy:iy + size_chr]))
+                                       or compare_any(chr_array[ix:ix + size_chr], cmp_array[iy:iy + size_chr]))
                     ix += size_chr
                     iy += size_cmp
             elif size_chr > size_cmp:
                 for i in range(len_chr):
                     not_equal_to[i] = (chr_array[ix + size_cmp] != 0
-                                       or np.any(chr_array[ix:ix + size_cmp] - cmp_array[iy:iy + size_cmp]))
+                                       or compare_any(chr_array[ix:ix + size_cmp], cmp_array[iy:iy + size_cmp]))
                     ix += size_chr
                     iy += size_cmp
         else:
@@ -357,3 +368,38 @@ def ov_nb_char_less_equal(x1, x2):
             return less_equal(*register_type(x2), *register_type(x1), True)
         return less_equal(*register_type(x1), *register_type(x2))
     return impl
+
+
+# @overload(np.char.compare_chararrays, **OPTIONS)
+# def ov_nb_char_compare_chararrays(a, b, cmp_op, rstrip):
+#     """Native Implementation of np.char.compare_chararrays (rstrip is pending)"""
+#     if not isinstance(cmp_op, (types.Bytes, types.UnicodeType)):
+#         raise TypeError(f'a bytes-like object is required, not {cmp_op.name}')
+#
+#     @register_jitable(**JIT_OPTIONS)
+#     def compare_chararrays(a, b, cmp_op, rstrip):
+#         # {“<”, “<=”, “==”, “>=”, “>”, “!=”} || { (60,) (60, 61), (61, 61), (62, 61), (62,), (33, 61) }
+#         if len(cmp_op) == 1:
+#             cmp_ord = ord(cmp_op)
+#             if cmp_ord == 60:
+#                 impl_func = np.char.less
+#             elif cmp_ord == 62:
+#                 impl_func = np.char.greater
+#             else:
+#                 raise ValueError("comparison must be '==', '!=', '<', '>', '<=', '>='")
+#         elif len(cmp_op) == 2 and ord(cmp_op[1]) == 61:
+#             cmp_ord = ord(cmp_op[0])
+#             if cmp_ord == 60:
+#                 impl_func = np.char.less_equal
+#             elif cmp_ord == 61:
+#                 impl_func = np.char.equal
+#             elif cmp_ord == 62:
+#                 impl_func = np.char.greater_equal
+#             elif cmp_ord == 33:
+#                 impl_func = np.char.not_equal
+#             else:
+#                 raise ValueError("comparison must be '==', '!=', '<', '>', '<=', '>='")
+#         else:
+#             raise ValueError("comparison must be '==', '!=', '<', '>', '<=', '>='")
+#         return impl_func(a, b)
+#     return compare_chararrays

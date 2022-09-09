@@ -1,1 +1,1 @@
-from charex.numpy.overloads import char, logic
+from charex.numpy.overloads import char
