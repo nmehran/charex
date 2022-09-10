@@ -8,101 +8,173 @@ import numpy as np
 
 
 class CharacterTest:
-    def __init__(self, impl, base, byte_args, string_args):
-        self.name_impl = impl.__name__
-        self.name_base = base.__name__
+    """Class for testing, measuring, and graphing performance of a string array operation against a baseline"""
+    def __init__(self, impl=None, base=None, byte_args=None, string_args=None):
         self.test_count = 0
+
+        self.name_impl, self.name_base = [], []
+        if impl or base:
+            assert impl and base, 'Must set both implementation and base.'
+            self.name_impl.append(impl.__name__)
+            self.name_base.append(base.__name__)
 
         self.impl = impl
         self.base = base
         self.byte_args = byte_args
         self.string_args = string_args
 
-        self.is_measured = False
         self.is_tested = False
+        self.is_measured = False
         self.measurements: list = [[], []]
         self.plots = []
 
-    def test(self):
+    def __set_args(self, impl, base, byte_args, string_args):
+        if impl or base:
+            assert impl and base, 'Must set both implementation and base.'
+            self.name_impl.append(impl.__name__)
+            self.name_base.append(base.__name__)
+            self.impl = impl
+            self.base = base
+        self.byte_args = byte_args or self.byte_args
+        self.string_args = string_args or self.string_args
+        self.is_measured = False
+
+    def test(self, impl=None, base=None, byte_args=None, string_args=None):
+        self.__set_args(impl, base, byte_args, string_args)
         for m, args in enumerate(self.byte_args, start=1):
             run_test(self.impl, self.base, *args, __msg=f"Test={m}, args=({', '.join(signature(a) for a in args)})")
         for m, args in enumerate(self.string_args, start=1):
             run_test(self.impl, self.base, *args, __msg=f"Test={m}, args=({', '.join(signature(a) for a in args)})")
         self.is_tested = True
+        self.test_count += 1
 
-    def measure(self):
+    def measure(self, impl=None, base=None, byte_args=None, string_args=None):
         if not self.is_tested:
             if isinstance(self.byte_args, GeneratorType):
                 self.byte_args = list(self.byte_args)
             if isinstance(self.byte_args, GeneratorType):
                 self.string_args = list(self.string_args)
             self.test()
+        else:
+            self.__set_args(impl, base, byte_args, string_args)
+
         for args in self.byte_args:
             self.measurements[0].append(median(measure_test(self.impl, self.base, *args), axis=1)*1000)
         for args in self.string_args:
             self.measurements[1].append(median(measure_test(self.impl, self.base, *args), axis=1)*1000)
         self.is_measured = True
 
-    def graph(self):
+    def graph(self, impl=None, base=None, byte_args=None, string_args=None, main_title=None):
         if not self.is_measured:
-            self.measure()
+            self.measure(impl, base, byte_args, string_args)
+        else:
+            self.__set_args(impl, base, byte_args, string_args)
+
         self.plots += [
-            graph_performance(measurements=self.measurements[0], func_count=1, test_names=[f'bytes: {self.name_base}']),
-            graph_performance(measurements=self.measurements[1], func_count=1, test_names=[f'string: {self.name_base}'])
+            graph_performance(measurements=self.measurements[0],
+                              func_count=self.test_count,
+                              test_names=np.char.add('bytes: ', self.name_base),
+                              main_title=main_title,
+                              x_label='test number',
+                              y_label='median time (milliseconds)'),
+            graph_performance(measurements=self.measurements[1],
+                              func_count=self.test_count,
+                              test_names=np.char.add('string: ', self.name_base),
+                              main_title=main_title,
+                              x_label='test number',
+                              y_label='median time (milliseconds)')
         ]
 
-    def run(self, method: str):
+    def run(self, method: str, impl=None, base=None, byte_args=None, string_args=None):
         methods = {'test': self.test, 'measure': self.measure, 'graph': self.graph}
         run_method = methods.get(method)
         if not run_method:
             print("Method must be in ('test', 'measure', 'graph')")
         else:
+            self.is_tested = False
+            self.__set_args(impl, base, byte_args, string_args)
             run_method()
 
 
 class StandardTest:
-    def __init__(self, impl, base, args):
-        self.name_impl = impl.__name__
-        self.name_base = base.__name__
+    """Class for testing, measuring, and graphing performance of an implementation against a baseline"""
+    def __init__(self, impl=None, base=None, args=None):
         self.test_count = 0
+
+        self.name_impl, self.name_base = [], []
+        if impl or base:
+            assert impl and base, 'Must set both implementation and base.'
+            self.name_impl.append(impl.__name__)
+            self.name_base.append(base.__name__)
 
         self.impl = impl
         self.base = base
         self.args = args
 
-        self.is_measured = False
         self.is_tested = False
+        self.is_measured = False
         self.measurements: list = [[], []]
         self.plots = []
 
-    def test(self):
+    def __set_args(self, impl, base, args):
+        if impl or base:
+            assert impl and base, 'Must set both implementation and base.'
+            self.name_impl.append(impl.__name__)
+            self.name_base.append(base.__name__)
+            self.impl = impl
+            self.base = base
+        self.args = args or self.args
+        self.is_measured = False
+
+    def test(self, impl=None, base=None, args=None):
+        self.__set_args(impl, base, args)
         for m, args in enumerate(self.args, start=1):
             run_test(self.impl, self.base, *args, __msg=f"Test={m}, args=({', '.join(signature(a) for a in args)})")
         self.is_tested = True
+        self.test_count += 1
 
-    def measure(self):
+    def measure(self, impl=None, base=None, args=None, scale=1):
         if not self.is_tested:
             if isinstance(self.args, GeneratorType):
                 self.args = list(self.args)
             self.test()
+        else:
+            self.__set_args(impl, base, args)
+
         for args in self.args:
-            self.measurements[0].append(median(measure_test(self.impl, self.base, *args), axis=1)*1000)
+            self.measurements[0].append(median(measure_test(self.impl, self.base, *args), axis=1)*scale)
         self.is_measured = True
 
-    def graph(self, title_prefix='', title_suffix=''):
+    def graph(self, impl=None, base=None, args=None,
+              main_title=None, prefix=None, suffix=None, x_label='test number', y_label='median time'):
         if not self.is_measured:
-            self.measure()
+            self.measure(impl, base, args)
+        else:
+            self.__set_args(impl, base, args)
+
+        test_names = self.name_base
+        if prefix:
+            test_names = np.char.add(prefix, self.name_base)
+        if suffix:
+            test_names = np.char.add(suffix, self.name_base)
+
         self.plots += [
-            graph_performance(measurements=self.measurements[0], func_count=1,
-                              test_names=[f'{title_prefix}{self.name_base}{title_suffix}'])
+            graph_performance(measurements=self.measurements[0],
+                              func_count=self.test_count,
+                              test_names=test_names,
+                              main_title=main_title,
+                              x_label=x_label,
+                              y_label=y_label),
         ]
 
-    def run(self, method: str):
+    def run(self, method: str, impl=None, base=None, args=None):
         methods = {'test': self.test, 'measure': self.measure, 'graph': self.graph}
         run_method = methods.get(method)
         if not run_method:
             print("Method must be in ('test', 'measure', 'graph')")
         else:
+            self.is_tested = False
+            self.__set_args(impl, base, args)
             run_method()
 
 
@@ -198,7 +270,8 @@ def measure_performance(func, n: int = 5, *args, **kwargs) -> ndarray:
     return end_times
 
 
-def graph_performance(measurements, func_count: int, test_names: list):
+def graph_performance(measurements, func_count: int, test_names: list,
+                      as_subplot=False, kind='bar', main_title=None, x_label=None, y_label=None):
     if not len(measurements):
         return []
 
@@ -207,43 +280,43 @@ def graph_performance(measurements, func_count: int, test_names: list):
         y_dim = rows * size_y
         return max(x_dim, size_y * 0.8), y_dim
 
-    def plot_graph(graph, titles, columns=1, main_title=None, as_subplot=False):
-        samples = len(graph)
-        test_count = samples // func_count
-        rows = max(func_count // columns, 1)
+    def plot_graph(graph, titles, columns=1):
+        test_count = len(graph) // len(titles)
         x_ticks = range(test_count)
 
-        fig = axes = None
+        axes = None
         if func_count == 1:
             functions = [graph]
+            rows = max(func_count // columns, 1)
         else:
+            columns = 2
+            rows = max(func_count // columns, 1)
             functions = array_split(graph, func_count)
-            fig, axes = plt.subplots(rows, columns)
+            figs, axes = plt.subplots(rows, columns)
+            axes = axes.reshape(-1, columns)
 
-        fig_size = set_fig_size(test_count, columns, rows)
         figs = []
+        fig_size = set_fig_size(test_count, columns, rows)
         f = 0
         for r in range(rows):
             for c in range(columns):
-                fp = functions[f].plot(ax=axes and axes[r, c],
+                fp = functions[f].plot(ax=axes if axes is None else axes[r, c],
                                        figsize=fig_size,
-                                       kind='bar',
+                                       kind=kind,
                                        logy=True,
                                        title=titles[f],
-                                       xlabel='test number',
+                                       xlabel=x_label,
                                        xticks=x_ticks,
-                                       ylabel='median time (milliseconds)')
+                                       ylabel=y_label)
                 figs.append(fp)
                 f += 1
         plt.suptitle(main_title, fontsize=max(11, int(fig_size[0])))
-        if axes and as_subplot:
-            return fig
+        if as_subplot and axes is not None:
+            return figs
         plt.show()
         return figs
 
-    figures = plot_graph(graph=DataFrame(measurements, columns=['implementation', 'baseline']),
-                         titles=test_names,
-                         main_title='Measured Test Performance (milliseconds)')
+    figures = plot_graph(graph=DataFrame(measurements, columns=['implementation', 'baseline']), titles=test_names)
     return figures
 
 
