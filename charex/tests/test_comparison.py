@@ -9,12 +9,9 @@ TEST_STRINGS = True
 
 
 def test(method='test'):
-    np.random.seed(1)
-    ch = ComparisonOperators()
-    character_test = CharacterTest()
-
-    length = 10_001
+    length = 1001
     # Generate 100 ASCII strings of length 1 to 50
+    np.random.seed(1)
     r = np.random.choice([''.join([chr(np.random.randint(1, 127)) for _ in range(np.random.randint(1, 50))])
                           for _ in range(100)], length)
     s: tuple = np.array(['abc', 'def'] * length), np.array(['cba', 'fed'] * length),
@@ -23,8 +20,8 @@ def test(method='test'):
     v = np.random.choice(['abcd', 'abc', 'abcde'], length)
     w = np.random.choice([chr(__i) for __i in range(1, 128)], length)
 
-    # With an efficient implementation of whitespace removal, trailing \t\n\r\f\v characters can be supported
-    x = np.char.add(r, chr(np.random.randint(33, 127)))
+    # With an efficient implementation of whitespace removal, trailing \t\n\r\f\v characters can be supported.
+    x = np.char.add(r, chr(np.random.randint(33, 127)))  # Adding a non-whitespace character to end of strings.
 
     arrays = [
         s, t, u,
@@ -51,9 +48,11 @@ def test(method='test'):
     if TEST_BYTES:
         byte_args = arguments_as_bytes(arrays)
 
+    ch = ComparisonOperators()
+    character_test = CharacterTest(byte_args=byte_args, string_args=string_args)
     m = 'measure' if method == 'graph' else method
 
-    character_test.run(m, ch.numba_char_equal, np.char.equal, byte_args, string_args)
+    character_test.run(m, ch.numba_char_equal, np.char.equal)
     character_test.run(m, ch.numba_char_not_equal, np.char.not_equal)
     character_test.run(m, ch.numba_char_greater_equal, np.char.greater_equal)
     character_test.run(m, ch.numba_char_greater, np.char.greater)
