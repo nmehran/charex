@@ -9,6 +9,22 @@ TEST_STRINGS = True
 
 
 def test(method='test'):
+
+    def test_comparison_operators(byte_args_, string_args_, method_=method):
+        ch = ComparisonOperators()
+        character_test = CharacterTest(byte_args=byte_args_, string_args=string_args_)
+        m = 'measure' if method_ == 'graph' else method_
+
+        character_test.run(m, ch.numba_char_equal, np.char.equal)
+        character_test.run(m, ch.numba_char_not_equal, np.char.not_equal)
+        character_test.run(m, ch.numba_char_greater_equal, np.char.greater_equal)
+        character_test.run(m, ch.numba_char_greater, np.char.greater)
+        character_test.run(m, ch.numba_char_less, np.char.less)
+        character_test.run(m, ch.numba_char_less_equal, np.char.less_equal)
+
+        if method_ == 'graph':
+            character_test.graph(main_title='Measured Test Performance (milliseconds)')
+
     length = 1001
     # Generate 100 ASCII strings of length 1 to 50
     np.random.seed(1)
@@ -27,8 +43,8 @@ def test(method='test'):
         s, t, u,
         (v, np.random.choice(v, length)),
         (w, np.random.choice(w, length)),
-        (w, w), (x, x),
-        (x, np.random.choice(x, length)),
+        (w, w), (w, np.random.choice(w, length)),
+        (x, x), (x, np.random.choice(x, length)),
         (x, 'abcdefg'), (x, 'gfedcba'),
         ('abc', 'abc'), ('abc', 'abd'), ('abc', 'abb'),
         ('abc', 'abc'*100), ('ab', 'ba'),
@@ -46,21 +62,12 @@ def test(method='test'):
     if TEST_STRINGS:
         string_args = arrays
     if TEST_BYTES:
-        byte_args = arguments_as_bytes(arrays)
+        byte_args = list(arguments_as_bytes(arrays))
 
-    ch = ComparisonOperators()
-    character_test = CharacterTest(byte_args=byte_args, string_args=string_args)
-    m = 'measure' if method == 'graph' else method
-
-    character_test.run(m, ch.numba_char_equal, np.char.equal)
-    character_test.run(m, ch.numba_char_not_equal, np.char.not_equal)
-    character_test.run(m, ch.numba_char_greater_equal, np.char.greater_equal)
-    character_test.run(m, ch.numba_char_greater, np.char.greater)
-    character_test.run(m, ch.numba_char_less, np.char.less)
-    character_test.run(m, ch.numba_char_less_equal, np.char.less_equal)
-
-    if method == 'graph':
-        character_test.graph(main_title='Measured Test Performance (milliseconds)')
+    test_comparison_operators(byte_args_=[a[::-1] for a in byte_args],
+                              string_args_=[a[::-1] for a in string_args],
+                              method_='test')
+    test_comparison_operators(byte_args, string_args, method)
 
 
 if __name__ == '__main__':

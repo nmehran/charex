@@ -8,7 +8,7 @@ import numpy as np
 
 
 class CharacterTest:
-    """Methods for testing, measuring, and graphing performance of string array operations against baselines"""
+    """Methods for testing, measuring, and graphing performance of string array operations against their baseline."""
     def __init__(self, impl=None, base=None, byte_args=None, string_args=None):
         self.test_count = 0
         self.name_impl, self.name_base = [], []
@@ -93,7 +93,7 @@ class CharacterTest:
 
 
 class StandardTest:
-    """Methods for testing, measuring, and graphing performance of implementations against baselines"""
+    """Methods for testing, measuring, and graphing performance of implementations against their baseline."""
     def __init__(self, impl=None, base=None, args=None):
         self.test_count = 0
         self.name_impl, self.name_base = [], []
@@ -151,7 +151,7 @@ class StandardTest:
             test_names = np.char.add(suffix, self.name_base)
 
         self.plots += [
-            graph_performance(measurements=self.measurements[0],
+            graph_performance(measurements=self.measurements,
                               test_names=test_names,
                               main_title=main_title,
                               x_label=x_label,
