@@ -35,7 +35,7 @@ class ComparisonOperators:
 
     @staticmethod
     @njit(nogil=True, cache=True)
-    def compare_chararrays(a1, b1, cmp, rstrip):
+    def numba_compare_chararrays(a1, b1, cmp, rstrip):
         return np.char.compare_chararrays(a1, b1, cmp, rstrip)
 
 

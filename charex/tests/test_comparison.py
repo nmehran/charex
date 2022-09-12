@@ -1,7 +1,7 @@
 """Test numpy character comparison operators"""
 
 from charex.tests.definitions import ComparisonOperators
-from charex.tests.support import arguments_as_bytes, CharacterTest
+from charex.tests.support import arguments_as_bytes, pack_arguments, CharacterTest
 import numpy as np
 
 TEST_BYTES = True
@@ -9,9 +9,9 @@ TEST_STRINGS = True
 
 
 def test(method='test'):
+    ch = ComparisonOperators()
 
     def test_comparison_operators(byte_args_, string_args_, method_=method):
-        ch = ComparisonOperators()
         character_test = CharacterTest(byte_args=byte_args_, string_args=string_args_)
         m = 'measure' if method_ == 'graph' else method_
 
@@ -24,6 +24,12 @@ def test(method='test'):
 
         if method_ == 'graph':
             character_test.graph(main_title='Measured Test Performance (milliseconds)')
+
+        byte_args_ = list(pack_arguments(byte_args_, [('==', '!=', '>=', '>', '<', '<='), (None,)]))
+        string_args_ = list(pack_arguments(string_args_, [('==', '!=', '>=', '>', '<', '<='), (None,)]))
+        CharacterTest(byte_args=byte_args_, string_args=string_args_).test(ch.numba_compare_chararrays,
+                                                                           np.compare_chararrays)
+        return character_test
 
     length = 1001
     # Generate 100 ASCII strings of length 1 to 50

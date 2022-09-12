@@ -11,7 +11,11 @@ import numpy as np
 
 
 @register_jitable(**JIT_OPTIONS)
-def register_types(x1, x2):
+def register_pair(x1, x2):
+    accepted_types = (types.Array, types.Bytes, types.UnicodeType)
+    if not isinstance(x1, accepted_types) or not isinstance(x2, accepted_types):
+        raise TypeError('comparison of non-string arrays')
+
     byte_types = (types.Bytes, types.CharSeq)
     str_types = (types.UnicodeType, types.UnicodeCharSeq)
 
@@ -25,6 +29,9 @@ def register_types(x1, x2):
     elif isinstance(x1_type, str_types) and isinstance(x2_type, str_types):
         register_type = register_strings
         cmp_type = str
+
+    if not register_type:
+        raise NotImplementedError('NotImplemented')
     return register_type, cmp_type
 
 
@@ -52,17 +59,16 @@ def set_comparison(chr_array, len_chr, size_chr, cmp_array, len_cmp, size_cmp, i
 @register_jitable(**JIT_OPTIONS)
 def compare_any(x1: np.ndarray, x2: np.ndarray) -> int:
     for i in range(x1.size):
-        difference = x1[i] - x2[i]
-        if difference:
-            return difference
-    return 0
+        if x1[i] != x2[i]:
+            return True
+    return False
 
 
 @register_jitable(**JIT_OPTIONS)
 def compare_bool(x1: np.ndarray, x2: np.ndarray) -> np.ndarray:
     cmp = np.empty(x1.size, dtype='bool')
     for i in range(x1.size):
-        cmp[i] = x1[i] - x2[i]
+        cmp[i] = x1[i] != x2[i]
     return cmp
 
 
@@ -70,21 +76,7 @@ def compare_bool(x1: np.ndarray, x2: np.ndarray) -> np.ndarray:
 def ov_nb_char_equal(x1, x2):
     """Native Implementation of np.char.equal"""
 
-    accepted_types = (types.Array, types.Bytes, types.UnicodeType)
-    if not isinstance(x1, accepted_types) or not isinstance(x2, accepted_types):
-        raise TypeError('comparison of non-string arrays')
-
-    if isinstance(x1, types.UnicodeType) and isinstance(x2, types.UnicodeType):
-        def impl(x1, x2):
-            return np.array(len(x1) == len(x2) and x1 == x2, dtype='bool')
-        return impl
-
-    if isinstance(x1, types.Bytes) and isinstance(x2, types.Bytes):
-        def impl(x1, x2):
-            return np.array(len(x1) == len(x2)
-                            and not np.any(np.frombuffer(x1, dtype='int8') - np.frombuffer(x2, dtype='int8')),
-                            dtype='bool')
-        return impl
+    register_type, cmp_type = register_pair(x1, x2)
 
     @register_jitable(**JIT_OPTIONS)
     def equal(chr_array, len_chr, size_chr, cmp_array, len_cmp, size_cmp):
@@ -124,12 +116,6 @@ def ov_nb_char_equal(x1, x2):
             raise ValueError(msg)
         return equal_to
 
-    register_type, cmp_type = register_types(x1, x2)
-    if not register_type:
-        def impl(x1, x2):
-            raise NotImplementedError('NotImplemented')
-        return impl
-
     def impl(x1, x2):
         if isinstance(x1, cmp_type) and not isinstance(x2, cmp_type):
             return equal(*register_type(x2), *register_type(x1))
@@ -141,21 +127,7 @@ def ov_nb_char_equal(x1, x2):
 def ov_nb_char_not_equal(x1, x2):
     """Native Implementation of np.char.not_equal"""
 
-    accepted_types = (types.Array, types.Bytes, types.UnicodeType)
-    if not isinstance(x1, accepted_types) or not isinstance(x2, accepted_types):
-        raise TypeError('comparison of non-string arrays')
-
-    if isinstance(x1, types.UnicodeType) and isinstance(x2, types.UnicodeType):
-        def impl(x1, x2):
-            return np.array(len(x1) != len(x2) or x1 != x2, dtype='bool')
-        return impl
-
-    if isinstance(x1, types.Bytes) and isinstance(x2, types.Bytes):
-        def impl(x1, x2):
-            return np.array(len(x1) != len(x2)
-                            or np.any(np.frombuffer(x1, dtype='int8') - np.frombuffer(x2, dtype='int8')),
-                            dtype='bool')
-        return impl
+    register_type, cmp_type = register_pair(x1, x2)
 
     @register_jitable(**JIT_OPTIONS)
     def not_equal(chr_array, len_chr, size_chr, cmp_array, len_cmp, size_cmp):
@@ -195,12 +167,6 @@ def ov_nb_char_not_equal(x1, x2):
             raise ValueError(msg)
         return not_equal_to
 
-    register_type, cmp_type = register_types(x1, x2)
-    if not register_type:
-        def impl(x1, x2):
-            raise NotImplementedError('NotImplemented')
-        return impl
-
     def impl(x1, x2):
         if isinstance(x1, cmp_type) and not isinstance(x2, cmp_type):
             return not_equal(*register_type(x2), *register_type(x1))
@@ -212,9 +178,7 @@ def ov_nb_char_not_equal(x1, x2):
 def ov_nb_char_greater(x1, x2):
     """Native Implementation of np.char.greater"""
 
-    accepted_types = (types.Array, types.Bytes, types.UnicodeType)
-    if not isinstance(x1, accepted_types) or not isinstance(x2, accepted_types):
-        raise TypeError('comparison of non-string arrays')
+    register_type, cmp_type = register_pair(x1, x2)
 
     @register_jitable(**JIT_OPTIONS)
     def greater(chr_array, len_chr, size_chr, cmp_array, len_cmp, size_cmp, inv=False):
@@ -236,12 +200,6 @@ def ov_nb_char_greater(x1, x2):
             return ~greater_than
         return greater_than
 
-    register_type, cmp_type = register_types(x1, x2)
-    if not register_type:
-        def impl(x1, x2):
-            raise NotImplementedError('NotImplemented')
-        return impl
-
     def impl(x1, x2):
         if isinstance(x1, cmp_type) and not isinstance(x2, cmp_type):
             return greater(*register_type(x2), *register_type(x1), True)
@@ -253,9 +211,7 @@ def ov_nb_char_greater(x1, x2):
 def ov_nb_char_greater_equal(x1, x2):
     """Native Implementation of np.char.greater_equal"""
 
-    accepted_types = (types.Array, types.Bytes, types.UnicodeType)
-    if not isinstance(x1, accepted_types) or not isinstance(x2, accepted_types):
-        raise TypeError('comparison of non-string arrays')
+    register_type, cmp_type = register_pair(x1, x2)
 
     @register_jitable(**JIT_OPTIONS)
     def greater_equal(chr_array, len_chr, size_chr, cmp_array, len_cmp, size_cmp, inv=False):
@@ -276,12 +232,6 @@ def ov_nb_char_greater_equal(x1, x2):
             return ~greater_equal_than
         return greater_equal_than
 
-    register_type, cmp_type = register_types(x1, x2)
-    if not register_type:
-        def impl(x1, x2):
-            raise NotImplementedError('NotImplemented')
-        return impl
-
     def impl(x1, x2):
         if isinstance(x1, cmp_type) and not isinstance(x2, cmp_type):
             return greater_equal(*register_type(x2), *register_type(x1), True)
@@ -293,9 +243,7 @@ def ov_nb_char_greater_equal(x1, x2):
 def ov_nb_char_less(x1, x2):
     """Native Implementation of np.char.less"""
 
-    accepted_types = (types.Array, types.Bytes, types.UnicodeType)
-    if not isinstance(x1, accepted_types) or not isinstance(x2, accepted_types):
-        raise TypeError('comparison of non-string arrays')
+    register_type, cmp_type = register_pair(x1, x2)
 
     @register_jitable(**JIT_OPTIONS)
     def less(chr_array, len_chr, size_chr, cmp_array, len_cmp, size_cmp, inv=False):
@@ -317,12 +265,6 @@ def ov_nb_char_less(x1, x2):
             return ~less_than
         return less_than
 
-    register_type, cmp_type = register_types(x1, x2)
-    if not register_type:
-        def impl(x1, x2):
-            raise NotImplementedError('NotImplemented')
-        return impl
-
     def impl(x1, x2):
         if isinstance(x1, cmp_type) and not isinstance(x2, cmp_type):
             return less(*register_type(x2), *register_type(x1), True)
@@ -334,9 +276,7 @@ def ov_nb_char_less(x1, x2):
 def ov_nb_char_less_equal(x1, x2):
     """Native Implementation of np.char.less_equal"""
 
-    accepted_types = (types.Array, types.Bytes, types.UnicodeType)
-    if not isinstance(x1, accepted_types) or not isinstance(x2, accepted_types):
-        raise TypeError('comparison of non-string arrays')
+    register_type, cmp_type = register_pair(x1, x2)
 
     @register_jitable(**JIT_OPTIONS)
     def less_equal(chr_array, len_chr, size_chr, cmp_array, len_cmp, size_cmp, inv=False):
@@ -357,12 +297,6 @@ def ov_nb_char_less_equal(x1, x2):
             return ~less_equal_than
         return less_equal_than
 
-    register_type, cmp_type = register_types(x1, x2)
-    if not register_type:
-        def impl(x1, x2):
-            raise NotImplementedError('NotImplemented')
-        return impl
-
     def impl(x1, x2):
         if isinstance(x1, cmp_type) and not isinstance(x2, cmp_type):
             return less_equal(*register_type(x2), *register_type(x1), True)
@@ -370,36 +304,35 @@ def ov_nb_char_less_equal(x1, x2):
     return impl
 
 
-# @overload(np.char.compare_chararrays, **OPTIONS)
-# def ov_nb_char_compare_chararrays(a, b, cmp_op, rstrip):
-#     """Native Implementation of np.char.compare_chararrays (rstrip is pending)"""
-#     if not isinstance(cmp_op, (types.Bytes, types.UnicodeType)):
-#         raise TypeError(f'a bytes-like object is required, not {cmp_op.name}')
-#
-#     @register_jitable(**JIT_OPTIONS)
-#     def compare_chararrays(a, b, cmp_op, rstrip):
-#         # {“<”, “<=”, “==”, “>=”, “>”, “!=”} || { (60,) (60, 61), (61, 61), (62, 61), (62,), (33, 61) }
-#         if len(cmp_op) == 1:
-#             cmp_ord = ord(cmp_op)
-#             if cmp_ord == 60:
-#                 impl_func = np.char.less
-#             elif cmp_ord == 62:
-#                 impl_func = np.char.greater
-#             else:
-#                 raise ValueError("comparison must be '==', '!=', '<', '>', '<=', '>='")
-#         elif len(cmp_op) == 2 and ord(cmp_op[1]) == 61:
-#             cmp_ord = ord(cmp_op[0])
-#             if cmp_ord == 60:
-#                 impl_func = np.char.less_equal
-#             elif cmp_ord == 61:
-#                 impl_func = np.char.equal
-#             elif cmp_ord == 62:
-#                 impl_func = np.char.greater_equal
-#             elif cmp_ord == 33:
-#                 impl_func = np.char.not_equal
-#             else:
-#                 raise ValueError("comparison must be '==', '!=', '<', '>', '<=', '>='")
-#         else:
-#             raise ValueError("comparison must be '==', '!=', '<', '>', '<=', '>='")
-#         return impl_func(a, b)
-#     return compare_chararrays
+@overload(np.char.compare_chararrays)
+def ov_nb_char_compare_chararrays(a1, a2, cmp, rstrip):
+    """Native Implementation of np.char.compare_chararrays (rstrip is pending)"""
+    if not isinstance(cmp, (types.Bytes, types.UnicodeType)):
+        raise TypeError(f'a bytes-like object is required, not {cmp.name}')
+
+    def compare_chararrays(a1, a2, cmp, rstrip):
+        # The argument cmp can be passed as bytes or string.
+        # {“<”, “<=”, “==”, “>=”, “>”, “!=”} || { (60,) (60, 61), (61, 61), (62, 61), (62,), (33, 61) }
+        if len(cmp) == 1:
+            cmp_ord = ord(cmp)
+            if cmp_ord == 60:
+                return np.char.less(a1, a2)
+            elif cmp_ord == 62:
+                return np.char.greater(a1, a2)
+            else:
+                raise ValueError("comparison must be '==', '!=', '<', '>', '<=', '>='")
+        elif len(cmp) == 2 and ord(cmp[1]) == 61:
+            cmp_ord = ord(cmp[0])
+            if cmp_ord == 60:
+                return np.char.less_equal(a1, a2)
+            elif cmp_ord == 61:
+                return np.char.equal(a1, a2)
+            elif cmp_ord == 62:
+                return np.char.greater_equal(a1, a2)
+            elif cmp_ord == 33:
+                return np.char.not_equal(a1, a2)
+            else:
+                raise ValueError("comparison must be '==', '!=', '<', '>', '<=', '>='")
+        else:
+            raise ValueError("comparison must be '==', '!=', '<', '>', '<=', '>='")
+    return compare_chararrays
