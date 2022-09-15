@@ -44,14 +44,31 @@ def rstrip_inner(chr_array, size_chr):
     if size_chr == 1:
         return chr_array
 
+    def bisect_null(a, j, k):
+        """Strings are right padded with null characters in the form of '\x00', which can be bisected."""
+        while j < k:
+            m = (k + j) // 2
+            c = a[m]
+            if c != 0:
+                j = m + 1
+            elif c == 0:
+                k = m
+            else:
+                return m
+        return j
+
     whitespace = {0, 9, 10, 11, 12, 13, 32}
     size_stride = size_chr - 1
 
     for i in range(size_stride, chr_array.size, size_chr):
         if chr_array[i] not in whitespace:
             continue
-        j = i - 1
-        while j > i - size_stride and chr_array[j] in whitespace:
-            j -= 1
-        chr_array[j + 1: i + 1] = 0
+
+        o = i - size_stride
+        p = bisect_null(chr_array, o, i - 1)
+        while p > o and chr_array[p] in whitespace:
+            p -= 1
+
+        chr_array[p + 1: i + 1] = 0
+
     return chr_array
