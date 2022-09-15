@@ -2,7 +2,7 @@ from itertools import product
 from numpy import all, array_split, median, ndarray, zeros
 from pandas import DataFrame
 from time import perf_counter
-from types import GeneratorType, NoneType
+from types import GeneratorType
 import matplotlib.pyplot as plt
 import numpy as np
 
@@ -24,7 +24,7 @@ class CharacterTest:
 
     def __set_args(self, impl, base, byte_args, string_args):
         if impl or base:
-            assert impl and base, 'Must set both implementation and base.'
+            assert impl and base, 'Must set both implementation and baseline.'
             self.impl = impl
             self.base = base
             if not self.name_impl or self.name_impl[-1] != impl:
@@ -42,7 +42,7 @@ class CharacterTest:
 
     @staticmethod
     def __describe_args(args):
-        return ', '.join(str(a) if isinstance(a, (int, float, NoneType))
+        return ', '.join(str(a) if isinstance(a, (int, float, type(None)))
                          else str(a) if isinstance(a, (bytes, str)) and len(a) <= 10
                          else signature(a) for a in args)
 
@@ -83,7 +83,7 @@ class CharacterTest:
             graph_performance(measurements=self.measurements[0],
                               test_titles=np.char.add('bytes: ', self.name_base),
                               test_labels=self.signatures[0],
-                              main_title=main_title,
+                              main_title=main_title or 'Measured Performance (ms): Bytes',
                               columns=columns,
                               x_label='test number',
                               y_label='median time (milliseconds)'),
@@ -91,7 +91,7 @@ class CharacterTest:
                               test_titles=np.char.add('string: ', self.name_base),
                               test_labels=self.signatures[1],
                               columns=columns,
-                              main_title=main_title,
+                              main_title=main_title or 'Measured Performance (ms): Strings',
                               x_label='test number',
                               y_label='median time (milliseconds)')
         ]
@@ -123,7 +123,7 @@ class StandardTest:
 
     def __set_args(self, impl, base, args):
         if impl or base:
-            assert impl and base, 'Must set both implementation and base.'
+            assert impl and base, 'Must set both implementation and baseline.'
             self.impl = impl
             self.base = base
             if not self.name_impl or self.name_impl[-1] != impl:
@@ -138,12 +138,14 @@ class StandardTest:
 
     @staticmethod
     def __describe_args(args):
-        return ', '.join(str(a) if isinstance(a, (int, float, NoneType))
+        return ', '.join(str(a) if isinstance(a, (int, float, type(None)))
                          else str(a) if isinstance(a, (bytes, str)) and len(a) <= 10
                          else signature(a) for a in args)
 
     def test(self, impl=None, base=None, args=None):
         self.__set_args(impl, base, args)
+        if not self.impl:
+            raise AttributeError('Implementation not set before calling test function')
         for m, args in enumerate(self.args):
             self.signatures.append(self.__describe_args(args))
             run_test(self.impl, self.base, *args,
@@ -188,9 +190,10 @@ class StandardTest:
         if not run_method:
             print("Method must be in ('test', 'measure', 'graph')")
         else:
-            self.is_tested = False
-            self.is_measured = False
+            self.is_tested = self.is_measured = False
             self.__set_args(impl, base, args)
+            if not self.impl:
+                return 'Implementation not set.'
             run_method(**method_kwargs)
 
 
@@ -199,8 +202,10 @@ def run_test(implementation, baseline, *args, **kwargs) -> None:
     __msg = ''
     if '__msg' in kwargs:
         print(__msg := kwargs.pop('__msg'))
-    comparison = implementation(*args, **kwargs) == baseline(*args, **kwargs)
-    assert all(comparison), f'all({implementation.__name__} == {baseline.__name__}) -> {__msg}'
+    im = implementation(*args, **kwargs)
+    ba = baseline(*args, **kwargs)
+    assert ((im.size == ba.size == 1 or im.shape == ba.shape)
+            and all(im == ba)), f'all({implementation.__name__} == {baseline.__name__}) -> {__msg}'
 
 
 def measure_test(implementation, baseline, *args, **kwargs):
@@ -256,7 +261,7 @@ def graph_performance(measurements, test_titles: list, test_labels=None, main_ti
     def set_fig_size(test_count, columns_, rows_, scale_factor=0.5, size_y=7):
         x_dim = scale_factor * test_count * columns_
         y_dim = rows_ * size_y
-        return max(x_dim, size_y * 0.8), y_dim
+        return max(x_dim, size_y * columns_), y_dim
 
     def plot_graph(samples, titles):
         functions = array_split(samples, func_count)
@@ -282,11 +287,11 @@ def graph_performance(measurements, test_titles: list, test_labels=None, main_ti
                                   xticks=x_ticks,
                                   ylabel=y_label)
                 f += 1
-        fig.suptitle(main_title, fontsize=max(11, int(fig_size[0])))
+        fig.suptitle(main_title, fontsize=max(11, int(fig_size[0]*0.8)))
         if test_labels:
             signatures = ', '.join(f"{k}: '{v}'" for k, v in dict(zip(x_ticks, test_labels)).items())
             fig.text(0.01, 0.01, ''.join(["test arguments: {\n", signatures, "}\n"]), fontsize=8, wrap=True)
-        fig.tight_layout(pad=3, rect=[0.05, 0.05, 0.95, 0.99])
+        fig.tight_layout(pad=3, rect=[0.05, 0.07, 0.95, 0.99])
         if show:
             fig.show()
         return fig, axs

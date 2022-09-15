@@ -23,34 +23,37 @@ def test(method='test'):
         character_test.run(m, ch.numba_char_less_equal, np.char.less_equal)
 
         if method_ == 'graph':
-            character_test.graph(main_title='Measured Test Performance (milliseconds)')
+            character_test.graph()
 
-        byte_args_ = list(pack_arguments(byte_args_, [('==', '!=', '>=', '>', '<', '<='), (None,)]))
-        string_args_ = list(pack_arguments(string_args_, [('==', '!=', '>=', '>', '<', '<='), (None,)]))
+        byte_args_ = list(pack_arguments(byte_args_, [('==', '!=', '>=', '>', '<', '<='), (True, False)]))
+        string_args_ = list(pack_arguments(string_args_, [('==', '!=', '>=', '>', '<', '<='), (True, False)]))
         CharacterTest(byte_args=byte_args_, string_args=string_args_).test(ch.numba_compare_chararrays,
                                                                            np.compare_chararrays)
         return character_test
 
-    length = 1001
-    # Generate 100 ASCII strings of length 1 to 50
+    length = 10001
+    # Generate 100 ASCII strings of length 1 to 50, including trailing whitespace
     np.random.seed(1)
-    r = np.random.choice([''.join([chr(np.random.randint(1, 127)) for _ in range(np.random.randint(1, 50))])
+    r = np.random.choice([''.join([chr(np.random.randint(1, 127)) for _ in range(np.random.randint(1, 51))])
                           for _ in range(100)], length)
     s: tuple = np.array(['abc', 'def'] * length), np.array(['cba', 'fed'] * length),
     t: tuple = np.array(['ab', 'bc'] * length), np.array(['bc', 'ab'] * length),
     u: tuple = np.array(['ba', 'cb'] * length), np.array(['cb', 'ba'] * length)
     v = np.random.choice(['abcd', 'abc', 'abcde'], length)
-    w = np.random.choice([chr(__i) for __i in range(1, 128)], length)
 
-    # With an efficient implementation of whitespace removal, trailing \t\n\r\f\v characters can be supported.
-    x = np.char.add(r, chr(np.random.randint(33, 127)))  # Adding a non-whitespace character to end of strings.
+    # Add whitespace to end of strings, and single ASCII characters with range(0, 33)
+    w = np.random.choice(range(33), length).astype('int32').view('U1')
+    x = np.concatenate([[chr(i) for i in range(33)], np.char.add(r, w)])
+
+    # Generate ASCII characters
+    c = np.random.choice([chr(__i) for __i in range(0, 128)], length)
 
     arrays = [
         s, t, u,
-        (v, np.random.choice(v, length)),
-        (w, np.random.choice(w, length)),
-        (w, w), (w, np.random.choice(w, length)),
-        (x, x), (x, np.random.choice(x, length)),
+        (c, np.random.choice(c, c.size)),
+        (v, np.random.choice(v, v.size)),
+        (w, w), (w, np.random.choice(w, w.size)),
+        (x, x), (x, np.random.choice(x, x.size)),
         (x, 'abcdefg'), (x, 'gfedcba'),
         ('abc', 'abc'), ('abc', 'abd'), ('abc', 'abb'),
         ('abc', 'abc'*100), ('ab', 'ba'),
