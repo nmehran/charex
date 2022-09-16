@@ -5,6 +5,7 @@ from numpy import dtype, empty, frombuffer, ravel
 
 @register_jitable(**JIT_OPTIONS)
 def register_bytes(b, rstrip=True):
+    """Expose bytes to their numerical representation."""
     if isinstance(b, bytes):
         len_chr = 1
         size_chr = len(b)
@@ -18,7 +19,7 @@ def register_bytes(b, rstrip=True):
 
 @register_jitable(**JIT_OPTIONS)
 def register_strings(s, rstrip=True):
-    """UTF-32 supported."""
+    """Expose UTF-32 strings to their numerical representation."""
     if isinstance(s, str):
         len_chr = 1
         size_chr = len(s)
@@ -44,7 +45,7 @@ def rstrip_inner(chr_array, size_chr):
         return chr_array
 
     def bisect_null(a, j, k):
-        """Strings are right padded with null characters in the form of '\x00', which can be bisected."""
+        """Bisect null right-padded strings with the form '\x00'."""
         while j < k:
             m = (k + j) // 2
             c = a[m]
