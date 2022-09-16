@@ -2,6 +2,7 @@
 
 from charex.tests.definitions import ComparisonOperators
 from charex.tests.support import arguments_as_bytes, pack_arguments, CharacterTest
+from sys import maxunicode
 import numpy as np
 
 TEST_BYTES = True
@@ -32,29 +33,31 @@ def test(method='test'):
         return character_test
 
     length = 10001
-    # Generate 100 ASCII strings of length 1 to 50, including trailing whitespace
+    # Generate 500 UTF-32 strings of length 1 to 200 in range(1, sys.maxunicode)
     np.random.seed(1)
-    r = np.random.choice([''.join([chr(np.random.randint(1, 127)) for _ in range(np.random.randint(1, 51))])
+    q = np.random.choice([''.join([chr(np.random.randint(1, maxunicode)) for _ in range(np.random.randint(1, 200))])
+                          for _ in range(500)], length)
+    # Generate 100 ASCII strings of length 1 to 50
+    r = np.random.choice([''.join([chr(np.random.randint(1, 128)) for _ in range(np.random.randint(1, 50))])
                           for _ in range(100)], length)
     s: tuple = np.array(['abc', 'def'] * length), np.array(['cba', 'fed'] * length),
     t: tuple = np.array(['ab', 'bc'] * length), np.array(['bc', 'ab'] * length),
     u: tuple = np.array(['ba', 'cb'] * length), np.array(['cb', 'ba'] * length)
     v = np.random.choice(['abcd', 'abc', 'abcde'], length)
 
-    # Add whitespace to end of strings, and single ASCII characters with range(0, 33)
-    w = np.random.choice(range(33), length).astype('int32').view('U1')
-    x = np.concatenate([[chr(i) for i in range(33)], np.char.add(r, w)])
+    # Add whitespace to end of strings, and single ASCII characters in range(0, 33)
+    w = [chr(i) for i in range(33)]
+    x = np.concatenate([w, np.char.add(r, np.random.choice(w, length))])
 
-    # Generate ASCII characters
-    c = np.random.choice([chr(__i) for __i in range(0, 128)], length)
+    # Generate single ASCII characters
+    c = np.random.choice([chr(__i) for __i in range(128)], length)
 
     arrays = [
         s, t, u,
         (c, np.random.choice(c, c.size)),
         (v, np.random.choice(v, v.size)),
-        (w, w), (w, np.random.choice(w, w.size)),
         (x, x), (x, np.random.choice(x, x.size)),
-        (x, 'abcdefg'), (x, 'gfedcba'),
+        (x, 'abcdefg'), (x, 'abcdefg'*50),
         ('abc', 'abc'), ('abc', 'abd'), ('abc', 'abb'),
         ('abc', 'abc'*100), ('ab', 'ba'),
     ]
@@ -67,11 +70,18 @@ def test(method='test'):
         (np.array('hello'*100, dtype='U200'), np.array('hello'*100, dtype='U100'))
     ]
 
+    # UTF-32
+    arrays += [
+        (q, np.random.choice(q)),
+        (q, np.random.choice(q, q.size)),
+        (q, np.char.add(q, np.random.choice(w, q.size)))
+    ]
+
     byte_args, string_args = [], []
     if TEST_STRINGS:
         string_args = arrays
     if TEST_BYTES:
-        byte_args = list(arguments_as_bytes(arrays))
+        byte_args = list(arguments_as_bytes(arrays[:-3]))
 
     test_comparison_operators(byte_args_=[a[::-1] for a in byte_args],
                               string_args_=[a[::-1] for a in string_args],
