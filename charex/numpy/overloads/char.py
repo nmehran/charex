@@ -11,14 +11,23 @@ import numpy as np
 
 
 @register_jitable(**JIT_OPTIONS)
-def get_register_type(x1, x2):
-    accepted_types = (types.Array, types.Bytes, types.UnicodeType)
-    if not isinstance(x1, accepted_types) or not isinstance(x2, accepted_types):
+def ensure_type(x):
+    if isinstance(x, types.Array):
+        if x.ndim > 1 or x.layout != 'C':
+            msg = 'shape mismatch: objects cannot be broadcast to a single shape.  Mismatch is between arg 0 and arg 1.'
+            raise ValueError(msg)
+        if not x.dtype.count:
+            raise TypeError('comparison of non-string arrays')
+        x = x.dtype
+    elif not isinstance(x, (types.Bytes, types.UnicodeType)):
         raise TypeError('comparison of non-string arrays')
+    return x
 
-    x1_type = x1.dtype if isinstance(x1, types.Array) else x1
-    x2_type = x2.dtype if isinstance(x2, types.Array) else x2
 
+@register_jitable(**JIT_OPTIONS)
+def get_register_type(x1, x2):
+
+    x1_type, x2_type = ensure_type(x1), ensure_type(x2)
     byte_types = (types.Bytes, types.CharSeq)
     str_types = (types.UnicodeType, types.UnicodeCharSeq)
 
