@@ -9,7 +9,10 @@ import numpy as np
 
 
 @register_jitable(**JIT_OPTIONS)
-def _cast_comparison(size_chr, len_cmp, size_cmp):
+def _cast_comparison(size_chr, len_chr, len_cmp, size_cmp):
+    if len_cmp > 1 and len_cmp != len_chr:
+        msg = 'shape mismatch: objects cannot be broadcast to a single shape.  Mismatch is between arg 0 and arg 1.'
+        raise ValueError(msg)
     size_margin = size_chr - size_cmp
     if len_cmp == 1:
         size_stride = min(size_chr, size_cmp + (size_margin < 0))
@@ -33,7 +36,7 @@ def greater_equal(chr_array, len_chr, size_chr, cmp_array, len_cmp, size_cmp, in
     if 1 == size_chr == size_cmp:
         return cmp_array >= chr_array if inv else chr_array >= cmp_array
 
-    size_cmp, size_stride, size_margin = _cast_comparison(size_chr, len_cmp, size_cmp)
+    size_cmp, size_stride, size_margin = _cast_comparison(size_chr, len_chr, len_cmp, size_cmp)
     greater_equal_than = np.zeros(len_chr, 'bool')
     stride = stride_cmp = 0
     for i in range(len_chr):
@@ -55,7 +58,7 @@ def greater(chr_array, len_chr, size_chr, cmp_array, len_cmp, size_cmp, inv=Fals
     if 1 == size_chr == size_cmp:
         return cmp_array > chr_array if inv else chr_array > cmp_array
 
-    size_cmp, size_stride, size_margin = _cast_comparison(size_chr, len_cmp, size_cmp)
+    size_cmp, size_stride, size_margin = _cast_comparison(size_chr, len_chr, len_cmp, size_cmp)
     greater_than = np.zeros(len_chr, 'bool')
     stride = stride_cmp = 0
     for i in range(len_chr):
@@ -74,7 +77,7 @@ def greater(chr_array, len_chr, size_chr, cmp_array, len_cmp, size_cmp, inv=Fals
 @register_jitable(**JIT_OPTIONS)
 def equal(chr_array, len_chr, size_chr, cmp_array, len_cmp, size_cmp):
     """Native Implementation of np.char.equal"""
-    # This implementation is more verbose, but has higher performance than its inline version.
+    # This implementation is more verbose, but has higher performance than its non-inline version.
     ix = 0
     if len_cmp == 1:
         if size_chr < size_cmp:
@@ -89,7 +92,7 @@ def equal(chr_array, len_chr, size_chr, cmp_array, len_cmp, size_cmp):
             for i in range(len_chr):
                 equal_to[i] = not _compare_any(cmp_array, chr_array[ix:ix + size_cmp])
                 ix += size_chr
-    else:
+    elif len_chr == len_cmp:
         iy = 0
         equal_to = np.empty(len_chr, 'bool')
         if size_chr < size_cmp:
@@ -110,6 +113,9 @@ def equal(chr_array, len_chr, size_chr, cmp_array, len_cmp, size_cmp):
             for i in range(len_chr):
                 equal_to[i] = not _compare_any(chr_array[ix:ix + size_chr], cmp_array[ix:ix + size_chr])
                 ix += size_chr
+    else:
+        msg = 'shape mismatch: objects cannot be broadcast to a single shape.  Mismatch is between arg 0 and arg 1.'
+        raise ValueError(msg)
     return equal_to
 
 
