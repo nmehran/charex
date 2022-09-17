@@ -4,10 +4,7 @@ Numba overloads for numpy.character routines
 
 from charex.core import JIT_OPTIONS, OPTIONS
 from charex.core._string_intrinsics import register_bytes, register_strings
-from charex.numpy.overloads.definitions import (equal, not_equal,
-                                                greater_equal, greater,
-                                                less, less_equal,
-                                                compare_chararrays)
+from charex.numpy.overloads.definitions import greater_equal, greater, not_equal, compare_chararrays
 from numba.extending import overload, register_jitable
 from numba.core import types
 import numpy as np
@@ -45,8 +42,8 @@ def ov_char_equal(x1, x2):
 
     def impl(x1, x2):
         if isinstance(x1, cmp_type) and not isinstance(x2, cmp_type):
-            return equal(*register_type(x2), *register_type(x1))
-        return equal(*register_type(x1), *register_type(x2))
+            return ~not_equal(*register_type(x2), *register_type(x1))
+        return ~not_equal(*register_type(x1), *register_type(x2))
     return impl
 
 
@@ -93,8 +90,8 @@ def ov_char_less(x1, x2):
 
     def impl(x1, x2):
         if isinstance(x1, cmp_type) and not isinstance(x2, cmp_type):
-            return less(*register_type(x2), *register_type(x1), True)
-        return less(*register_type(x1), *register_type(x2))
+            return ~greater_equal(*register_type(x2), *register_type(x1), True)
+        return ~greater_equal(*register_type(x1), *register_type(x2))
     return impl
 
 
@@ -105,8 +102,8 @@ def ov_char_less_equal(x1, x2):
 
     def impl(x1, x2):
         if isinstance(x1, cmp_type) and not isinstance(x2, cmp_type):
-            return less_equal(*register_type(x2), *register_type(x1), True)
-        return less_equal(*register_type(x1), *register_type(x2))
+            return ~greater(*register_type(x2), *register_type(x1), True)
+        return ~greater(*register_type(x1), *register_type(x2))
     return impl
 
 
