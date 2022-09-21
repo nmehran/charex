@@ -5,7 +5,7 @@ Copyright (c) 2022, Nima Mehrani
 
 from charex.core import JIT_OPTIONS
 from numba.extending import register_jitable
-from numba import int16
+from numba import int32
 import numpy as np
 
 
@@ -31,7 +31,7 @@ def _compare_any(x1: np.ndarray, x2: np.ndarray) -> bool:
     return False
 
 
-@register_jitable(**JIT_OPTIONS, locals={'cmp_ord': int16})
+@register_jitable(**JIT_OPTIONS, locals={'cmp_ord': int32})
 def greater_equal(chr_array, len_chr, size_chr, cmp_array, len_cmp, size_cmp, inv=False):
     """Native Implementation of np.char.greater_equal"""
     if 1 == size_chr == size_cmp:
@@ -53,7 +53,7 @@ def greater_equal(chr_array, len_chr, size_chr, cmp_array, len_cmp, size_cmp, in
     return greater_equal_than
 
 
-@register_jitable(**JIT_OPTIONS, locals={'cmp_ord': int16})
+@register_jitable(**JIT_OPTIONS, locals={'cmp_ord': int32})
 def greater(chr_array, len_chr, size_chr, cmp_array, len_cmp, size_cmp, inv=False):
     """Native Implementation of np.char.greater"""
     if 1 == size_chr == size_cmp:
