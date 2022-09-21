@@ -12,7 +12,7 @@ def register_bytes(b, rstrip=True):
     else:
         len_chr = b.size
         size_chr = b.itemsize
-    if rstrip:
+    if rstrip and size_chr:
         return rstrip_inner(frombuffer(b, 'int8').copy(), size_chr), len_chr, size_chr
     return frombuffer(b, 'int8'), len_chr, size_chr
 
@@ -30,7 +30,7 @@ def register_strings(s, rstrip=True):
         len_chr = s.size
         size_chr = s.itemsize // 4
         chr_array = ravel(s).view(dtype('int32'))
-    if rstrip:
+    if rstrip and size_chr:
         return rstrip_inner(chr_array, size_chr), len_chr, size_chr
     return chr_array, len_chr, size_chr
 
