@@ -5,7 +5,7 @@ from numpy import dtype, empty, frombuffer, ravel
 
 @register_jitable(**JIT_OPTIONS)
 def register_bytes(b, rstrip=True):
-    """Expose bytes to their numerical representation."""
+    """Expose the numerical representation of ASCII bytes."""
     if isinstance(b, bytes):
         len_chr = 1
         size_chr = len(b)
@@ -13,13 +13,13 @@ def register_bytes(b, rstrip=True):
         len_chr = b.size
         size_chr = b.itemsize
     if rstrip and size_chr:
-        return rstrip_inner(frombuffer(b, 'int8').copy(), size_chr), len_chr, size_chr
-    return frombuffer(b, 'int8'), len_chr, size_chr
+        return rstrip_inner(frombuffer(b, 'uint8').copy(), size_chr), len_chr, size_chr
+    return frombuffer(b, 'uint8'), len_chr, size_chr
 
 
 @register_jitable(**JIT_OPTIONS)
 def register_strings(s, rstrip=True):
-    """Expose UTF-32 strings to their numerical representation."""
+    """Expose the numerical representation of UTF-32 strings."""
     if isinstance(s, str):
         len_chr = 1
         size_chr = len(s)
