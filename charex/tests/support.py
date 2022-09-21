@@ -204,8 +204,9 @@ def run_test(implementation, baseline, *args, **kwargs) -> None:
         print(__msg := kwargs.pop('__msg'))
     im = implementation(*args, **kwargs)
     ba = baseline(*args, **kwargs)
-    assert ((im.size == ba.size == 1 or im.shape == ba.shape)
-            and all(im == ba)), f'all({implementation.__name__} == {baseline.__name__}) -> {__msg}'
+    assert im.dtype == ba.dtype, f'{im.dtype} == {ba.dtype} -> {__msg}'
+    assert im.shape == ba.shape, f'{im.shape} == {ba.shape} -> {__msg}'
+    assert all(im == ba), f'all({implementation.__name__} == {baseline.__name__}) -> {__msg}'
 
 
 def measure_test(implementation, baseline, *args, **kwargs):
@@ -300,7 +301,7 @@ def graph_performance(measurements, test_titles: list, test_labels=None, main_ti
     return figure, axes
 
 
-def pack_arguments(main_args: (tuple, list), args: (tuple, list)):
+def pack_arguments(main_args: (list, tuple), args: (list, tuple)):
     """Generate combinations of arguments for a list of main arguments"""
     arg_product = tuple(product(*args))
     for a in main_args:
@@ -330,7 +331,7 @@ def signature(arg):
     return type_arg
 
 
-def arguments_as_bytes(args: list):
+def arguments_as_bytes(args: (list, tuple)):
     """Yield byte counterparts of string arguments, given a tuple of arguments"""
     for pair in args:
         as_bytes = []
