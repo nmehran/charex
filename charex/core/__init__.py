@@ -9,5 +9,5 @@ JIT_OPTIONS = dict(
 OPTIONS = dict(
     jit_options=JIT_OPTIONS,
     prefer_literal=True,
-    strict=True,
+    strict=False,
 )
