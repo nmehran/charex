@@ -84,10 +84,15 @@ def greater(chr_array, len_chr, size_chr, cmp_array, len_cmp, size_cmp, inv=Fals
 def equal(chr_array, len_chr, size_chr, cmp_array, len_cmp, size_cmp):
     """Native Implementation of np.char.equal"""
     # This implementation is more verbose, but has higher performance than its non-inline version.
+    if 1 == size_chr == size_cmp:
+        return chr_array == cmp_array
+
     ix = 0
     if len_cmp == 1:
         if size_chr < size_cmp:
-            return np.zeros(len_chr, 'bool')
+            if cmp_array[size_chr]:
+                return np.zeros(len_chr, 'bool')
+            return np.array([not _compare_any(chr_array, cmp_array[:size_chr])], 'bool')
         equal_to = np.empty(len_chr, 'bool')
         if size_chr > size_cmp:
             for i in range(len_chr):
@@ -114,8 +119,6 @@ def equal(chr_array, len_chr, size_chr, cmp_array, len_cmp, size_cmp):
                 ix += size_chr
                 iy += size_cmp
         else:
-            if size_chr == 1:
-                return chr_array == cmp_array
             for i in range(len_chr):
                 equal_to[i] = not _compare_any(chr_array[ix:ix + size_chr], cmp_array[ix:ix + size_chr])
                 ix += size_chr
