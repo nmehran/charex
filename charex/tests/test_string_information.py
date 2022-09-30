@@ -1,6 +1,6 @@
-"""Test numpy character comparison operators."""
+"""Test numpy string information operations."""
 
-from charex.tests.definitions import ComparisonOperators
+from charex.tests.definitions import StringInformation
 from charex.tests.support import CharacterTest, arguments_as_bytes, pack_arguments
 from sys import maxunicode
 import numpy as np
@@ -10,30 +10,19 @@ TEST_STRINGS = True
 
 
 def test(method='test'):
-    ch = ComparisonOperators()
+    ch = StringInformation()
 
-    def test_comparison_operators(byte_args_, string_args_, method_=method):
-        test_comparisons = CharacterTest(byte_args=byte_args_, string_args=string_args_)
-        m = 'measure' if method_ == 'graph' else method_
+    def test_string_information(byte_args_, string_args_, method_=method):
 
-        test_comparisons.run(m, ch.char_equal, np.char.equal)
-        test_comparisons.run(m, ch.char_not_equal, np.char.not_equal)
-        test_comparisons.run(m, ch.char_greater_equal, np.char.greater_equal)
-        test_comparisons.run(m, ch.char_greater, np.char.greater)
-        test_comparisons.run(m, ch.char_less, np.char.less)
-        test_comparisons.run(m, ch.char_less_equal, np.char.less_equal)
+        byte_args_ = list(pack_arguments(byte_args_, [(0, 1, 2, 3, -500, 500), (-0, -1, -2, -3, 500, -500)]))
+        string_args_ = list(pack_arguments(string_args_, [(0, 1, 2, 3, -500, 500), (-0, -1, -2, -3, 500, -500)]))
+        CharacterTest(byte_args=byte_args_,
+                      string_args=string_args_).run(method_, ch.char_count, np.char.count)
 
-        if method_ == 'graph':
-            test_comparisons.graph()
+        CharacterTest(byte_args=[ba[:1] for ba in byte_args_],
+                      string_args=[sa[:1] for sa in string_args_]).run(method_, ch.str_len, np.char.str_len)
 
-        byte_args_ = list(pack_arguments(byte_args_, [('==', '!=', '>=', '>', '<', '<='), (True, False)]))
-        string_args_ = list(pack_arguments(string_args_, [('==', '!=', '>=', '>', '<', '<='), (True, False)]))
-        CharacterTest(byte_args=byte_args_, string_args=string_args_)\
-            .test(ch.char_compare_chararrays, np.char.compare_chararrays)
-
-        return test_comparisons
-
-    length = 10001
+    length = 10000
     np.random.seed(1)
     # ASCII strings of length 0 to 50
     s = np.array([''.join([chr(np.random.randint(1, 127))
@@ -87,10 +76,10 @@ def test(method='test'):
     if TEST_BYTES:
         byte_args = list(arguments_as_bytes(generics + scalars + buffers))
 
-    test_comparison_operators(byte_args_=[a[::-1] for a in byte_args],
-                              string_args_=[a[::-1] for a in string_args],
-                              method_='test')
-    test_comparison_operators(byte_args, string_args, method)
+    test_string_information(byte_args_=[a[::-1] for a in byte_args],
+                            string_args_=[a[::-1] for a in string_args],
+                            method_='test')
+    test_string_information(byte_args, string_args, method)
 
 
 if __name__ == '__main__':

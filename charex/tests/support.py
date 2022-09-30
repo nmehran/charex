@@ -206,7 +206,7 @@ def run_test(implementation, baseline, *args, **kwargs) -> None:
     im = implementation(*args, **kwargs)
     ba = baseline(*args, **kwargs)
     assert im.dtype == ba.dtype, f'{im.dtype} == {ba.dtype} -> {__msg}'
-    # assert im.shape == ba.shape, f'{im.shape} == {ba.shape} -> {__msg}'
+    assert im.shape == ba.shape, f'{im.shape} == {ba.shape} -> {__msg}'
     assert all(im == ba), f'all({implementation.__name__} == {baseline.__name__}) -> {__msg}'
 
 

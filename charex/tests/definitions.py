@@ -35,5 +35,17 @@ class ComparisonOperators:
 
     @staticmethod
     @njit(nogil=True, cache=True)
-    def compare_chararrays(a1, b1, cmp, rstrip):
+    def char_compare_chararrays(a1, b1, cmp, rstrip):
         return np.char.compare_chararrays(a1, b1, cmp, rstrip)
+
+
+class StringInformation:
+    @staticmethod
+    @njit(nogil=True, cache=True)
+    def char_count(a, sub, start=0, end=None):
+        return np.char.count(a, sub, start, end)
+
+    @staticmethod
+    @njit(nogil=True, cache=True)
+    def str_len(a):
+        return np.char.str_len(a)

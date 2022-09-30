@@ -7,7 +7,10 @@ from charex.core.string_intrinsics import (
     register_array_bytes, register_scalar_bytes,
     register_array_strings, register_scalar_strings
 )
-from charex.numpy.overloads.definitions import greater_equal, greater, equal, compare_chararrays
+from charex.numpy.overloads.definitions import (
+    greater_equal, greater, equal, compare_chararrays,
+    count, str_len
+)
 from numba.core import types
 from numba.extending import overload
 import numpy as np
@@ -160,4 +163,23 @@ def ov_char_compare_chararrays(a1, a2, cmp, rstrip):
     return impl
 
 
+# ----------------------------------------------------------------------------------------------------------------------
+# String Information
+
+@overload(np.char.count, **OPTIONS)
+def ov_char_count(a, sub, start, end):
+    register_a, register_sub, a_dim, sub_dim = _get_register_type(a, sub)
+
+    def impl(a, sub, start, end):
+        return count(*register_a(a, False), *register_sub(sub, False), start, end)
+    return impl
+
+
+@overload(np.char.str_len, **OPTIONS)
+def ov_str_len(a):
+    register_a, _, a_dim, _ = _get_register_type(a, a)
+
+    def impl(a):
+        return str_len(*register_a(a, False))
+    return impl
 # ----------------------------------------------------------------------------------------------------------------------

@@ -4,6 +4,7 @@ Copyright (c) 2022, Nima Mehrani
 """
 
 from charex.core import JIT_OPTIONS
+from charex.core.string_intrinsics import bisect_null
 from numba.extending import register_jitable
 from numba import types
 import numpy as np
@@ -151,3 +152,72 @@ def compare_chararrays(chr_array, len_chr, size_chr, cmp_array, len_cmp, size_cm
         elif cmp_ord == 33:
             return ~equal(chr_array, len_chr, size_chr, cmp_array, len_cmp, size_cmp)
     raise ValueError("comparison must be '==', '!=', '<', '>', '<=', '>='")
+
+
+# ----------------------------------------------------------------------------------------------------------------------
+# String Information
+
+
+@register_jitable(**JIT_OPTIONS)
+def _get_sub_boundaries(start, end, size_chr):
+    """Get substring start and end indices"""
+    if end is None:
+        end = size_chr
+    elif end < 0:
+        end = max(end, -size_chr)
+    if start < 0:
+        start = max(start + size_chr, 0)
+    return min(start, size_chr), min(end, size_chr)
+
+
+@register_jitable(**JIT_OPTIONS)
+def count(chr_array, len_chr, size_chr, sub_array, len_sub, size_sub, start, end):
+    """Native Implementation of np.char.count"""
+
+    if not size_sub:
+        return str_len(chr_array, len_chr, size_chr) + 1
+
+    start, end = _get_sub_boundaries(start, end, size_chr)
+    if start >= size_chr or start > end + size_chr:
+        return np.zeros(max(len_chr, len_sub), 'int64')
+
+    chr_lens = str_len(chr_array, len_chr, size_chr)
+    sub_lens = str_len(sub_array, len_sub, size_sub)
+    sub_count = np.zeros(max(len_chr, len_sub), 'int64')
+    len_cast = max(len_chr, len_sub)
+
+    size_chr = (len_chr > 1 and size_chr) or 0
+    size_cmp = (len_sub > 1 and size_sub) or 0
+    stride = stride_cmp = 0
+    for i in range(len_cast):
+        sub_item = sub_lens[(len_sub > 1 and i) or 0]
+        ci = chr_lens[(len_chr > 1 and i) or 0]
+        chr_item = min(end, ci) if end >= 0 else min(ci, max(0, end + ci))
+        if sub_item and end:
+            j = start
+            while j + sub_item <= chr_item:
+                for k in range(sub_item):
+                    if chr_array[stride + j + k] != sub_array[stride_cmp + k]:
+                        j += k + 1
+                        break
+                else:
+                    sub_count[i] += 1
+                    j += sub_item
+        else:
+            if not sub_item and start <= chr_item:
+                sub_count[i] = max(chr_item + 1 + (-start if start >= 0 else -start), 1)
+        stride += size_chr
+        stride_cmp += size_cmp
+    return sub_count
+
+
+@register_jitable(**JIT_OPTIONS)
+def str_len(chr_array, len_chr, size_chr):
+    """Native Implementation of np.char.str_len"""
+    str_length = np.empty(len_chr, 'int64')
+    stride = size_chr - 1
+    j = 0
+    for i in range(0, chr_array.size, size_chr):
+        str_length[j] = (chr_array[i + stride] and size_chr) or bisect_null(chr_array, i, i + stride) - i
+        j += 1
+    return str_length
