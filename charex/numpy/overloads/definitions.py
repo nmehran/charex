@@ -167,7 +167,7 @@ def _get_sub_boundaries(start, end, size_chr):
         end = max(end, -size_chr)
     if start < 0:
         start = max(start + size_chr, 0)
-    return min(start, size_chr), min(end, size_chr)
+    return start, min(end, size_chr)
 
 
 @register_jitable(**JIT_OPTIONS)
@@ -178,34 +178,34 @@ def count(chr_array, len_chr, size_chr, sub_array, len_sub, size_sub, start, end
         return str_len(chr_array, len_chr, size_chr) + 1
 
     start, end = _get_sub_boundaries(start, end, size_chr)
-    if start >= size_chr or start > end + size_chr:
+    if start > size_chr or start > end + size_chr:
         return np.zeros(max(len_chr, len_sub), 'int64')
 
     chr_lens = str_len(chr_array, len_chr, size_chr)
     sub_lens = str_len(sub_array, len_sub, size_sub)
-    sub_count = np.zeros(max(len_chr, len_sub), 'int64')
+
     len_cast = max(len_chr, len_sub)
+    sub_count = np.zeros(len_cast, 'int64')
 
     size_chr = (len_chr > 1 and size_chr) or 0
     size_cmp = (len_sub > 1 and size_sub) or 0
     stride = stride_cmp = 0
     for i in range(len_cast):
-        sub_item = sub_lens[(len_sub > 1 and i) or 0]
-        ci = chr_lens[(len_chr > 1 and i) or 0]
-        chr_item = min(end, ci) if end >= 0 else min(ci, max(0, end + ci))
-        if sub_item and end:
-            j = start
-            while j + sub_item <= chr_item:
-                for k in range(sub_item):
-                    if chr_array[stride + j + k] != sub_array[stride_cmp + k]:
-                        j += k + 1
+        n_chr = chr_lens[(len_chr > 1 and i) or 0]
+        n_sub = sub_lens[(len_sub > 1 and i) or 0]
+        o = max(start < 0 and start + n_chr or start, 0)
+        n = (end >= 0 and min(end, n_chr) + 1) or min(n_chr, max(0, end + n_chr)) + 1
+        if n_sub and end:
+            while o + n_sub < n:
+                for p in range(n_sub):
+                    if chr_array[stride + o + p] != sub_array[stride_cmp + p]:
+                        o += p + 1
                         break
                 else:
                     sub_count[i] += 1
-                    j += sub_item
+                    o += n_sub
         else:
-            if not sub_item and start <= chr_item:
-                sub_count[i] = max(chr_item + 1 + (-start if start >= 0 else -start), 1)
+            sub_count[i] = not n_sub and start < n and max(n - min(o, n_chr), 1)
         stride += size_chr
         stride_cmp += size_cmp
     return sub_count

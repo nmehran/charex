@@ -38,7 +38,7 @@ def _ensure_type(x):
     return x, ndim
 
 
-def _get_register_type(x1, x2):
+def _get_register_types(x1, x2, exception=NotImplementedError('NotImplemented')):
     """Determines the call function for the comparison pair, based on type."""
     (x1_type, x1_dim), (x2_type, x2_dim) = _ensure_type(x1), _ensure_type(x2)
     byte_types = (types.Bytes, types.CharSeq)
@@ -51,13 +51,28 @@ def _get_register_type(x1, x2):
         register_x1 = register_array_strings if x1_dim >= 0 else register_scalar_strings
         register_x2 = register_array_strings if x2_dim >= 0 else register_scalar_strings
     else:
-        raise NotImplementedError('NotImplemented')
+        raise exception
     return register_x1, register_x2, x1_dim, x2_dim
+
+
+def _get_register_type(x1, exception=NotImplementedError('NotImplemented')):
+    """Determines the call function for the input, based on type."""
+    x1_type, x1_dim = _ensure_type(x1)
+    byte_types = (types.Bytes, types.CharSeq)
+    str_types = (types.UnicodeType, types.UnicodeCharSeq)
+
+    if isinstance(x1_type, byte_types):
+        register_x1 = register_array_bytes if x1_dim >= 0 else register_scalar_bytes
+    elif isinstance(x1_type, str_types):
+        register_x1 = register_array_strings if x1_dim >= 0 else register_scalar_strings
+    else:
+        raise exception
+    return register_x1, x1_dim
 
 
 @overload(np.char.equal, **OPTIONS)
 def ov_char_equal(x1, x2):
-    register_x1, register_x2, x1_dim, x2_dim = _get_register_type(x1, x2)
+    register_x1, register_x2, x1_dim, x2_dim = _get_register_types(x1, x2)
 
     if x1_dim > 0 or x2_dim > 0:
         def impl(x1, x2):
@@ -72,7 +87,7 @@ def ov_char_equal(x1, x2):
 
 @overload(np.char.not_equal, **OPTIONS)
 def ov_char_not_equal(x1, x2):
-    register_x1, register_x2, x1_dim, x2_dim = _get_register_type(x1, x2)
+    register_x1, register_x2, x1_dim, x2_dim = _get_register_types(x1, x2)
 
     if x1_dim > 0 or x2_dim > 0:
         def impl(x1, x2):
@@ -87,7 +102,7 @@ def ov_char_not_equal(x1, x2):
 
 @overload(np.char.greater_equal, **OPTIONS)
 def ov_char_greater_equal(x1, x2):
-    register_x1, register_x2, x1_dim, x2_dim = _get_register_type(x1, x2)
+    register_x1, register_x2, x1_dim, x2_dim = _get_register_types(x1, x2)
 
     if x1_dim > 0 or x2_dim > 0:
         def impl(x1, x2):
@@ -102,7 +117,7 @@ def ov_char_greater_equal(x1, x2):
 
 @overload(np.char.greater, **OPTIONS)
 def ov_char_greater(x1, x2):
-    register_x1, register_x2, x1_dim, x2_dim = _get_register_type(x1, x2)
+    register_x1, register_x2, x1_dim, x2_dim = _get_register_types(x1, x2)
 
     if x1_dim > 0 or x2_dim > 0:
         def impl(x1, x2):
@@ -117,7 +132,7 @@ def ov_char_greater(x1, x2):
 
 @overload(np.char.less, **OPTIONS)
 def ov_char_less(x1, x2):
-    register_x1, register_x2, x1_dim, x2_dim = _get_register_type(x1, x2)
+    register_x1, register_x2, x1_dim, x2_dim = _get_register_types(x1, x2)
 
     if x1_dim > 0 or x2_dim > 0:
         def impl(x1, x2):
@@ -132,7 +147,7 @@ def ov_char_less(x1, x2):
 
 @overload(np.char.less_equal, **OPTIONS)
 def ov_char_less_equal(x1, x2):
-    register_x1, register_x2, x1_dim, x2_dim = _get_register_type(x1, x2)
+    register_x1, register_x2, x1_dim, x2_dim = _get_register_types(x1, x2)
 
     if x1_dim > 0 or x2_dim > 0:
         def impl(x1, x2):
@@ -150,7 +165,7 @@ def ov_char_compare_chararrays(a1, a2, cmp, rstrip):
     if not isinstance(cmp, (types.Bytes, types.UnicodeType)):
         raise TypeError(f'a bytes-like object is required, not {cmp.name}')
 
-    register_a1, register_a2, a1_dim, a2_dim = _get_register_type(a1, a2)
+    register_a1, register_a2, a1_dim, a2_dim = _get_register_types(a1, a2)
 
     if a1_dim > 0 or a2_dim > 0:
         def impl(a1, a2, cmp, rstrip):
@@ -168,18 +183,27 @@ def ov_char_compare_chararrays(a1, a2, cmp, rstrip):
 
 @overload(np.char.count, **OPTIONS)
 def ov_char_count(a, sub, start, end):
-    register_a, register_sub, a_dim, sub_dim = _get_register_type(a, sub)
+    register_a, register_sub, a_dim, sub_dim = _get_register_types(a, sub)
 
-    def impl(a, sub, start, end):
-        return count(*register_a(a, False), *register_sub(sub, False), start, end)
+    if a_dim > 0 or sub_dim > 0:
+        def impl(a, sub, start, end):
+            return count(*register_a(a, False), *register_sub(sub, False), start, end)
+    else:
+        def impl(a, sub, start, end):
+            return np.array(count(*register_a(a, False), *register_sub(sub, False), start, end)[0], 'int64')
     return impl
 
 
 @overload(np.char.str_len, **OPTIONS)
 def ov_str_len(a):
-    register_a, _, a_dim, _ = _get_register_type(a, a)
+    register_a, a_dim = _get_register_type(a)
 
-    def impl(a):
-        return str_len(*register_a(a, False))
+    if a_dim > 0:
+        def impl(a):
+            return str_len(*register_a(a, False))
+    else:
+        def impl(a):
+            return np.array(str_len(*register_a(a, False))[0], 'int64')
     return impl
+
 # ----------------------------------------------------------------------------------------------------------------------
