@@ -47,5 +47,35 @@ class StringInformation:
 
     @staticmethod
     @njit(nogil=True, cache=True)
+    def char_endswith(a, sub, start=0, end=None):
+        return np.char.endswith(a, sub, start, end)
+
+    @staticmethod
+    @njit(nogil=True, cache=True)
+    def char_startswith(a, sub, start=0, end=None):
+        return np.char.startswith(a, sub, start, end)
+
+    @staticmethod
+    @njit(nogil=True, cache=True)
+    def char_find(a, sub, start=0, end=None):
+        return np.char.find(a, sub, start, end)
+
+    @staticmethod
+    @njit(nogil=True, cache=True)
+    def char_index(a, sub, start=0, end=None):
+        return np.char.index(a, sub, start, end)
+    
+    @staticmethod
+    @njit(nogil=True, cache=True)
+    def char_rfind(a, sub, start=0, end=None):
+        return np.char.rfind(a, sub, start, end)
+
+    @staticmethod
+    @njit(nogil=True, cache=True)
+    def char_rindex(a, sub, start=0, end=None):
+        return np.char.rindex(a, sub, start, end)
+
+    @staticmethod
+    @njit(nogil=True, cache=True)
     def str_len(a):
         return np.char.str_len(a)

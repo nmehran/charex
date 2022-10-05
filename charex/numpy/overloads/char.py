@@ -9,7 +9,7 @@ from charex.core.string_intrinsics import (
 )
 from charex.numpy.overloads.definitions import (
     greater_equal, greater, equal, compare_chararrays,
-    count, str_len
+    count, endswith, startswith, find, index, rfind, str_len
 )
 from numba.core import types
 from numba.extending import overload
@@ -181,16 +181,120 @@ def ov_char_compare_chararrays(a1, a2, cmp, rstrip):
 # ----------------------------------------------------------------------------------------------------------------------
 # String Information
 
+
+def _ensure_slice(start, end):
+    """Ensure start and end slice argument is an integer type."""
+    slice_types = (types.Integer, types.NoneType)
+    if not (isinstance(start, slice_types) and isinstance(end, slice_types)):
+        raise TypeError("slice indices must be integers or None or have an __index__ method")
+    return 0, np.iinfo(np.int32).max
+
+
 @overload(np.char.count, **OPTIONS)
-def ov_char_count(a, sub, start, end):
+def ov_char_count(a, sub, start=0, end=None):
     register_a, register_sub, a_dim, sub_dim = _get_register_types(a, sub)
+    s, e = _ensure_slice(start, end)
 
     if a_dim > 0 or sub_dim > 0:
-        def impl(a, sub, start, end):
-            return count(*register_a(a, False), *register_sub(sub, False), start, end)
+        def impl(a, sub, start=0, end=None):
+            return count(*register_a(a, False), *register_sub(sub, False),
+                         s if start is None else start,
+                         e if end is None else end)
     else:
-        def impl(a, sub, start, end):
-            return np.array(count(*register_a(a, False), *register_sub(sub, False), start, end)[0], 'int64')
+        def impl(a, sub, start=0, end=None):
+            return np.array(count(*register_a(a, False), *register_sub(sub, False),
+                                  s if start is None else start,
+                                  e if end is None else end)[0], 'int64')
+    return impl
+
+
+@overload(np.char.endswith, **OPTIONS)
+def ov_char_endswith(a, sub, start=0, end=None):
+    register_a, register_sub, a_dim, sub_dim = _get_register_types(a, sub)
+    s, e = _ensure_slice(start, end)
+
+    if a_dim > 0 or sub_dim > 0:
+        def impl(a, sub, start=0, end=None):
+            return endswith(*register_a(a, False), *register_sub(sub, False),
+                            s if start is None else start,
+                            e if end is None else end)
+    else:
+        def impl(a, sub, start=0, end=None):
+            return np.array(endswith(*register_a(a, False), *register_sub(sub, False),
+                                     s if start is None else start,
+                                     e if end is None else end)[0], 'bool')
+    return impl
+
+
+@overload(np.char.startswith, **OPTIONS)
+def ov_char_startswith(a, sub, start=0, end=None):
+    register_a, register_sub, a_dim, sub_dim = _get_register_types(a, sub)
+    s, e = _ensure_slice(start, end)
+
+    if a_dim > 0 or sub_dim > 0:
+        def impl(a, sub, start=0, end=None):
+            return startswith(*register_a(a, False), *register_sub(sub, False),
+                              s if start is None else start,
+                              e if end is None else end)
+    else:
+        def impl(a, sub, start=0, end=None):
+            return np.array(startswith(*register_a(a, False), *register_sub(sub, False),
+                                       s if start is None else start,
+                                       e if end is None else end)[0], 'bool')
+    return impl
+
+
+@overload(np.char.find, **OPTIONS)
+def ov_char_find(a, sub, start=0, end=None):
+    register_a, register_sub, a_dim, sub_dim = _get_register_types(a, sub)
+    s, e = _ensure_slice(start, end)
+
+    if a_dim > 0 or sub_dim > 0:
+        def impl(a, sub, start=0, end=None):
+            return find(*register_a(a, False), *register_sub(sub, False),
+                        s if start is None else start,
+                        e if end is None else end)
+    else:
+        def impl(a, sub, start=0, end=None):
+            return np.array(find(*register_a(a, False), *register_sub(sub, False),
+                                 s if start is None else start,
+                                 e if end is None else end)[0], 'int64')
+    return impl
+
+
+@overload(np.char.index, **OPTIONS)
+def ov_char_index(a, sub, start=0, end=None):
+    register_a, register_sub, a_dim, sub_dim = _get_register_types(a, sub)
+    s, e = _ensure_slice(start, end)
+
+    if a_dim > 0 or sub_dim > 0:
+        def impl(a, sub, start=0, end=None):
+            return index(*register_a(a, False), *register_sub(sub, False),
+                         s if start is None else start,
+                         e if end is None else end)
+    else:
+        def impl(a, sub, start=0, end=None):
+            return np.array(index(*register_a(a, False), *register_sub(sub, False),
+                                  s if start is None else start,
+                                  e if end is None else end)[0], 'int64')
+    return impl
+
+
+@overload(np.char.rfind, **OPTIONS)
+def ov_char_rfind(a, sub, start=0, end=None):
+    register_a, register_sub, a_dim, sub_dim = _get_register_types(a, sub)
+    s, e = _ensure_slice(start, end)
+
+    if a_dim > 0 or sub_dim > 0:
+        def impl(a, sub, start=0, end=None):
+            return rfind(*register_a(a, False), *register_sub(sub, False),
+                         s if start is None else start,
+                         e if end is None else end)
+    else:
+        def impl(a, sub, start=0, end=None):
+            return np.array(rfind(*register_a(a, False), *register_sub(sub, False),
+                                  s if start is None else start,
+                                  e if end is None else end)[0], 'int64')
     return impl
 
 

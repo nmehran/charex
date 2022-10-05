@@ -14,10 +14,23 @@ def test(method='test'):
 
     def test_string_information(byte_args_, string_args_, method_=method):
 
-        byte_args_ = list(pack_arguments(byte_args_, [(0, 1, 2, 3, -500, 500), (-0, -1, -2, -3, 500, -500)]))
-        string_args_ = list(pack_arguments(string_args_, [(0, 1, 2, 3, -500, 500), (-0, -1, -2, -3, 500, -500)]))
-        CharacterTest(byte_args=byte_args_,
-                      string_args=string_args_).run(method_, ch.char_count, np.char.count)
+        ba = list(pack_arguments(byte_args_, [(0, 1, 2,  -500, 500, None), (-0, -1, -2,  -500, 500, None)]))
+        sa = list(pack_arguments(string_args_, [(0, 1, 2,  -500, 500, None), (-0, -1, -2,  -500, 500, None)]))
+
+        CharacterTest(byte_args=ba,
+                      string_args=sa).run(method_, ch.char_count, np.char.count)
+
+        CharacterTest(byte_args=ba,
+                      string_args=sa).run(method_, ch.char_endswith, np.char.endswith)
+
+        CharacterTest(byte_args=ba,
+                      string_args=sa).run(method_, ch.char_find, np.char.find)
+
+        CharacterTest(byte_args=ba,
+                      string_args=sa).run(method_, ch.char_rfind, np.char.rfind)
+
+        CharacterTest(byte_args=ba,
+                      string_args=sa).run(method_, ch.char_startswith, np.char.startswith)
 
         CharacterTest(byte_args=[ba[:1] for ba in byte_args_],
                       string_args=[sa[:1] for sa in string_args_]).run(method_, ch.str_len, np.char.str_len)
@@ -52,6 +65,7 @@ def test(method='test'):
         (x, 'abcd ' * 20),
         ('abc', 'abc '), ('abc', 'abc' * 2),
         ('abc', 'abd'), ('abc', 'abb'), ('ab', 'ba'),
+        ('abc', '')
     ]
 
     # Character buffers of different length
