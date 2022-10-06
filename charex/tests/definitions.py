@@ -40,6 +40,7 @@ class ComparisonOperators:
 
 
 class StringInformation:
+    # Occurrence Methods
     @staticmethod
     @njit(nogil=True, cache=True)
     def char_count(a, sub, start=0, end=None):
@@ -75,7 +76,53 @@ class StringInformation:
     def char_rindex(a, sub, start=0, end=None):
         return np.char.rindex(a, sub, start, end)
 
+    # Property Methods
     @staticmethod
     @njit(nogil=True, cache=True)
-    def str_len(a):
+    def char_str_len(a):
         return np.char.str_len(a)
+
+    @staticmethod
+    @njit(nogil=True, cache=True)
+    def char_isalpha(a):
+        return np.char.isalpha(a)
+
+    @staticmethod
+    @njit(nogil=True, cache=True)
+    def char_isalnum(a):
+        return np.char.isalnum(a)
+
+    @staticmethod
+    @njit(nogil=True, cache=True)
+    def char_isdecimal(a):
+        return np.char.isdecimal(a)
+
+    @staticmethod
+    @njit(nogil=True, cache=True)
+    def char_isdigit(a):
+        return np.char.isdigit(a)
+    
+    @staticmethod
+    @njit(nogil=True, cache=True)
+    def char_islower(a):
+        return np.char.islower(a)
+    
+    @staticmethod
+    @njit(nogil=True, cache=True)
+    def char_isnumeric(a):
+        return np.char.isnumeric(a)
+    
+    @staticmethod
+    @njit(nogil=True, cache=True)
+    def char_isspace(a):
+        return np.char.isspace(a)
+    
+    @staticmethod
+    @njit(nogil=True, cache=True)
+    def char_istitle(a):
+        return np.char.istitle(a)
+    
+    @staticmethod
+    @njit(nogil=True, cache=True)
+    def char_isupper(a):
+        return np.char.isupper(a)
