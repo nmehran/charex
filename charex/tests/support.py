@@ -259,7 +259,7 @@ def graph_performance(measurements, test_titles: list, test_labels=None, main_ti
 
     func_count = len(test_titles)
     columns = min(len(test_titles), columns)
-    rows = max(func_count // columns, 1)
+    rows = max((1 + func_count) // columns, 1)
 
     def set_fig_size(test_count, columns_, rows_, scale_factor=0.5, size_y=7):
         x_dim = scale_factor * test_count * columns_
@@ -290,6 +290,9 @@ def graph_performance(measurements, test_titles: list, test_labels=None, main_ti
                                   xticks=x_ticks,
                                   ylabel=y_label)
                 f += 1
+                if f == func_count:
+                    break
+
         fig.suptitle(main_title, fontsize=max(11, int(fig_size[0]*0.8)))
         if test_labels:
             signatures = ', '.join(f"{k}: '{v}'" for k, v in dict(zip(x_ticks, test_labels)).items())

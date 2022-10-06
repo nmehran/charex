@@ -13,8 +13,9 @@ def test(method='test'):
     ch = ComparisonOperators()
 
     def test_comparison_operators(byte_args_, string_args_, method_=method):
-        test_comparisons = CharacterTest(byte_args=byte_args_, string_args=string_args_)
         m = 'measure' if method_ == 'graph' else method_
+
+        test_comparisons = CharacterTest(byte_args=byte_args_, string_args=string_args_)
 
         test_comparisons.run(m, ch.char_equal, np.char.equal)
         test_comparisons.run(m, ch.char_not_equal, np.char.not_equal)
@@ -55,7 +56,6 @@ def test(method='test'):
     generics = [
         (c, np.random.choice(c, c.size)),
         (x, np.random.choice(x, x.size)),
-        (x, x),
     ]
 
     # Scalar Comparisons
@@ -69,7 +69,6 @@ def test(method='test'):
     buffers = [
         (s.astype('U20'), s.astype('U40')),
         (x.astype('U60'), x.astype('U61')),
-        (x, x.astype('U100')),
         (np.array('hello ' * 5, dtype='U30'),
          np.array('hello ' * 10, dtype='U60')),
     ]
@@ -77,8 +76,8 @@ def test(method='test'):
     # UTF-32
     utf32 = [
         (u, np.random.choice(u)),
-        (u, np.random.choice(u, len(u))),
-        (u, np.char.add(u, np.random.choice(w, len(u))))
+        (u, np.random.choice(u, u.size)),
+        (u, np.char.add(u, np.random.choice(w, u.size)))
     ]
 
     byte_args, string_args = [], []
