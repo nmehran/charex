@@ -163,8 +163,8 @@ def _init_sub_indices(start, end, size_chr):
     """Initialize substring start and end indices"""
     if end is None:
         end = size_chr
-    elif end <= 0:
-        end = max(end, -size_chr)
+    else:
+        end = max(min(end, size_chr), -size_chr)
     if start < 0:
         start = max(start, -size_chr)
     return start, end
@@ -180,7 +180,7 @@ def _get_sub_indices(chr_lens, len_chr, sub_lens, len_sub, start, end, i):
     return n_chr, n_sub, o, n
 
 
-@register_jitable(**JIT_OPTIONS)
+@register_jitable(**JIT_OPTIONS, locals={'end': types.int64})
 def count(chr_array, len_chr, size_chr, sub_array, len_sub, size_sub, start, end):
     """Native Implementation of np.char.count"""
 
@@ -465,3 +465,267 @@ def str_len(chr_array, len_chr, size_chr):
         str_length[j] = (chr_array[i + stride] and size_chr) or bisect_null(chr_array, i, i + stride) - i
         j += 1
     return str_length
+
+
+@register_jitable(**JIT_OPTIONS)
+def isalpha(chr_array, len_chr, size_chr):
+    """Native Implementation of np.char.isalpha"""
+    # Restricted to extended ASCII range(0, 255).
+    # Complete spectrum requires ordinal set with N > 125,000.
+    if not size_chr:
+        return np.zeros(len_chr, 'bool')
+
+    alpha = {
+        65, 66, 67, 68, 69, 70, 71, 72, 73, 74, 75, 76, 77, 78, 79, 80, 81, 82, 83, 84, 85, 86, 87, 88, 89, 90, 97, 98,
+        99, 100, 101, 102, 103, 104, 105, 106, 107, 108, 109, 110, 111, 112, 113, 114, 115, 116, 117, 118, 119, 120,
+        121, 122, 170, 181, 186, 192, 193, 194, 195, 196, 197, 198, 199, 200, 201, 202, 203, 204, 205, 206, 207, 208,
+        209, 210, 211, 212, 213, 214, 216, 217, 218, 219, 220, 221, 222, 223, 224, 225, 226, 227, 228, 229, 230, 231,
+        232, 233, 234, 235, 236, 237, 238, 239, 240, 241, 242, 243, 244, 245, 246, 248, 249, 250, 251, 252, 253, 254
+    }
+
+    chr_lens = str_len(chr_array, len_chr, size_chr)
+    is_alpha = np.zeros(len_chr, 'bool')
+    stride = 0
+    for i in range(len_chr):
+        for c in range(chr_lens[i]):
+            chr_ord = chr_array[stride + c]
+            if chr_ord not in alpha:
+                is_alpha[i] = False
+                break
+            is_alpha[i] |= chr_ord in alpha
+        stride += size_chr
+    return is_alpha
+
+
+@register_jitable(**JIT_OPTIONS)
+def isalnum(chr_array, len_chr, size_chr):
+    """Native Implementation of np.char.isalnum"""
+    # Restricted to extended ASCII range(0, 255).
+    # Complete spectrum requires ordinal set with N > 127,000.
+    if not size_chr:
+        return np.zeros(len_chr, 'bool')
+
+    alnum = {
+        48, 49, 50, 51, 52, 53, 54, 55, 56, 57, 65, 66, 67, 68, 69, 70, 71, 72, 73, 74, 75, 76, 77, 78, 79, 80, 81, 82,
+        83, 84, 85, 86, 87, 88, 89, 90, 97, 98, 99, 100, 101, 102, 103, 104, 105, 106, 107, 108, 109, 110, 111, 112,
+        113, 114, 115, 116, 117, 118, 119, 120, 121, 122, 170, 178, 179, 181, 185, 186, 188, 189, 190, 192, 193, 194,
+        195, 196, 197, 198, 199, 200, 201, 202, 203, 204, 205, 206, 207, 208, 209, 210, 211, 212, 213, 214, 216, 217,
+        218, 219, 220, 221, 222, 223, 224, 225, 226, 227, 228, 229, 230, 231, 232, 233, 234, 235, 236, 237, 238, 239,
+        240, 241, 242, 243, 244, 245, 246, 248, 249, 250, 251, 252, 253, 254
+    }
+
+    chr_lens = str_len(chr_array, len_chr, size_chr)
+    is_alnum = np.zeros(len_chr, 'bool')
+    stride = 0
+    for i in range(len_chr):
+        for c in range(chr_lens[i]):
+            chr_ord = chr_array[stride + c]
+            if chr_ord not in alnum:
+                is_alnum[i] = False
+                break
+            is_alnum[i] |= chr_ord in alnum
+        stride += size_chr
+    return is_alnum
+
+
+@register_jitable(**JIT_OPTIONS)
+def isdecimal(chr_array, len_chr, size_chr):
+    """Native Implementation of np.char.isdecimal"""
+    # Restricted to extended ASCII range(0, 255).
+    # Complete spectrum requires ordinal set with N > 600.
+    if not size_chr:
+        return np.zeros(len_chr, 'bool')
+
+    decimal = {48, 49, 50, 51, 52, 53, 54, 55, 56, 57}
+
+    chr_lens = str_len(chr_array, len_chr, size_chr)
+    is_decimal = np.zeros(len_chr, 'bool')
+    stride = 0
+    for i in range(len_chr):
+        for c in range(chr_lens[i]):
+            chr_ord = chr_array[stride + c]
+            if chr_ord not in decimal:
+                is_decimal[i] = False
+                break
+            is_decimal[i] |= chr_ord in decimal
+        stride += size_chr
+    return is_decimal
+
+
+@register_jitable(**JIT_OPTIONS)
+def isdigit(chr_array, len_chr, size_chr):
+    """Native Implementation of np.char.isdigit"""
+    # Restricted to extended ASCII range(0, 255).
+    # Complete spectrum requires ordinal set with N > 700.
+    if not size_chr:
+        return np.zeros(len_chr, 'bool')
+
+    digit = {48, 49, 50, 51, 52, 53, 54, 55, 56, 57, 178, 179, 185}
+
+    chr_lens = str_len(chr_array, len_chr, size_chr)
+    is_digit = np.zeros(len_chr, 'bool')
+    stride = 0
+    for i in range(len_chr):
+        for c in range(chr_lens[i]):
+            chr_ord = chr_array[stride + c]
+            if chr_ord not in digit:
+                is_digit[i] = False
+                break
+            is_digit[i] |= chr_ord in digit
+        stride += size_chr
+    return is_digit
+
+
+@register_jitable(**JIT_OPTIONS)
+def isnumeric(chr_array, len_chr, size_chr):
+    """Native Implementation of np.char.isnumeric"""
+    # Restricted to extended ASCII range(0, 255).
+    # Complete spectrum requires ordinal set with N > 1800.
+    if not size_chr:
+        return np.zeros(len_chr, 'bool')
+
+    numeric = {48, 49, 50, 51, 52, 53, 54, 55, 56, 57, 178, 179, 185, 188, 189, 190}
+
+    chr_lens = str_len(chr_array, len_chr, size_chr)
+    is_numeric = np.zeros(len_chr, 'bool')
+    stride = 0
+    for i in range(len_chr):
+        for c in range(chr_lens[i]):
+            chr_ord = chr_array[stride + c]
+            if chr_ord not in numeric:
+                is_numeric[i] = False
+                break
+            is_numeric[i] |= chr_ord in numeric
+        stride += size_chr
+    return is_numeric
+
+
+@register_jitable(**JIT_OPTIONS)
+def isspace(chr_array, len_chr, size_chr, as_bytes):
+    """Native Implementation of np.char.isspace"""
+    if not size_chr:
+        return np.zeros(len_chr, 'bool')
+
+    if as_bytes:
+        space = {9, 10, 11, 12, 13, 32}
+    else:
+        space = {9, 10, 11, 12, 13, 28, 29, 30, 31, 32, 133, 160,
+                 5760, 8192, 8193, 8194, 8195, 8196, 8197, 8198, 8199, 8200, 8201, 8202, 8232, 8233, 8239, 8287, 12288}
+
+    chr_lens = str_len(chr_array, len_chr, size_chr)
+    is_space = np.zeros(len_chr, 'bool')
+    stride = 0
+    for i in range(len_chr):
+        for c in range(chr_lens[i]):
+            chr_ord = chr_array[stride + c]
+            if chr_ord not in space:
+                is_space[i] = False
+                break
+            is_space[i] |= chr_ord in space
+        stride += size_chr
+    return is_space
+
+
+@register_jitable(**JIT_OPTIONS)
+def istitle(chr_array, len_chr, size_chr):
+    """Native Implementation of np.char.istitle"""
+    # Restricted to extended ASCII range(0, 255).
+    # Complete spectrum requires ordinal set with N > 1900.
+    if not size_chr:
+        return np.zeros(len_chr, 'bool')
+
+    lower = {
+        97, 98, 99, 100, 101, 102, 103, 104, 105, 106, 107, 108, 109, 110, 111, 112, 113, 114, 115, 116, 117, 118, 119,
+        120, 121, 122, 170, 181, 186, 223, 224, 225, 226, 227, 228, 229, 230, 231, 232, 233, 234, 235, 236, 237, 238,
+        239, 240, 241, 242, 243, 244, 245, 246, 248, 249, 250, 251, 252, 253, 254
+    }
+
+    upper = {
+        65, 66, 67, 68, 69, 70, 71, 72, 73, 74, 75, 76, 77, 78, 79, 80, 81, 82, 83, 84, 85, 86, 87, 88, 89, 90, 192,
+        193, 194, 195, 196, 197, 198, 199, 200, 201, 202, 203, 204, 205, 206, 207, 208, 209, 210, 211, 212, 213, 214,
+        216, 217, 218, 219, 220, 221, 222
+    }
+
+    chr_lens = str_len(chr_array, len_chr, size_chr)
+    is_title = np.zeros(len_chr, 'bool')
+    stride = 0
+    for i in range(len_chr):
+        cased_state = False
+        for c in range(chr_lens[i]):
+            chr_ord = chr_array[stride + c]
+            if (cased_state and chr_ord in upper) or (not cased_state and chr_ord in lower):
+                is_title[i] = False
+                break
+            cased_state = chr_ord in upper
+            is_title[i] |= cased_state
+            cased_state |= chr_ord in lower
+        stride += size_chr
+    return is_title
+
+
+@register_jitable(**JIT_OPTIONS)
+def isupper(chr_array, len_chr, size_chr):
+    """Native Implementation of np.char.isupper"""
+    # Restricted to extended ASCII range(0, 255).
+    # Complete spectrum requires ordinal set with N > 1900.
+    if not size_chr:
+        return np.zeros(len_chr, 'bool')
+
+    lower = {
+        97, 98, 99, 100, 101, 102, 103, 104, 105, 106, 107, 108, 109, 110, 111, 112, 113, 114, 115, 116, 117, 118, 119,
+        120, 121, 122, 170, 181, 186, 223, 224, 225, 226, 227, 228, 229, 230, 231, 232, 233, 234, 235, 236, 237, 238,
+        239, 240, 241, 242, 243, 244, 245, 246, 248, 249, 250, 251, 252, 253, 254
+    }
+
+    upper = {
+        65, 66, 67, 68, 69, 70, 71, 72, 73, 74, 75, 76, 77, 78, 79, 80, 81, 82, 83, 84, 85, 86, 87, 88, 89, 90, 192,
+        193, 194, 195, 196, 197, 198, 199, 200, 201, 202, 203, 204, 205, 206, 207, 208, 209, 210, 211, 212, 213, 214,
+        216, 217, 218, 219, 220, 221, 222
+    }
+
+    chr_lens = str_len(chr_array, len_chr, size_chr)
+    is_upper = np.zeros(len_chr, 'bool')
+    stride = 0
+    for i in range(len_chr):
+        for c in range(chr_lens[i]):
+            chr_ord = chr_array[stride + c]
+            if chr_ord in lower:
+                is_upper[i] = False
+                break
+            is_upper[i] |= chr_ord in upper
+        stride += size_chr
+    return is_upper
+
+
+@register_jitable(**JIT_OPTIONS)
+def islower(chr_array, len_chr, size_chr):
+    """Native Implementation of np.char.islower"""
+    # Restricted to extended ASCII range(0, 255).
+    # Complete spectrum requires ordinal set with N > 2300.
+    if not size_chr:
+        return np.zeros(len_chr, 'bool')
+
+    lower = {
+        97, 98, 99, 100, 101, 102, 103, 104, 105, 106, 107, 108, 109, 110, 111, 112, 113, 114, 115, 116, 117, 118, 119,
+        120, 121, 122, 170, 181, 186, 223, 224, 225, 226, 227, 228, 229, 230, 231, 232, 233, 234, 235, 236, 237, 238,
+        239, 240, 241, 242, 243, 244, 245, 246, 248, 249, 250, 251, 252, 253, 254
+    }
+
+    upper = {
+        65, 66, 67, 68, 69, 70, 71, 72, 73, 74, 75, 76, 77, 78, 79, 80, 81, 82, 83, 84, 85, 86, 87, 88, 89, 90, 192,
+        193, 194, 195, 196, 197, 198, 199, 200, 201, 202, 203, 204, 205, 206, 207, 208, 209, 210, 211, 212, 213, 214,
+        216, 217, 218, 219, 220, 221, 222
+    }
+
+    chr_lens = str_len(chr_array, len_chr, size_chr)
+    is_lower = np.zeros(len_chr, 'bool')
+    stride = 0
+    for i in range(len_chr):
+        for c in range(chr_lens[i]):
+            chr_ord = chr_array[stride + c]
+            if chr_ord in upper:
+                is_lower[i] = False
+                break
+            is_lower[i] |= chr_ord in lower
+        stride += size_chr
+    return is_lower

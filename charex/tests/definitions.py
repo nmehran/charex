@@ -65,7 +65,7 @@ class StringInformation:
     @njit(nogil=True, cache=True)
     def char_index(a, sub, start=0, end=None):
         return np.char.index(a, sub, start, end)
-    
+
     @staticmethod
     @njit(nogil=True, cache=True)
     def char_rfind(a, sub, start=0, end=None):
@@ -101,27 +101,27 @@ class StringInformation:
     @njit(nogil=True, cache=True)
     def char_isdigit(a):
         return np.char.isdigit(a)
-    
+
     @staticmethod
     @njit(nogil=True, cache=True)
     def char_islower(a):
         return np.char.islower(a)
-    
+
     @staticmethod
     @njit(nogil=True, cache=True)
     def char_isnumeric(a):
         return np.char.isnumeric(a)
-    
+
     @staticmethod
     @njit(nogil=True, cache=True)
     def char_isspace(a):
         return np.char.isspace(a)
-    
+
     @staticmethod
     @njit(nogil=True, cache=True)
     def char_istitle(a):
         return np.char.istitle(a)
-    
+
     @staticmethod
     @njit(nogil=True, cache=True)
     def char_isupper(a):
