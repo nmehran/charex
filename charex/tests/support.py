@@ -1,4 +1,5 @@
 from itertools import product
+from math import ceil
 from numpy import all, array_split, median, ndarray, zeros
 from pandas import DataFrame
 from time import perf_counter
@@ -259,7 +260,7 @@ def graph_performance(measurements, test_titles: list, test_labels=None, main_ti
 
     func_count = len(test_titles)
     columns = min(len(test_titles), columns)
-    rows = max((1 + func_count) // columns, 1)
+    rows = max(ceil(func_count / columns), 1)
 
     def set_fig_size(test_count, columns_, rows_, scale_factor=0.5, size_y=7):
         x_dim = scale_factor * test_count * columns_
@@ -276,7 +277,7 @@ def graph_performance(measurements, test_titles: list, test_labels=None, main_ti
 
         if func_count == 1:
             axs = np.array([[axs]], dtype=object)
-        axs = axs.reshape(-1, columns)
+        axs = axs.reshape(rows, columns)
 
         f = 0
         for r in range(rows):
