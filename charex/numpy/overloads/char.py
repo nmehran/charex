@@ -9,7 +9,9 @@ from charex.core.string_intrinsics import (
 )
 from charex.numpy.overloads.definitions import (
     greater_equal, greater, equal, compare_chararrays,
-    count, endswith, startswith, find, index, rfind, str_len
+    count, endswith, startswith, find, index, rfind, str_len,
+    isalpha, isalnum, isdecimal, isdigit, islower, isnumeric, isspace, istitle, isupper
+
 )
 from numba.core import types
 from numba.extending import overload
@@ -38,7 +40,23 @@ def _ensure_type(x):
     return x, ndim
 
 
-def _get_register_types(x1, x2, exception=NotImplementedError('NotImplemented')):
+def _infer_type(x, as_np=True):
+    """Infer string-type of an objects Numba instance."""
+    if isinstance(x, types.Array):
+        if isinstance(x.dtype, types.CharSeq):
+            return 'numpy.bytes_' if as_np else 'bytes'
+        if isinstance(x.dtype, types.UnicodeCharSeq):
+            return 'numpy.str_' if as_np else 'str'
+        return f'like {x.dtype.name}'
+
+    if isinstance(x, types.Bytes):
+        return 'numpy.bytes_' if as_np else 'bytes'
+    if isinstance(x, types.UnicodeType):
+        return 'numpy.str_' if as_np else 'str'
+    return f'like {x.name}'
+
+
+def _get_register_types(x1, x2, exception: (Exception, int) = None):
     """Determines the call function for the comparison pair, based on type."""
     (x1_type, x1_dim), (x2_type, x2_dim) = _ensure_type(x1), _ensure_type(x2)
     byte_types = (types.Bytes, types.CharSeq)
@@ -51,11 +69,19 @@ def _get_register_types(x1, x2, exception=NotImplementedError('NotImplemented'))
         register_x1 = register_array_strings if x1_dim >= 0 else register_scalar_strings
         register_x2 = register_array_strings if x2_dim >= 0 else register_scalar_strings
     else:
+        if not exception:
+            exception = NotImplementedError('NotImplemented')
+        elif exception == 1:
+            as_type = _infer_type(x1, False)
+            if as_type in ('str', 'bytes'):
+                exception = TypeError(f"must be {as_type}, not {_infer_type(x2)}")
+            else:
+                exception = TypeError(f"must be string or bytes, not {_infer_type(x2)}")
         raise exception
     return register_x1, register_x2, x1_dim, x2_dim
 
 
-def _get_register_type(x1, exception=NotImplementedError('NotImplemented')):
+def _get_register_type(x1, exception: (Exception, int) = None):
     """Determines the call function for the input, based on type."""
     x1_type, x1_dim = _ensure_type(x1)
     byte_types = (types.Bytes, types.CharSeq)
@@ -63,11 +89,17 @@ def _get_register_type(x1, exception=NotImplementedError('NotImplemented')):
 
     if isinstance(x1_type, byte_types):
         register_x1 = register_array_bytes if x1_dim >= 0 else register_scalar_bytes
+        as_bytes = True
     elif isinstance(x1_type, str_types):
         register_x1 = register_array_strings if x1_dim >= 0 else register_scalar_strings
+        as_bytes = False
     else:
+        if not exception:
+            exception = NotImplementedError('NotImplemented')
+        elif exception == 1:
+            exception = TypeError("string operation on non-string array")
         raise exception
-    return register_x1, x1_dim
+    return register_x1, x1_dim, as_bytes
 
 
 @overload(np.char.equal, **OPTIONS)
@@ -187,12 +219,12 @@ def _ensure_slice(start, end):
     slice_types = (types.Integer, types.NoneType)
     if not (isinstance(start, slice_types) and isinstance(end, slice_types)):
         raise TypeError("slice indices must be integers or None or have an __index__ method")
-    return 0, np.iinfo(np.int32).max
+    return 0, np.iinfo(np.int64).max
 
 
 @overload(np.char.count, **OPTIONS)
 def ov_char_count(a, sub, start=0, end=None):
-    register_a, register_sub, a_dim, sub_dim = _get_register_types(a, sub)
+    register_a, register_sub, a_dim, sub_dim = _get_register_types(a, sub, 1)
     s, e = _ensure_slice(start, end)
 
     if a_dim > 0 or sub_dim > 0:
@@ -210,7 +242,7 @@ def ov_char_count(a, sub, start=0, end=None):
 
 @overload(np.char.endswith, **OPTIONS)
 def ov_char_endswith(a, sub, start=0, end=None):
-    register_a, register_sub, a_dim, sub_dim = _get_register_types(a, sub)
+    register_a, register_sub, a_dim, sub_dim = _get_register_types(a, sub, 1)
     s, e = _ensure_slice(start, end)
 
     if a_dim > 0 or sub_dim > 0:
@@ -228,7 +260,7 @@ def ov_char_endswith(a, sub, start=0, end=None):
 
 @overload(np.char.startswith, **OPTIONS)
 def ov_char_startswith(a, sub, start=0, end=None):
-    register_a, register_sub, a_dim, sub_dim = _get_register_types(a, sub)
+    register_a, register_sub, a_dim, sub_dim = _get_register_types(a, sub, 1)
     s, e = _ensure_slice(start, end)
 
     if a_dim > 0 or sub_dim > 0:
@@ -246,7 +278,7 @@ def ov_char_startswith(a, sub, start=0, end=None):
 
 @overload(np.char.find, **OPTIONS)
 def ov_char_find(a, sub, start=0, end=None):
-    register_a, register_sub, a_dim, sub_dim = _get_register_types(a, sub)
+    register_a, register_sub, a_dim, sub_dim = _get_register_types(a, sub, 1)
     s, e = _ensure_slice(start, end)
 
     if a_dim > 0 or sub_dim > 0:
@@ -264,7 +296,7 @@ def ov_char_find(a, sub, start=0, end=None):
 
 @overload(np.char.index, **OPTIONS)
 def ov_char_index(a, sub, start=0, end=None):
-    register_a, register_sub, a_dim, sub_dim = _get_register_types(a, sub)
+    register_a, register_sub, a_dim, sub_dim = _get_register_types(a, sub, 1)
     s, e = _ensure_slice(start, end)
 
     if a_dim > 0 or sub_dim > 0:
@@ -282,7 +314,7 @@ def ov_char_index(a, sub, start=0, end=None):
 
 @overload(np.char.rfind, **OPTIONS)
 def ov_char_rfind(a, sub, start=0, end=None):
-    register_a, register_sub, a_dim, sub_dim = _get_register_types(a, sub)
+    register_a, register_sub, a_dim, sub_dim = _get_register_types(a, sub, 1)
     s, e = _ensure_slice(start, end)
 
     if a_dim > 0 or sub_dim > 0:
@@ -300,7 +332,7 @@ def ov_char_rfind(a, sub, start=0, end=None):
 
 @overload(np.char.str_len, **OPTIONS)
 def ov_str_len(a):
-    register_a, a_dim = _get_register_type(a)
+    register_a, a_dim, _ = _get_register_type(a, 1)
 
     if a_dim > 0:
         def impl(a):
@@ -308,6 +340,129 @@ def ov_str_len(a):
     else:
         def impl(a):
             return np.array(str_len(*register_a(a, False))[0], 'int64')
+    return impl
+
+
+@overload(np.char.isupper, **OPTIONS)
+def ov_isupper(a):
+    register_a, a_dim, _ = _get_register_type(a, 1)
+
+    if a_dim > 0:
+        def impl(a):
+            return isupper(*register_a(a, False))
+    else:
+        def impl(a):
+            return np.array(isupper(*register_a(a, False))[0], 'bool')
+    return impl
+
+
+@overload(np.char.islower, **OPTIONS)
+def ov_islower(a):
+    register_a, a_dim, _ = _get_register_type(a, 1)
+
+    if a_dim > 0:
+        def impl(a):
+            return islower(*register_a(a, False))
+    else:
+        def impl(a):
+            return np.array(islower(*register_a(a, False))[0], 'bool')
+    return impl
+
+
+@overload(np.char.isspace, **OPTIONS)
+def ov_isspace(a):
+    register_a, a_dim, as_bytes = _get_register_type(a, 1)
+
+    if a_dim > 0:
+        def impl(a):
+            return isspace(*register_a(a, False), as_bytes)
+    else:
+        def impl(a):
+            return np.array(isspace(*register_a(a, False), as_bytes)[0], 'bool')
+    return impl
+
+
+@overload(np.char.isdecimal, **OPTIONS)
+def ov_isdecimal(a):
+    catch_incompatible = TypeError("isnumeric is only available for Unicode strings and arrays")
+    register_a, a_dim, as_bytes = _get_register_type(a, catch_incompatible)
+    if as_bytes:
+        raise catch_incompatible
+
+    if a_dim > 0:
+        def impl(a):
+            return isdecimal(*register_a(a, False))
+    else:
+        def impl(a):
+            return np.array(isdecimal(*register_a(a, False))[0], 'bool')
+    return impl
+
+
+@overload(np.char.isdigit, **OPTIONS)
+def ov_isdigit(a):
+    register_a, a_dim, _ = _get_register_type(a, 1)
+
+    if a_dim > 0:
+        def impl(a):
+            return isdigit(*register_a(a, False))
+    else:
+        def impl(a):
+            return np.array(isdigit(*register_a(a, False))[0], 'bool')
+    return impl
+
+
+@overload(np.char.isnumeric, **OPTIONS)
+def ov_isnumeric(a):
+    catch_incompatible = TypeError("isnumeric is only available for Unicode strings and arrays")
+    register_a, a_dim, as_bytes = _get_register_type(a, catch_incompatible)
+    if as_bytes:
+        raise catch_incompatible
+
+    if a_dim > 0:
+        def impl(a):
+            return isnumeric(*register_a(a, False))
+    else:
+        def impl(a):
+            return np.array(isnumeric(*register_a(a, False))[0], 'bool')
+    return impl
+
+
+@overload(np.char.isalpha, **OPTIONS)
+def ov_isalpha(a):
+    register_a, a_dim, _ = _get_register_type(a, 1)
+
+    if a_dim > 0:
+        def impl(a):
+            return isalpha(*register_a(a, False))
+    else:
+        def impl(a):
+            return np.array(isalpha(*register_a(a, False))[0], 'bool')
+    return impl
+
+
+@overload(np.char.isalnum, **OPTIONS)
+def ov_isalnum(a):
+    register_a, a_dim, _ = _get_register_type(a, 1)
+
+    if a_dim > 0:
+        def impl(a):
+            return isalnum(*register_a(a, False))
+    else:
+        def impl(a):
+            return np.array(isalnum(*register_a(a, False))[0], 'bool')
+    return impl
+
+
+@overload(np.char.istitle, **OPTIONS)
+def ov_istitle(a):
+    register_a, a_dim, _ = _get_register_type(a, 1)
+
+    if a_dim > 0:
+        def impl(a):
+            return istitle(*register_a(a, False))
+    else:
+        def impl(a):
+            return np.array(istitle(*register_a(a, False))[0], 'bool')
     return impl
 
 # ----------------------------------------------------------------------------------------------------------------------
