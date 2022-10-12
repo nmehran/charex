@@ -16,7 +16,7 @@ import numpy as np
 
 @register_jitable(**JIT_OPTIONS)
 def _cast_comparison(size_chr, len_chr, size_cmp, len_cmp):
-    """Determines the character offsets used to align the comparison to the target."""
+    """Determines the offsets used to align the comparison to the target."""
     if len_cmp > 1 and len_cmp != len_chr:
         raise ValueError('shape mismatch: objects cannot be broadcast to a single shape.  '
                          'Mismatch is between arg 0 and arg 1.')
@@ -180,10 +180,9 @@ def _get_sub_indices(chr_lens, len_chr, sub_lens, len_sub, start, end, i):
     return n_chr, n_sub, o, n
 
 
-@register_jitable(**JIT_OPTIONS, locals={'end': types.int64})
+@register_jitable(**JIT_OPTIONS)
 def count(chr_array, len_chr, size_chr, sub_array, len_sub, size_sub, start, end):
     """Native Implementation of np.char.count"""
-
     start, end = _init_sub_indices(start, end, size_chr)
     if start > size_chr or start > end + size_chr:
         return np.zeros(max(len_chr, len_sub), 'int64')
@@ -195,8 +194,8 @@ def count(chr_array, len_chr, size_chr, sub_array, len_sub, size_sub, start, end
     count_sub = np.zeros(len_cast, 'int64')
 
     size_chr = (len_chr > 1 and size_chr) or 0
-    size_cmp = (len_sub > 1 and size_sub) or 0
-    stride = stride_cmp = 0
+    size_sub = (len_sub > 1 and size_sub) or 0
+    stride = stride_sub = 0
     for i in range(len_cast):
         n_chr, n_sub, o, n = _get_sub_indices(chr_lens, len_chr,
                                               sub_lens, len_sub,
@@ -206,7 +205,7 @@ def count(chr_array, len_chr, size_chr, sub_array, len_sub, size_sub, start, end
             n += stride
             while o + n_sub <= n:
                 for p in range(n_sub):
-                    if chr_array[o + p] != sub_array[stride_cmp + p]:
+                    if chr_array[o + p] != sub_array[stride_sub + p]:
                         o += 1
                         break
                 else:
@@ -215,7 +214,7 @@ def count(chr_array, len_chr, size_chr, sub_array, len_sub, size_sub, start, end
         else:
             count_sub[i] = o <= n and max(1 + n - o, 1)
         stride += size_chr
-        stride_cmp += size_cmp
+        stride_sub += size_sub
     return count_sub
 
 
@@ -233,15 +232,15 @@ def endswith(chr_array, len_chr, size_chr, sub_array, len_sub, size_sub, start, 
     endswith_sub = np.ones(len_cast, 'bool')
 
     size_chr = (len_chr > 1 and size_chr) or 0
-    size_cmp = (len_sub > 1 and size_sub) or 0
-    stride = stride_cmp = 0
+    size_sub = (len_sub > 1 and size_sub) or 0
+    stride = stride_sub = 0
     for i in range(len_cast):
         n_chr, n_sub, o, n = _get_sub_indices(chr_lens, len_chr,
                                               sub_lens, len_sub,
                                               start, end, i)
         if o + n_sub <= n:
             n += stride - 1
-            r = stride_cmp + n_sub - 1
+            r = stride_sub + n_sub - 1
             for p in range(n_sub):
                 if chr_array[n - p] != sub_array[r - p]:
                     endswith_sub[i] = False
@@ -249,7 +248,7 @@ def endswith(chr_array, len_chr, size_chr, sub_array, len_sub, size_sub, start, 
         else:
             endswith_sub[i] = not n_sub and o <= n
         stride += size_chr
-        stride_cmp += size_cmp
+        stride_sub += size_sub
     return endswith_sub
 
 
@@ -267,8 +266,8 @@ def startswith(chr_array, len_chr, size_chr, sub_array, len_sub, size_sub, start
     startswith_sub = np.ones(len_cast, 'bool')
 
     size_chr = (len_chr > 1 and size_chr) or 0
-    size_cmp = (len_sub > 1 and size_sub) or 0
-    stride = stride_cmp = 0
+    size_sub = (len_sub > 1 and size_sub) or 0
+    stride = stride_sub = 0
     for i in range(len_cast):
         n_chr, n_sub, o, n = _get_sub_indices(chr_lens, len_chr,
                                               sub_lens, len_sub,
@@ -276,20 +275,19 @@ def startswith(chr_array, len_chr, size_chr, sub_array, len_sub, size_sub, start
         if o + n_sub <= n:
             o = stride + o
             for p in range(n_sub):
-                if chr_array[o + p] != sub_array[stride_cmp + p]:
+                if chr_array[o + p] != sub_array[stride_sub + p]:
                     startswith_sub[i] = False
                     break
         else:
             startswith_sub[i] = not n_sub and o <= n
         stride += size_chr
-        stride_cmp += size_cmp
+        stride_sub += size_sub
     return startswith_sub
 
 
 @register_jitable(**JIT_OPTIONS)
 def find(chr_array, len_chr, size_chr, sub_array, len_sub, size_sub, start, end):
     """Native Implementation of np.char.find"""
-
     start, end = _init_sub_indices(start, end, size_chr)
     if start > size_chr or start > end + size_chr:
         return -np.ones(max(len_chr, len_sub), 'int64')
@@ -301,8 +299,8 @@ def find(chr_array, len_chr, size_chr, sub_array, len_sub, size_sub, start, end)
     find_sub = -np.ones(len_cast, 'int64')
 
     size_chr = (len_chr > 1 and size_chr) or 0
-    size_cmp = (len_sub > 1 and size_sub) or 0
-    stride = stride_cmp = 0
+    size_sub = (len_sub > 1 and size_sub) or 0
+    stride = stride_sub = 0
     for i in range(len_cast):
         n_chr, n_sub, o, n = _get_sub_indices(chr_lens, len_chr,
                                               sub_lens, len_sub,
@@ -312,7 +310,7 @@ def find(chr_array, len_chr, size_chr, sub_array, len_sub, size_sub, start, end)
             n += stride
             while o + n_sub <= n:
                 for p in range(n_sub):
-                    if chr_array[o + p] != sub_array[stride_cmp + p]:
+                    if chr_array[o + p] != sub_array[stride_sub + p]:
                         o += 1
                         break
                 else:
@@ -321,14 +319,13 @@ def find(chr_array, len_chr, size_chr, sub_array, len_sub, size_sub, start, end)
         else:
             find_sub[i] = (o <= n and o + 1) - 1
         stride += size_chr
-        stride_cmp += size_cmp
+        stride_sub += size_sub
     return find_sub
 
 
 @register_jitable(**JIT_OPTIONS)
 def index(chr_array, len_chr, size_chr, sub_array, len_sub, size_sub, start, end):
     """Native Implementation of np.char.index"""
-
     start, end = _init_sub_indices(start, end, size_chr)
     if start > size_chr or start > end + size_chr:
         raise ValueError('substring not found')
@@ -340,8 +337,8 @@ def index(chr_array, len_chr, size_chr, sub_array, len_sub, size_sub, start, end
     index_sub = -np.ones(len_cast, 'int64')
 
     size_chr = (len_chr > 1 and size_chr) or 0
-    size_cmp = (len_sub > 1 and size_sub) or 0
-    stride = stride_cmp = 0
+    size_sub = (len_sub > 1 and size_sub) or 0
+    stride = stride_sub = 0
     for i in range(len_cast):
         n_chr, n_sub, o, n = _get_sub_indices(chr_lens, len_chr,
                                               sub_lens, len_sub,
@@ -351,7 +348,7 @@ def index(chr_array, len_chr, size_chr, sub_array, len_sub, size_sub, start, end
             n += stride
             while o + n_sub <= n:
                 for p in range(n_sub):
-                    if chr_array[o + p] != sub_array[stride_cmp + p]:
+                    if chr_array[o + p] != sub_array[stride_sub + p]:
                         o += 1
                         break
                 else:
@@ -364,14 +361,13 @@ def index(chr_array, len_chr, size_chr, sub_array, len_sub, size_sub, start, end
                 raise ValueError('substring not found')
             index_sub[i] = o
         stride += size_chr
-        stride_cmp += size_cmp
+        stride_sub += size_sub
     return index_sub
 
 
 @register_jitable(**JIT_OPTIONS)
 def rfind(chr_array, len_chr, size_chr, sub_array, len_sub, size_sub, start, end):
     """Native Implementation of np.char.rfind"""
-
     start, end = _init_sub_indices(start, end, size_chr)
     if start > size_chr or start > end + size_chr:
         return -np.ones(max(len_chr, len_sub), 'int64')
@@ -383,8 +379,8 @@ def rfind(chr_array, len_chr, size_chr, sub_array, len_sub, size_sub, start, end
     rfind_sub = -np.ones(len_cast, 'int64')
 
     size_chr = (len_chr > 1 and size_chr) or 0
-    size_cmp = (len_sub > 1 and size_sub) or 0
-    stride = stride_cmp = 0
+    size_sub = (len_sub > 1 and size_sub) or 0
+    stride = stride_sub = 0
     for i in range(len_cast):
         n_chr, n_sub, o, n = _get_sub_indices(chr_lens, len_chr,
                                               sub_lens, len_sub,
@@ -392,7 +388,7 @@ def rfind(chr_array, len_chr, size_chr, sub_array, len_sub, size_sub, start, end
         if n_sub:
             o += stride - 1
             n += stride - 1
-            r = stride_cmp + n_sub - 1
+            r = stride_sub + n_sub - 1
             while n - n_sub >= o:
                 for p in range(n_sub):
                     if chr_array[n - p] != sub_array[r - p]:
@@ -404,14 +400,13 @@ def rfind(chr_array, len_chr, size_chr, sub_array, len_sub, size_sub, start, end
         else:
             rfind_sub[i] = (o <= n and n + 1) - 1
         stride += size_chr
-        stride_cmp += size_cmp
+        stride_sub += size_sub
     return rfind_sub
 
 
 @register_jitable(**JIT_OPTIONS)
 def rindex(chr_array, len_chr, size_chr, sub_array, len_sub, size_sub, start, end):
     """Native Implementation of np.char.rindex"""
-
     start, end = _init_sub_indices(start, end, size_chr)
     if start > size_chr or start > end + size_chr:
         raise ValueError('substring not found')
@@ -423,8 +418,8 @@ def rindex(chr_array, len_chr, size_chr, sub_array, len_sub, size_sub, start, en
     rfind_sub = -np.ones(len_cast, 'int64')
 
     size_chr = (len_chr > 1 and size_chr) or 0
-    size_cmp = (len_sub > 1 and size_sub) or 0
-    stride = stride_cmp = 0
+    size_sub = (len_sub > 1 and size_sub) or 0
+    stride = stride_sub = 0
     for i in range(len_cast):
         n_chr, n_sub, o, n = _get_sub_indices(chr_lens, len_chr,
                                               sub_lens, len_sub,
@@ -432,7 +427,7 @@ def rindex(chr_array, len_chr, size_chr, sub_array, len_sub, size_sub, start, en
         if n_sub:
             o += stride - 1
             n += stride - 1
-            r = stride_cmp + n_sub - 1
+            r = stride_sub + n_sub - 1
             while n - n_sub >= o:
                 for p in range(n_sub):
                     if chr_array[n - p] != sub_array[r - p]:
@@ -448,7 +443,7 @@ def rindex(chr_array, len_chr, size_chr, sub_array, len_sub, size_sub, start, en
                 raise ValueError('substring not found')
             rfind_sub[i] = n
         stride += size_chr
-        stride_cmp += size_cmp
+        stride_sub += size_sub
     return rfind_sub
 
 
@@ -471,7 +466,7 @@ def str_len(chr_array, len_chr, size_chr):
 def isalpha(chr_array, len_chr, size_chr):
     """Native Implementation of np.char.isalpha"""
     # Restricted to extended ASCII range(0, 255).
-    # Complete spectrum requires ordinal set with N > 125,000.
+    # Complete ordinal set requires length of N > 125,000.
     if not size_chr:
         return np.zeros(len_chr, 'bool')
 
@@ -501,7 +496,7 @@ def isalpha(chr_array, len_chr, size_chr):
 def isalnum(chr_array, len_chr, size_chr):
     """Native Implementation of np.char.isalnum"""
     # Restricted to extended ASCII range(0, 255).
-    # Complete spectrum requires ordinal set with N > 127,000.
+    # Complete ordinal set requires length of N > 127,000.
     if not size_chr:
         return np.zeros(len_chr, 'bool')
 
@@ -532,7 +527,7 @@ def isalnum(chr_array, len_chr, size_chr):
 def isdecimal(chr_array, len_chr, size_chr):
     """Native Implementation of np.char.isdecimal"""
     # Restricted to extended ASCII range(0, 255).
-    # Complete spectrum requires ordinal set with N > 600.
+    # Complete ordinal set requires length of N > 600.
     if not size_chr:
         return np.zeros(len_chr, 'bool')
 
@@ -556,7 +551,7 @@ def isdecimal(chr_array, len_chr, size_chr):
 def isdigit(chr_array, len_chr, size_chr):
     """Native Implementation of np.char.isdigit"""
     # Restricted to extended ASCII range(0, 255).
-    # Complete spectrum requires ordinal set with N > 700.
+    # Complete ordinal set requires length of N > 700.
     if not size_chr:
         return np.zeros(len_chr, 'bool')
 
@@ -580,7 +575,7 @@ def isdigit(chr_array, len_chr, size_chr):
 def isnumeric(chr_array, len_chr, size_chr):
     """Native Implementation of np.char.isnumeric"""
     # Restricted to extended ASCII range(0, 255).
-    # Complete spectrum requires ordinal set with N > 1800.
+    # Complete ordinal set requires length of N > 1800.
     if not size_chr:
         return np.zeros(len_chr, 'bool')
 
@@ -630,7 +625,7 @@ def isspace(chr_array, len_chr, size_chr, as_bytes):
 def istitle(chr_array, len_chr, size_chr):
     """Native Implementation of np.char.istitle"""
     # Restricted to extended ASCII range(0, 255).
-    # Complete spectrum requires ordinal set with N > 1900.
+    # Complete ordinal set requires length of N > 2300.
     if not size_chr:
         return np.zeros(len_chr, 'bool')
 
@@ -667,7 +662,7 @@ def istitle(chr_array, len_chr, size_chr):
 def isupper(chr_array, len_chr, size_chr):
     """Native Implementation of np.char.isupper"""
     # Restricted to extended ASCII range(0, 255).
-    # Complete spectrum requires ordinal set with N > 1900.
+    # Complete ordinal set requires length of N > 2300.
     if not size_chr:
         return np.zeros(len_chr, 'bool')
 
@@ -701,7 +696,7 @@ def isupper(chr_array, len_chr, size_chr):
 def islower(chr_array, len_chr, size_chr):
     """Native Implementation of np.char.islower"""
     # Restricted to extended ASCII range(0, 255).
-    # Complete spectrum requires ordinal set with N > 2300.
+    # Complete ordinal set requires length of N > 2300.
     if not size_chr:
         return np.zeros(len_chr, 'bool')
 

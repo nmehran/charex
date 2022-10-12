@@ -40,7 +40,7 @@ def _ensure_type(x):
     return x, ndim
 
 
-def _infer_type(x, as_np=True):
+def _str_type(x, as_np=True):
     """Infer string-type of an objects Numba instance."""
     if isinstance(x, types.Array):
         if isinstance(x.dtype, types.CharSeq):
@@ -72,11 +72,11 @@ def _get_register_types(x1, x2, exception: (Exception, int) = None):
         if not exception:
             exception = NotImplementedError('NotImplemented')
         elif exception == 1:
-            as_type = _infer_type(x1, False)
+            as_type = _str_type(x1, False)
             if as_type in ('str', 'bytes'):
-                exception = TypeError(f"must be {as_type}, not {_infer_type(x2)}")
+                exception = TypeError(f"must be {as_type}, not {_str_type(x2)}")
             else:
-                exception = TypeError(f"must be string or bytes, not {_infer_type(x2)}")
+                exception = TypeError(f"must be string or bytes, not {_str_type(x2)}")
         raise exception
     return register_x1, register_x2, x1_dim, x2_dim
 
@@ -243,21 +243,21 @@ def ov_char_count(a, sub, start=0, end=None):
 
 
 @overload(np.char.endswith, **OPTIONS)
-def ov_char_endswith(a, sub, start=0, end=None):
-    register_a, register_sub, a_dim, sub_dim = _get_register_types(a, sub, 1)
+def ov_char_endswith(a, suffix, start=0, end=None):
+    register_a, register_sub, a_dim, sub_dim = _get_register_types(a, suffix, 1)
     s, e = _ensure_slice(start, end)
 
     if a_dim > 0 or sub_dim > 0:
-        def impl(a, sub, start=0, end=None):
+        def impl(a, suffix, start=0, end=None):
             start = start or s
             end = e if end is None else end
-            return endswith(*register_a(a, False), *register_sub(sub, False),
+            return endswith(*register_a(a, False), *register_sub(suffix, False),
                             start, end)
     else:
-        def impl(a, sub, start=0, end=None):
+        def impl(a, suffix, start=0, end=None):
             start = start or s
             end = e if end is None else end
-            return np.array(endswith(*register_a(a, False), *register_sub(sub, False),
+            return np.array(endswith(*register_a(a, False), *register_sub(suffix, False),
                                      start, end)[0], 'bool')
     return impl
 

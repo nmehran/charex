@@ -48,13 +48,13 @@ class StringInformation:
 
     @staticmethod
     @njit(nogil=True, cache=True)
-    def char_endswith(a, sub, start=0, end=None):
-        return np.char.endswith(a, sub, start, end)
+    def char_endswith(a, suffix, start=0, end=None):
+        return np.char.endswith(a, suffix, start, end)
 
     @staticmethod
     @njit(nogil=True, cache=True)
-    def char_startswith(a, sub, start=0, end=None):
-        return np.char.startswith(a, sub, start, end)
+    def char_startswith(a, prefix, start=0, end=None):
+        return np.char.startswith(a, prefix, start, end)
 
     @staticmethod
     @njit(nogil=True, cache=True)
