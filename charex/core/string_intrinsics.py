@@ -8,20 +8,6 @@ from numpy import dtype, empty, frombuffer, ravel
 
 
 @register_jitable(**JIT_OPTIONS)
-def register_scalar_bytes(b, rstrip=True):
-    """Expose the numerical representation of scalar ASCII bytes."""
-    len_chr = 1
-    size_chr = len(b)
-    if rstrip and size_chr > 1:
-        return (
-            _rstrip_inner(frombuffer(b, 'uint8').copy(), size_chr, True),
-            len_chr,
-            size_chr
-        )
-    return frombuffer(b, 'uint8'), len_chr, size_chr
-
-
-@register_jitable(**JIT_OPTIONS)
 def register_array_bytes(b, rstrip=True):
     """Expose the numerical representation of ASCII array bytes."""
     len_chr = b.size
@@ -36,16 +22,18 @@ def register_array_bytes(b, rstrip=True):
 
 
 @register_jitable(**JIT_OPTIONS)
-def register_scalar_strings(s, rstrip=True):
-    """Expose the numerical representation of scalar UTF-32 strings."""
+def register_scalar_bytes(b, rstrip=True):
+    """Expose the numerical representation of scalar ASCII bytes."""
     len_chr = 1
-    size_chr = len(s)
-    chr_array = empty(size_chr, 'int32')
-    for i in range(size_chr):
-        chr_array[i] = ord(s[i])
+    size_chr = len(b)
     if rstrip and size_chr > 1:
-        return _rstrip_inner(chr_array, size_chr, True), len_chr, size_chr
-    return chr_array, len_chr, size_chr
+        return (
+            _rstrip_inner(frombuffer(b, 'uint8').copy(), size_chr, True),
+            len_chr,
+            size_chr
+        )
+    return frombuffer(b, 'uint8'), len_chr, size_chr
+
 
 
 @register_jitable(**JIT_OPTIONS)
@@ -56,6 +44,19 @@ def register_array_strings(s, rstrip=True):
     chr_array = ravel(s).view(dtype('int32'))
     if rstrip and size_chr > 1:
         return _rstrip_inner(chr_array, size_chr), len_chr, size_chr
+    return chr_array, len_chr, size_chr
+
+
+@register_jitable(**JIT_OPTIONS)
+def register_scalar_strings(s, rstrip=True):
+    """Expose the numerical representation of scalar UTF-32 strings."""
+    len_chr = 1
+    size_chr = len(s)
+    chr_array = empty(size_chr, 'int32')
+    for i in range(size_chr):
+        chr_array[i] = ord(s[i])
+    if rstrip and size_chr > 1:
+        return _rstrip_inner(chr_array, size_chr, True), len_chr, size_chr
     return chr_array, len_chr, size_chr
 
 
