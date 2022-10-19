@@ -115,7 +115,6 @@ def _register_single(x1, exception: Exception = None):
             else register_scalar_strings
         as_bytes = False
     else:
-        e = exception or TypeError("string operation on non-string array")
         raise e
     return register_x1, x1_dim, as_bytes
 
