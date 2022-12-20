@@ -112,7 +112,7 @@ def equal(chr_array, len_chr, size_chr, cmp_array, len_cmp, size_cmp):
 def compare_chararrays(chr_array, len_chr, size_chr,
                        cmp_array, len_cmp, size_cmp, inv, cmp):
     """Native Implementation of np.char.compare_chararrays"""
-    # {“<”, “<=”, “==”, “>=”, “>”, “!=”}
+    # { “<”,    “<=”,     “==”,     “>=”,   “>”,     “!=”}
     # { (60,) (60, 61), (61, 61), (62, 61), (62,), (33, 61) }
     # The argument cmp can be passed as bytes or string, hence ordinal mapping.
     if len(cmp) == 1:
@@ -413,7 +413,7 @@ def rindex(chr_array, len_chr, size_chr,
     sub_lens = str_len(sub_array, len_sub, size_sub)
 
     len_cast = max(len_chr, len_sub)
-    rfind_sub = -np.ones(len_cast, 'int64')
+    rindex_sub = -np.ones(len_cast, 'int64')
 
     size_chr = (len_chr > 1 and size_chr) or 0
     size_sub = (len_sub > 1 and size_sub) or 0
@@ -432,17 +432,17 @@ def rindex(chr_array, len_chr, size_chr,
                         n -= 1
                         break
                 else:
-                    rfind_sub[i] = n - n_sub - stride + 1
+                    rindex_sub[i] = n - n_sub - stride + 1
                     break
             else:
                 raise ValueError('substring not found')
         else:
             if o > n:
                 raise ValueError('substring not found')
-            rfind_sub[i] = n
+            rindex_sub[i] = n
         stride += size_chr
         stride_sub += size_sub
-    return rfind_sub
+    return rindex_sub
 
 
 @register_jitable(**JIT_OPTIONS)
