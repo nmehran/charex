@@ -9,7 +9,7 @@ from numpy import dtype, empty, frombuffer, ravel
 
 @register_jitable(**JIT_OPTIONS)
 def register_array_bytes(b, rstrip=True):
-    """Expose the numerical representation of ASCII array bytes."""
+    """Expose the ordinal representation of ASCII array bytes."""
     len_chr = b.size
     size_chr = b.itemsize
     if rstrip and size_chr > 1:
@@ -23,7 +23,7 @@ def register_array_bytes(b, rstrip=True):
 
 @register_jitable(**JIT_OPTIONS)
 def register_scalar_bytes(b, rstrip=True):
-    """Expose the numerical representation of scalar ASCII bytes."""
+    """Expose the ordinal representation of scalar ASCII bytes."""
     len_chr = 1
     size_chr = len(b)
     if rstrip and size_chr > 1:
@@ -35,10 +35,9 @@ def register_scalar_bytes(b, rstrip=True):
     return frombuffer(b, 'uint8'), len_chr, size_chr
 
 
-
 @register_jitable(**JIT_OPTIONS)
 def register_array_strings(s, rstrip=True):
-    """Expose the numerical representation of UTF-32 array strings."""
+    """Expose the ordinal representation of UTF-32 array strings."""
     len_chr = s.size
     size_chr = s.itemsize // 4
     chr_array = ravel(s).view(dtype('int32'))
@@ -49,7 +48,7 @@ def register_array_strings(s, rstrip=True):
 
 @register_jitable(**JIT_OPTIONS)
 def register_scalar_strings(s, rstrip=True):
-    """Expose the numerical representation of scalar UTF-32 strings."""
+    """Expose the ordinal representation of scalar UTF-32 strings."""
     len_chr = 1
     size_chr = len(s)
     chr_array = empty(size_chr, 'int32')
