@@ -170,7 +170,10 @@ def _get_sub_indices(chr_lens, len_chr, sub_lens, len_sub, start, end, i):
 def _longest_proper_suffix(substring):
     """Computes the longest proper suffix of `substring` that is also a prefix."""
     m = len(substring)
-    lps = np.zeros(m, 'int32')
+    if m <= 1:
+        return np.zeros(m, 'int64')
+
+    lps = np.zeros(m, 'int64')
     i = 1
     j = 0
     while i < m:
@@ -187,7 +190,7 @@ def _longest_proper_suffix(substring):
 
 
 @register_jitable(**JIT_OPTIONS)
-def _find_substring(chr_array, sub_array, start, r_find=False, as_index=False):
+def _find_substring(chr_array, sub_array, start, r_find=False, as_index=False, lps=None):
     """Adaptation of Knuth-Morris-Pratt (KMP) algorithm with support for right-index and left-index search."""
     len_chr = len(chr_array)
     len_sub = len(sub_array)
@@ -196,7 +199,8 @@ def _find_substring(chr_array, sub_array, start, r_find=False, as_index=False):
             raise ValueError('substring not found')
         return -1
 
-    lps = _longest_proper_suffix(sub_array) if len_sub > 1 else np.zeros(1, 'int32')
+    if lps is None:
+        lps = _longest_proper_suffix(sub_array)
 
     if r_find:
         i = len_chr - 1
@@ -231,14 +235,17 @@ def _find_substring(chr_array, sub_array, start, r_find=False, as_index=False):
 
 
 @register_jitable(**JIT_OPTIONS)
-def _count_substring(chr_array, sub_array):
+def _count_substring(chr_array, sub_array, lps):
     """Adaptation of Knuth-Morris-Pratt (KMP) algorithm which supports substring count."""
+
     len_chr = len(chr_array)
     len_sub = len(sub_array)
     if not len_chr:
         return 0
 
-    lps = _longest_proper_suffix(sub_array) if len_sub > 1 else np.zeros(1, 'int32')
+    if lps is None:
+        lps = _longest_proper_suffix(sub_array)
+
     i = j = count_sub = 0
     while i < len_chr:
         if chr_array[i] == sub_array[j]:
@@ -251,6 +258,8 @@ def _count_substring(chr_array, sub_array):
                 i += 1
         if j == len_sub:
             count_sub += 1
+            j = 0
+
     return count_sub
 
 
@@ -261,6 +270,8 @@ def count(chr_array, len_chr, size_chr,
     start, end = _init_sub_indices(start, end, size_chr)
     if start > size_chr or start > end + size_chr:
         return np.zeros(max(len_chr, len_sub), 'int64')
+
+    lps = _longest_proper_suffix(sub_array) if len_sub == 1 else None
 
     chr_lens = str_len(chr_array, len_chr, size_chr)
     sub_lens = str_len(sub_array, len_sub, size_sub)
@@ -277,7 +288,8 @@ def count(chr_array, len_chr, size_chr,
                                               start, end, i)
         if n_sub:
             count_sub[i] = _count_substring(chr_array[stride + o:stride + n],
-                                            sub_array[stride_sub:stride_sub + n_sub])
+                                            sub_array[stride_sub:stride_sub + n_sub],
+                                            lps)
         else:
             count_sub[i] = o <= n and max(1 + n - o, 1)
         stride += size_chr
@@ -366,6 +378,8 @@ def find(chr_array, len_chr, size_chr,
             raise ValueError('substring not found')
         return -np.ones(max(len_chr, len_sub), 'int64')
 
+    lps = _longest_proper_suffix(sub_array) if len_sub == 1 else None
+
     chr_lens = str_len(chr_array, len_chr, size_chr)
     sub_lens = str_len(sub_array, len_sub, size_sub)
 
@@ -381,7 +395,7 @@ def find(chr_array, len_chr, size_chr,
                                               start, end, i)
         if n_sub:
             find_sub[i] = _find_substring(chr_array[stride + o:stride + n],
-                                          sub_array[stride_sub:stride_sub + n_sub], o, r_find, as_index)
+                                          sub_array[stride_sub:stride_sub + n_sub], o, r_find, as_index, lps)
         elif as_index and o > n:
             raise ValueError('substring not found')
         else:

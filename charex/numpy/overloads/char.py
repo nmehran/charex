@@ -343,7 +343,7 @@ def ov_char_rfind(a, sub, start=0, end=None):
             end = e if end is None else end
             return np.array(find(*register_a(a, False),
                                  *register_sub(sub, False),
-                                 start, end)[0], True)
+                                 start, end, True)[0])
     return impl
 
 
@@ -365,7 +365,7 @@ def ov_char_index(a, sub, start=0, end=None):
             end = e if end is None else end
             return np.array(find(*register_a(a, False),
                                  *register_sub(sub, False),
-                                 start, end)[0], False, True)
+                                 start, end, False, True)[0])
     return impl
 
 
@@ -387,7 +387,7 @@ def ov_char_rindex(a, sub, start=0, end=None):
             end = e if end is None else end
             return np.array(find(*register_a(a, False),
                                  *register_sub(sub, False),
-                                 start, end)[0], True, True)
+                                 start, end, True, True)[0])
     return impl
 
 
