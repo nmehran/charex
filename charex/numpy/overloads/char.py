@@ -9,7 +9,7 @@ from charex.core.string_intrinsics import (
 )
 from charex.numpy.overloads.definitions import (
     greater_equal, greater, equal, compare_chararrays,
-    count, endswith, startswith, find, rfind, index, rindex, str_len,
+    count, endswith, startswith, find, str_len,
     isalpha, isalnum, isdecimal, isdigit, islower, isnumeric, isspace, istitle, isupper
 
 )
@@ -334,16 +334,16 @@ def ov_char_rfind(a, sub, start=0, end=None):
         def impl(a, sub, start=0, end=None):
             start = start or s
             end = e if end is None else end
-            return rfind(*register_a(a, False),
-                         *register_sub(sub, False),
-                         start, end)
+            return find(*register_a(a, False),
+                        *register_sub(sub, False),
+                        start, end, True)
     else:
         def impl(a, sub, start=0, end=None):
             start = start or s
             end = e if end is None else end
-            return np.array(rfind(*register_a(a, False),
-                                  *register_sub(sub, False),
-                                  start, end)[0])
+            return np.array(find(*register_a(a, False),
+                                 *register_sub(sub, False),
+                                 start, end)[0], True)
     return impl
 
 
@@ -356,16 +356,16 @@ def ov_char_index(a, sub, start=0, end=None):
         def impl(a, sub, start=0, end=None):
             start = start or s
             end = e if end is None else end
-            return index(*register_a(a, False),
-                         *register_sub(sub, False),
-                         start, end)
+            return find(*register_a(a, False),
+                        *register_sub(sub, False),
+                        start, end, False, True)
     else:
         def impl(a, sub, start=0, end=None):
             start = start or s
             end = e if end is None else end
-            return np.array(index(*register_a(a, False),
-                                  *register_sub(sub, False),
-                                  start, end)[0])
+            return np.array(find(*register_a(a, False),
+                                 *register_sub(sub, False),
+                                 start, end)[0], False, True)
     return impl
 
 
@@ -378,16 +378,16 @@ def ov_char_rindex(a, sub, start=0, end=None):
         def impl(a, sub, start=0, end=None):
             start = start or s
             end = e if end is None else end
-            return rindex(*register_a(a, False),
-                          *register_sub(sub, False),
-                          start, end)
+            return find(*register_a(a, False),
+                        *register_sub(sub, False),
+                        start, end, True, True)
     else:
         def impl(a, sub, start=0, end=None):
             start = start or s
             end = e if end is None else end
-            return np.array(rindex(*register_a(a, False),
-                                   *register_sub(sub, False),
-                                   start, end)[0])
+            return np.array(find(*register_a(a, False),
+                                 *register_sub(sub, False),
+                                 start, end)[0], True, True)
     return impl
 
 
