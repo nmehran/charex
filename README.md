@@ -51,7 +51,7 @@ Despite a minor initial overhead from Numba's LLVM initialization, `charex` rapi
 ![comparison-operators-strings.png](charex%2Fbenchmarks%2Fnumba-v-0.59%2Fcomparison-operators-strings.png)
 
 ### Occurrence Information
-![char-occurrence-bytes.png](charex%2Fbenchmarks%2Fnumba-v-0.59%2Fchar-occurence-bytes.png)
+![char-occurrence-bytes.png](charex%2Fbenchmarks%2Fnumba-v-0.59%2Fchar-occurrence-bytes.png)
 ![char-occurrence-strings.png](charex%2Fbenchmarks%2Fnumba-v-0.59%2Fchar-occurrence-strings.png)
 
 ### Property Information
