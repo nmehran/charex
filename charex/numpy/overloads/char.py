@@ -123,7 +123,7 @@ def _register_single(x1, exception: NumbaError = None):
     return register_x1, x1_dim, as_bytes
 
 
-@overload(np.char.equal)
+@overload(np.char.equal, **OPTIONS)
 def ov_char_equal(x1, x2):
     register_x1, register_x2, x1_dim, x2_dim = _register_pair(x1, x2)
 
@@ -138,7 +138,7 @@ def ov_char_equal(x1, x2):
     return impl
 
 
-@overload(np.char.not_equal)
+@overload(np.char.not_equal, **OPTIONS)
 def ov_char_not_equal(x1, x2):
     register_x1, register_x2, x1_dim, x2_dim = _register_pair(x1, x2)
 
@@ -153,7 +153,7 @@ def ov_char_not_equal(x1, x2):
     return impl
 
 
-@overload(np.char.greater_equal)
+@overload(np.char.greater_equal, **OPTIONS)
 def ov_char_greater_equal(x1, x2):
     register_x1, register_x2, x1_dim, x2_dim = _register_pair(x1, x2)
 
@@ -169,7 +169,7 @@ def ov_char_greater_equal(x1, x2):
     return impl
 
 
-@overload(np.char.greater)
+@overload(np.char.greater, **OPTIONS)
 def ov_char_greater(x1, x2):
     register_x1, register_x2, x1_dim, x2_dim = _register_pair(x1, x2)
 
@@ -184,7 +184,7 @@ def ov_char_greater(x1, x2):
     return impl
 
 
-@overload(np.char.less)
+@overload(np.char.less, **OPTIONS)
 def ov_char_less(x1, x2):
     register_x1, register_x2, x1_dim, x2_dim = _register_pair(x1, x2)
 
@@ -200,7 +200,7 @@ def ov_char_less(x1, x2):
     return impl
 
 
-@overload(np.char.less_equal)
+@overload(np.char.less_equal, **OPTIONS)
 def ov_char_less_equal(x1, x2):
     register_x1, register_x2, x1_dim, x2_dim = _register_pair(x1, x2)
 
@@ -215,10 +215,10 @@ def ov_char_less_equal(x1, x2):
     return impl
 
 
-@overload(np.char.compare_chararrays)
+@overload(np.char.compare_chararrays, **OPTIONS)
 def ov_char_compare_chararrays(a1, a2, cmp, rstrip):
     if not isinstance(cmp, (types.Bytes, types.UnicodeType)):
-        raise NumbaTypeError(f'a bytes-like object is required, not {cmp.name}')
+        raise TypeError(f'a bytes-like object is required, not {cmp.name}')
 
     register_a1, register_a2, a1_dim, a2_dim = _register_pair(a1, a2)
 
@@ -241,7 +241,7 @@ def ov_char_compare_chararrays(a1, a2, cmp, rstrip):
 # String Information
 
 
-@overload(np.char.count)
+@overload(np.char.count, **OPTIONS)
 def ov_char_count(a, sub, start=0, end=None):
     register_a, register_sub, a_dim, sub_dim = _register_pair(a, sub, 1)
     s, e = _ensure_slice(start, end)
@@ -263,7 +263,7 @@ def ov_char_count(a, sub, start=0, end=None):
     return impl
 
 
-@overload(np.char.endswith)
+@overload(np.char.endswith, **OPTIONS)
 def ov_char_endswith(a, suffix, start=0, end=None):
     register_a, register_sub, a_dim, sub_dim = _register_pair(a, suffix, 1)
     s, e = _ensure_slice(start, end)
@@ -285,7 +285,7 @@ def ov_char_endswith(a, suffix, start=0, end=None):
     return impl
 
 
-@overload(np.char.startswith)
+@overload(np.char.startswith, **OPTIONS)
 def ov_char_startswith(a, prefix, start=0, end=None):
     register_a, register_sub, a_dim, sub_dim = _register_pair(a, prefix, 1)
     s, e = _ensure_slice(start, end)
@@ -307,7 +307,7 @@ def ov_char_startswith(a, prefix, start=0, end=None):
     return impl
 
 
-@overload(np.char.find)
+@overload(np.char.find, **OPTIONS)
 def ov_char_find(a, sub, start=0, end=None):
     register_a, register_sub, a_dim, sub_dim = _register_pair(a, sub, 1)
     s, e = _ensure_slice(start, end)
@@ -329,7 +329,7 @@ def ov_char_find(a, sub, start=0, end=None):
     return impl
 
 
-@overload(np.char.rfind)
+@overload(np.char.rfind, **OPTIONS)
 def ov_char_rfind(a, sub, start=0, end=None):
     register_a, register_sub, a_dim, sub_dim = _register_pair(a, sub, 1)
     s, e = _ensure_slice(start, end)
@@ -351,7 +351,7 @@ def ov_char_rfind(a, sub, start=0, end=None):
     return impl
 
 
-@overload(np.char.index)
+@overload(np.char.index, **OPTIONS)
 def ov_char_index(a, sub, start=0, end=None):
     register_a, register_sub, a_dim, sub_dim = _register_pair(a, sub, 1)
     s, e = _ensure_slice(start, end)
@@ -373,7 +373,7 @@ def ov_char_index(a, sub, start=0, end=None):
     return impl
 
 
-@overload(np.char.rindex)
+@overload(np.char.rindex, **OPTIONS)
 def ov_char_rindex(a, sub, start=0, end=None):
     register_a, register_sub, a_dim, sub_dim = _register_pair(a, sub, 1)
     s, e = _ensure_slice(start, end)
@@ -395,7 +395,7 @@ def ov_char_rindex(a, sub, start=0, end=None):
     return impl
 
 
-@overload(np.char.str_len)
+@overload(np.char.str_len, **OPTIONS)
 def ov_char_str_len(a):
     register_a, a_dim, _ = _register_single(a)
 
@@ -408,7 +408,7 @@ def ov_char_str_len(a):
     return impl
 
 
-@overload(np.char.isalpha)
+@overload(np.char.isalpha, **OPTIONS)
 def ov_char_isalpha(a):
     register_a, a_dim, _ = _register_single(a)
 
@@ -421,7 +421,7 @@ def ov_char_isalpha(a):
     return impl
 
 
-@overload(np.char.isalnum)
+@overload(np.char.isalnum, **OPTIONS)
 def ov_char_isalnum(a):
     register_a, a_dim, _ = _register_single(a)
 
@@ -434,7 +434,7 @@ def ov_char_isalnum(a):
     return impl
 
 
-@overload(np.char.isspace)
+@overload(np.char.isspace, **OPTIONS)
 def ov_char_isspace(a):
     register_a, a_dim, as_bytes = _register_single(a)
 
@@ -447,7 +447,7 @@ def ov_char_isspace(a):
     return impl
 
 
-@overload(np.char.isdecimal)
+@overload(np.char.isdecimal, **OPTIONS)
 def ov_char_isdecimal(a):
     catch_incompatible = NumbaTypeError("isnumeric is only available for "
                                         "Unicode strings and arrays")
@@ -464,7 +464,7 @@ def ov_char_isdecimal(a):
     return impl
 
 
-@overload(np.char.isdigit)
+@overload(np.char.isdigit, **OPTIONS)
 def ov_char_isdigit(a):
     register_a, a_dim, _ = _register_single(a)
 
@@ -477,7 +477,7 @@ def ov_char_isdigit(a):
     return impl
 
 
-@overload(np.char.isnumeric)
+@overload(np.char.isnumeric, **OPTIONS)
 def ov_char_isnumeric(a):
     catch_incompatible = NumbaTypeError("isnumeric is only available for "
                                         "Unicode strings and arrays")
@@ -494,7 +494,7 @@ def ov_char_isnumeric(a):
     return impl
 
 
-@overload(np.char.istitle)
+@overload(np.char.istitle, **OPTIONS)
 def ov_char_istitle(a):
     register_a, a_dim, _ = _register_single(a)
 
@@ -507,7 +507,7 @@ def ov_char_istitle(a):
     return impl
 
 
-@overload(np.char.isupper)
+@overload(np.char.isupper, **OPTIONS)
 def ov_char_isupper(a):
     register_a, a_dim, _ = _register_single(a)
 
@@ -520,7 +520,7 @@ def ov_char_isupper(a):
     return impl
 
 
-@overload(np.char.islower)
+@overload(np.char.islower, **OPTIONS)
 def ov_char_islower(a):
     register_a, a_dim, _ = _register_single(a)
 
