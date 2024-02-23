@@ -44,7 +44,7 @@ import charex
 
 ## Benchmarks
 
-Despite a minor initial overhead from Numba's LLVM initialization, `charex` rapidly offsets this with increased data scale, outperforming NumPy in handling occurrence and property information.
+Despite a minor initial overhead from Numba's LLVM initialization, `charex` offsets this with increased data scale, outperforming NumPy in handling occurrence and property information.
 
 ### Comparison Operators
 ![comparison-operators-bytes.png](charex%2Fbenchmarks%2Fnumba-v-0.59%2Fcomparison-operators-bytes.png)
