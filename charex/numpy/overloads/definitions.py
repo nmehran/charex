@@ -357,51 +357,6 @@ def rfind(chr_array, len_chr, size_chr,
 
 
 @register_jitable(**JIT_OPTIONS)
-def rindex(chr_array, len_chr, size_chr,
-           sub_array, len_sub, size_sub,
-           start, end):
-    """Native Implementation of np.char.rindex"""
-    start, end = _init_sub_indices(start, end, size_chr)
-    if start > size_chr or start > end + size_chr:
-        raise ValueError('substring not found')
-
-    chr_lens = str_len(chr_array, len_chr, size_chr)
-    sub_lens = str_len(sub_array, len_sub, size_sub)
-
-    len_cast = max(len_chr, len_sub)
-    rfind_sub = -np.ones(len_cast, 'int64')
-
-    size_chr = (len_chr > 1 and size_chr) or 0
-    size_sub = (len_sub > 1 and size_sub) or 0
-    stride = stride_sub = 0
-    for i in range(len_cast):
-        n_chr, n_sub, o, n = _get_sub_indices(chr_lens, len_chr,
-                                              sub_lens, len_sub,
-                                              start, end, i)
-        if n_sub:
-            o += stride - 1
-            n += stride - 1
-            r = stride_sub + n_sub - 1
-            while n - n_sub >= o:
-                for p in range(n_sub):
-                    if chr_array[n - p] != sub_array[r - p]:
-                        n -= 1
-                        break
-                else:
-                    rfind_sub[i] = n - n_sub - stride + 1
-                    break
-            else:
-                raise ValueError('substring not found')
-        else:
-            if o > n:
-                raise ValueError('substring not found')
-            rfind_sub[i] = n
-        stride += size_chr
-        stride_sub += size_sub
-    return rfind_sub
-
-
-@register_jitable(**JIT_OPTIONS)
 def index(chr_array, len_chr, size_chr,
           sub_array, len_sub, size_sub,
           start, end):
