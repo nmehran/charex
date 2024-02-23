@@ -1,6 +1,6 @@
 """
 Numba overloads for numpy.character routines
-Copyright (c) 2022, Nima Mehrani
+Copyright (c) 2022-present, Nima Mehrani
 """
 
 from charex.core import JIT_OPTIONS
@@ -18,8 +18,8 @@ import numpy as np
 def _cast_comparison(size_chr, len_chr, size_cmp, len_cmp):
     """Determines the offsets used to align the comparison to the target."""
     if len_cmp > 1 and len_cmp != len_chr:
-        raise ValueError('shape mismatch: objects cannot be broadcast to a single shape.  '
-                         'Mismatch is between arg 0 and arg 1.')
+        raise ValueError('shape mismatch: objects cannot be broadcast to a '
+                         'single shape.  Mismatch is between arg 0 and arg 1.')
     size_margin = size_chr - size_cmp
     if len_cmp == 1:
         size_stride = min(size_chr, size_cmp + (size_margin < 0))
@@ -167,111 +167,12 @@ def _get_sub_indices(chr_lens, len_chr, sub_lens, len_sub, start, end, i):
 
 
 @register_jitable(**JIT_OPTIONS)
-def _longest_proper_suffix(substring):
-    """Computes the longest proper suffix of `substring` that is also a prefix."""
-    m = len(substring)
-    if m <= 1:
-        return np.zeros(m, 'int64')
-
-    lps = np.zeros(m, 'int64')
-    i = 1
-    j = 0
-    while i < m:
-        if substring[i] == substring[j]:
-            lps[i] = j + 1
-            i += 1
-            j += 1
-        else:
-            if j:
-                j = lps[j - 1]
-            else:
-                i += 1
-    return lps
-
-
-@register_jitable(**JIT_OPTIONS)
-def _find_substring(chr_array, sub_array, start, r_find=False, as_index=False, lps=None):
-    """Adaptation of Knuth-Morris-Pratt (KMP) algorithm with support for right-index and left-index search."""
-    len_chr = len(chr_array)
-    len_sub = len(sub_array)
-    if not len_chr:
-        if as_index:
-            raise ValueError('substring not found')
-        return -1
-
-    if lps is None:
-        lps = _longest_proper_suffix(sub_array)
-
-    if r_find:
-        i = len_chr - 1
-        j = len_sub = len_sub - 1
-        while i >= 0:
-            if chr_array[i] == sub_array[j]:
-                i -= 1
-                j -= 1
-            else:
-                if j != len_sub:
-                    j = lps[j - 1] or len_sub
-                else:
-                    i -= 1
-            if j == -1:
-                return start + i + 1
-    else:
-        i = j = 0
-        while i < len_chr:
-            if chr_array[i] == sub_array[j]:
-                i += 1
-                j += 1
-            else:
-                if j != 0:
-                    j = lps[j - 1]
-                else:
-                    i += 1
-            if j == len_sub:
-                return start + i - j
-    if as_index:
-        raise ValueError('substring not found')
-    return -1
-
-
-@register_jitable(**JIT_OPTIONS)
-def _count_substring(chr_array, sub_array, lps):
-    """Adaptation of Knuth-Morris-Pratt (KMP) algorithm which supports substring count."""
-
-    len_chr = len(chr_array)
-    len_sub = len(sub_array)
-    if not len_chr:
-        return 0
-
-    if lps is None:
-        lps = _longest_proper_suffix(sub_array)
-
-    i = j = count_sub = 0
-    while i < len_chr:
-        if chr_array[i] == sub_array[j]:
-            i += 1
-            j += 1
-        else:
-            if j != 0:
-                j = lps[j - 1]
-            else:
-                i += 1
-        if j == len_sub:
-            count_sub += 1
-            j = 0
-
-    return count_sub
-
-
-@register_jitable(**JIT_OPTIONS)
 def count(chr_array, len_chr, size_chr,
           sub_array, len_sub, size_sub, start, end):
     """Native Implementation of np.char.count"""
     start, end = _init_sub_indices(start, end, size_chr)
     if start > size_chr or start > end + size_chr:
         return np.zeros(max(len_chr, len_sub), 'int64')
-
-    lps = _longest_proper_suffix(sub_array) if len_sub == 1 else None
 
     chr_lens = str_len(chr_array, len_chr, size_chr)
     sub_lens = str_len(sub_array, len_sub, size_sub)
@@ -287,9 +188,16 @@ def count(chr_array, len_chr, size_chr,
                                               sub_lens, len_sub,
                                               start, end, i)
         if n_sub:
-            count_sub[i] = _count_substring(chr_array[stride + o:stride + n],
-                                            sub_array[stride_sub:stride_sub + n_sub],
-                                            lps)
+            o += stride
+            n += stride
+            while o + n_sub <= n:
+                for p in range(n_sub):
+                    if chr_array[o + p] != sub_array[stride_sub + p]:
+                        o += 1
+                        break
+                else:
+                    count_sub[i] += 1
+                    o += n_sub
         else:
             count_sub[i] = o <= n and max(1 + n - o, 1)
         stride += size_chr
@@ -370,15 +278,11 @@ def startswith(chr_array, len_chr, size_chr,
 
 @register_jitable(**JIT_OPTIONS)
 def find(chr_array, len_chr, size_chr,
-         sub_array, len_sub, size_sub, start, end, r_find=False, as_index=False):
-    """Native Implementation of KMP-based find, rfind, index, and rindex."""
+         sub_array, len_sub, size_sub, start, end):
+    """Native Implementation of np.char.find"""
     start, end = _init_sub_indices(start, end, size_chr)
     if start > size_chr or start > end + size_chr:
-        if as_index:
-            raise ValueError('substring not found')
         return -np.ones(max(len_chr, len_sub), 'int64')
-
-    lps = _longest_proper_suffix(sub_array) if len_sub == 1 else None
 
     chr_lens = str_len(chr_array, len_chr, size_chr)
     sub_lens = str_len(sub_array, len_sub, size_sub)
@@ -394,16 +298,196 @@ def find(chr_array, len_chr, size_chr,
                                               sub_lens, len_sub,
                                               start, end, i)
         if n_sub:
-            find_sub[i] = _find_substring(chr_array[stride + o:stride + n],
-                                          sub_array[stride_sub:stride_sub + n_sub], o, r_find, as_index, lps)
-        elif as_index and o > n:
-            raise ValueError('substring not found')
+            o += stride
+            n += stride
+            while o + n_sub <= n:
+                for p in range(n_sub):
+                    if chr_array[o + p] != sub_array[stride_sub + p]:
+                        o += 1
+                        break
+                else:
+                    find_sub[i] = o - stride
+                    break
         else:
-            s = (r_find and n) or o
-            find_sub[i] = (o <= n and s + 1) - 1
+            find_sub[i] = (o <= n and o + 1) - 1
         stride += size_chr
         stride_sub += size_sub
     return find_sub
+
+
+@register_jitable(**JIT_OPTIONS)
+def rfind(chr_array, len_chr, size_chr,
+          sub_array, len_sub, size_sub,
+          start, end):
+    """Native Implementation of np.char.rfind"""
+    start, end = _init_sub_indices(start, end, size_chr)
+    if start > size_chr or start > end + size_chr:
+        return -np.ones(max(len_chr, len_sub), 'int64')
+
+    chr_lens = str_len(chr_array, len_chr, size_chr)
+    sub_lens = str_len(sub_array, len_sub, size_sub)
+
+    len_cast = max(len_chr, len_sub)
+    rfind_sub = -np.ones(len_cast, 'int64')
+
+    size_chr = (len_chr > 1 and size_chr) or 0
+    size_sub = (len_sub > 1 and size_sub) or 0
+    stride = stride_sub = 0
+    for i in range(len_cast):
+        n_chr, n_sub, o, n = _get_sub_indices(chr_lens, len_chr,
+                                              sub_lens, len_sub,
+                                              start, end, i)
+        if n_sub:
+            o += stride - 1
+            n += stride - 1
+            r = stride_sub + n_sub - 1
+            while n - n_sub >= o:
+                for p in range(n_sub):
+                    if chr_array[n - p] != sub_array[r - p]:
+                        n -= 1
+                        break
+                else:
+                    rfind_sub[i] = n - n_sub - stride + 1
+                    break
+        else:
+            rfind_sub[i] = (o <= n and n + 1) - 1
+        stride += size_chr
+        stride_sub += size_sub
+    return rfind_sub
+
+
+@register_jitable(**JIT_OPTIONS)
+def rindex(chr_array, len_chr, size_chr,
+           sub_array, len_sub, size_sub,
+           start, end):
+    """Native Implementation of np.char.rindex"""
+    start, end = _init_sub_indices(start, end, size_chr)
+    if start > size_chr or start > end + size_chr:
+        raise ValueError('substring not found')
+
+    chr_lens = str_len(chr_array, len_chr, size_chr)
+    sub_lens = str_len(sub_array, len_sub, size_sub)
+
+    len_cast = max(len_chr, len_sub)
+    rfind_sub = -np.ones(len_cast, 'int64')
+
+    size_chr = (len_chr > 1 and size_chr) or 0
+    size_sub = (len_sub > 1 and size_sub) or 0
+    stride = stride_sub = 0
+    for i in range(len_cast):
+        n_chr, n_sub, o, n = _get_sub_indices(chr_lens, len_chr,
+                                              sub_lens, len_sub,
+                                              start, end, i)
+        if n_sub:
+            o += stride - 1
+            n += stride - 1
+            r = stride_sub + n_sub - 1
+            while n - n_sub >= o:
+                for p in range(n_sub):
+                    if chr_array[n - p] != sub_array[r - p]:
+                        n -= 1
+                        break
+                else:
+                    rfind_sub[i] = n - n_sub - stride + 1
+                    break
+            else:
+                raise ValueError('substring not found')
+        else:
+            if o > n:
+                raise ValueError('substring not found')
+            rfind_sub[i] = n
+        stride += size_chr
+        stride_sub += size_sub
+    return rfind_sub
+
+
+@register_jitable(**JIT_OPTIONS)
+def index(chr_array, len_chr, size_chr,
+          sub_array, len_sub, size_sub,
+          start, end):
+    """Native Implementation of np.char.index"""
+    start, end = _init_sub_indices(start, end, size_chr)
+    if start > size_chr or start > end + size_chr:
+        raise ValueError('substring not found')
+
+    chr_lens = str_len(chr_array, len_chr, size_chr)
+    sub_lens = str_len(sub_array, len_sub, size_sub)
+
+    len_cast = max(len_chr, len_sub)
+    index_sub = -np.ones(len_cast, 'int64')
+
+    size_chr = (len_chr > 1 and size_chr) or 0
+    size_sub = (len_sub > 1 and size_sub) or 0
+    stride = stride_sub = 0
+    for i in range(len_cast):
+        n_chr, n_sub, o, n = _get_sub_indices(chr_lens, len_chr,
+                                              sub_lens, len_sub,
+                                              start, end, i)
+        if n_sub:
+            o += stride
+            n += stride
+            while o + n_sub <= n:
+                for p in range(n_sub):
+                    if chr_array[o + p] != sub_array[stride_sub + p]:
+                        o += 1
+                        break
+                else:
+                    index_sub[i] = o - stride
+                    break
+            else:
+                raise ValueError('substring not found')
+        else:
+            if o > n:
+                raise ValueError('substring not found')
+            index_sub[i] = o
+        stride += size_chr
+        stride_sub += size_sub
+    return index_sub
+
+
+@register_jitable(**JIT_OPTIONS)
+def rindex(chr_array, len_chr, size_chr,
+           sub_array, len_sub, size_sub,
+           start, end):
+    """Native Implementation of np.char.rindex"""
+    start, end = _init_sub_indices(start, end, size_chr)
+    if start > size_chr or start > end + size_chr:
+        raise ValueError('substring not found')
+
+    chr_lens = str_len(chr_array, len_chr, size_chr)
+    sub_lens = str_len(sub_array, len_sub, size_sub)
+
+    len_cast = max(len_chr, len_sub)
+    rfind_sub = -np.ones(len_cast, 'int64')
+
+    size_chr = (len_chr > 1 and size_chr) or 0
+    size_sub = (len_sub > 1 and size_sub) or 0
+    stride = stride_sub = 0
+    for i in range(len_cast):
+        n_chr, n_sub, o, n = _get_sub_indices(chr_lens, len_chr,
+                                              sub_lens, len_sub,
+                                              start, end, i)
+        if n_sub:
+            o += stride - 1
+            n += stride - 1
+            r = stride_sub + n_sub - 1
+            while n - n_sub >= o:
+                for p in range(n_sub):
+                    if chr_array[n - p] != sub_array[r - p]:
+                        n -= 1
+                        break
+                else:
+                    rfind_sub[i] = n - n_sub - stride + 1
+                    break
+            else:
+                raise ValueError('substring not found')
+        else:
+            if o > n:
+                raise ValueError('substring not found')
+            rfind_sub[i] = n
+        stride += size_chr
+        stride_sub += size_sub
+    return rfind_sub
 
 
 @register_jitable(**JIT_OPTIONS)

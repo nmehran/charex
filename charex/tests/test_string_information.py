@@ -60,8 +60,9 @@ def test(method='test'):
 
     length = 10000
     np.random.seed(1)
+
     # Whitespace
-    w = [9, 10, 11, 12, 13, 28, 29, 30, 31, 32]
+    w = [0, 9, 10, 11, 12, 13, 28, 29, 30, 31, 32]
 
     # ASCII word pairs
     a = np.array(['aAaAaA', '  aA  ', 'abBABba', 'AbbAbbbbAbb', ' aA Aa aa AA A1 1A 2a 33 Aa-aa '])
