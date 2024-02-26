@@ -218,7 +218,7 @@ def ov_char_less_equal(x1, x2):
 @overload(np.char.compare_chararrays, **OPTIONS)
 def ov_char_compare_chararrays(a1, a2, cmp, rstrip):
     if not isinstance(cmp, (types.Bytes, types.UnicodeType)):
-        raise TypeError(f'a bytes-like object is required, not {cmp.name}')
+        raise NumbaTypeError(f'a bytes-like object is required, not {cmp.name}')
 
     register_a1, register_a2, a1_dim, a2_dim = _register_pair(a1, a2)
 
