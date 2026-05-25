@@ -311,6 +311,42 @@ def write_csv(records, output_dir, size, repeat):
     return output_path
 
 
+def _format_log_tick(value, _):
+    if value <= 0:
+        return ''
+    if value >= 1:
+        text = f'{value:.2f}'
+    elif value >= 0.01:
+        text = f'{value:.3f}'
+    else:
+        text = f'{value:.4f}'
+    return text.rstrip('0').rstrip('.')
+
+
+def _format_ratio_tick(value, position):
+    return f'{_format_log_tick(value, position)}x'
+
+
+def _set_log_ticks(axis, values, ratio=False):
+    from matplotlib.ticker import FuncFormatter, NullFormatter
+
+    axis.set_yscale('log')
+    lower, upper = axis.get_ylim()
+    ticks = []
+    for exponent in range(-4, 5):
+        scale = 10.0 ** exponent
+        for multiple in (1, 2, 3, 4, 5, 10):
+            value = multiple * scale
+            if lower <= value <= upper:
+                ticks.append(value)
+    if not ticks:
+        ticks = [value for value in values if value > 0]
+    axis.set_yticks(sorted(set(ticks)))
+    formatter = _format_ratio_tick if ratio else _format_log_tick
+    axis.yaxis.set_major_formatter(FuncFormatter(formatter))
+    axis.yaxis.set_minor_formatter(NullFormatter())
+
+
 def write_plot(records, output_dir, filename, title):
     try:
         import matplotlib
@@ -331,13 +367,13 @@ def write_plot(records, output_dir, filename, title):
     fig, axes = plt.subplots(2, 1, figsize=(14, 8), constrained_layout=True)
     axes[0].bar(x - width / 2, charex_ms, width, label='charex')
     axes[0].bar(x + width / 2, numpy_ms, width, label='numpy')
-    axes[0].set_yscale('log')
+    _set_log_ticks(axes[0], charex_ms + numpy_ms)
     axes[0].set_ylabel('median ms, log scale')
     axes[0].legend()
 
     axes[1].bar(x, speedups, color='#5470c6')
     axes[1].axhline(1, color='#333333', linewidth=1)
-    axes[1].set_yscale('log')
+    _set_log_ticks(axes[1], speedups, ratio=True)
     axes[1].set_ylabel('speedup vs NumPy, log scale')
     axes[1].set_xticks(x)
     axes[1].set_xticklabels(labels, rotation=80, ha='right', fontsize=7)

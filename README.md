@@ -2,12 +2,16 @@
 
 String array extensions for Numba.
 
-Importing `charex` registers Numba overloads for NumPy's legacy
-fixed-width `np.char` string API:
+Importing `charex` registers Numba overloads for NumPy's `np.char` string API:
 
 ```python
 import charex
 ```
+
+The implementation aims to match NumPy behavior exactly while balancing strong
+fixed-width string performance with a compact code surface. Fast paths are kept
+when they are broadly useful and still leave the implementation simple enough to
+review.
 
 ## Compatibility
 
@@ -118,7 +122,7 @@ python -m pip install -e ".[bench]"
 python charex/benchmarks/benchmark.py --size 50000 --repeat 5 --plot
 ```
 
-Last locally tested 2026-05-24 on Python 3.12.8 with:
+Last locally tested 2026-05-25 on Python 3.12.8 with:
 
 - Numba 0.65.1, llvmlite 0.47.0, NumPy 1.26.4
 - Numba 0.65.1, llvmlite 0.47.0, NumPy 2.4.6
