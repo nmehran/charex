@@ -1,133 +1,242 @@
-"""Test numpy string information operations."""
+"""Tests for numpy character information overloads."""
+
+import numpy as np
+import pytest
+from numba import njit
 
 from charex.tests.definitions import StringInformation
-from charex.tests.support import CharacterTest, arguments_as_bytes, pack_arguments
-from sys import maxunicode
-import numpy as np
-
-TEST_BYTES = True
-TEST_STRINGS = True
+from charex.tests.support import assert_same, assert_same_exception
 
 
-def test(method='test'):
+NUMPY_MAJOR = int(np.__version__.split('.')[0])
+
+
+OCCURRENCE_FUNCS = [
+    ('count', 'char_count', np.char.count),
+    ('find', 'char_find', np.char.find),
+    ('rfind', 'char_rfind', np.char.rfind),
+    ('startswith', 'char_startswith', np.char.startswith),
+    ('endswith', 'char_endswith', np.char.endswith),
+]
+
+INDEX_FUNCS = [
+    ('index', 'char_index', np.char.index),
+    ('rindex', 'char_rindex', np.char.rindex),
+]
+
+PROPERTY_FUNCS = [
+    ('str_len', 'char_str_len', np.char.str_len),
+    ('isalpha', 'char_isalpha', np.char.isalpha),
+    ('isalnum', 'char_isalnum', np.char.isalnum),
+    ('isdigit', 'char_isdigit', np.char.isdigit),
+    ('islower', 'char_islower', np.char.islower),
+    ('isspace', 'char_isspace', np.char.isspace),
+    ('istitle', 'char_istitle', np.char.istitle),
+    ('isupper', 'char_isupper', np.char.isupper),
+]
+
+UNICODE_ONLY_PROPERTY_FUNCS = [
+    ('isdecimal', 'char_isdecimal', np.char.isdecimal),
+    ('isnumeric', 'char_isnumeric', np.char.isnumeric),
+]
+
+
+@njit(nogil=True, cache=False)
+def default_count(a, sub):
+    return np.char.count(a, sub)
+
+
+@njit(nogil=True, cache=False)
+def default_find(a, sub):
+    return np.char.find(a, sub)
+
+
+@njit(nogil=True, cache=False)
+def default_rfind(a, sub):
+    return np.char.rfind(a, sub)
+
+
+@njit(nogil=True, cache=False)
+def default_startswith(a, sub):
+    return np.char.startswith(a, sub)
+
+
+@njit(nogil=True, cache=False)
+def default_endswith(a, sub):
+    return np.char.endswith(a, sub)
+
+
+DEFAULT_OCCURRENCE_FUNCS = [
+    ('count', default_count, np.char.count),
+    ('find', default_find, np.char.find),
+    ('rfind', default_rfind, np.char.rfind),
+    ('startswith', default_startswith, np.char.startswith),
+    ('endswith', default_endswith, np.char.endswith),
+]
+
+OCCURRENCE_CASES = [
+    (np.array(['abcabc', 'bcxxbc'], dtype='U6'), 'bc'),
+    (np.array(['ab\x00cd', 'xx\x00cd'], dtype='U6'), 'cd'),
+    (np.array(['abcabc', 'bcxxbc'], dtype='U6'), 'bc', 2, None),
+    (np.array(['abcabc', 'bcxxbc'], dtype='U6'), 'bc', -4, -1),
+    ('abcabc', 'bc'),
+    (b'abcabc', b'bc'),
+    (np.bytes_(b'abcabc'), np.bytes_(b'bc')),
+    (np.array('abcabc', dtype='U6'), np.array('bc', dtype='U2')),
+    (np.array([b'abcabc', b'bcxxbc'], dtype='S6'), b'bc'),
+    (np.array([b'ab\x00cd', b'xx\x00cd'], dtype='S6'), b'cd'),
+    (np.array(['abc', ''], dtype='U3'), ''),
+]
+
+INDEX_CASES = [
+    (np.array(['abcabc', 'bcxxbc'], dtype='U6'), 'bc'),
+    (np.array(['ab\x00cd', 'xx\x00cd'], dtype='U6'), 'cd'),
+    (np.array(['abcabc', 'bcxxbc'], dtype='U6'), 'bc', 2, None),
+    ('abcabc', 'bc'),
+    (b'abcabc', b'bc'),
+    (np.bytes_(b'abcabc'), np.bytes_(b'bc')),
+    (np.array('abcabc', dtype='U6'), np.array('bc', dtype='U2')),
+    (np.array([b'abcabc', b'bcxxbc'], dtype='S6'), b'bc'),
+    (np.array([b'ab\x00cd', b'xx\x00cd'], dtype='S6'), b'cd'),
+    (np.array(['abc', ''], dtype='U3'), ''),
+]
+
+PROPERTY_UNICODE = np.array(
+    [
+        'alpha', 'α', '١', 'Ⅷ', '一', 'A', 'a', 'ǅuro', '中A',
+        ' ', '\x1c', '\x1f', ''
+    ],
+    dtype='U5',
+)
+
+PROPERTY_BYTES = np.array(
+    [b'A', b'z', bytes([0xc0]), bytes([0xaa]), b'1', b' ', b''],
+    dtype='S1',
+)
+
+SCALAR_PROPERTIES = [
+    'alpha', 'α', '١', 'Ⅷ', '一', 'A', 'a', 'ǅuro', '中A',
+    ' ', '\x1c', '\x1f', '',
+    b'A', b'z', b'1', b' ', b'',
+    np.str_('alpha'), np.bytes_(b'A'),
+    np.array('alpha', dtype='U5'), np.array(b'A', dtype='S1'),
+]
+
+SCALAR_UNICODE_PROPERTIES = [
+    'alpha', 'α', '١', 'Ⅷ', '一', 'A', 'a', 'ǅuro', '中A',
+    ' ', '\x1c', '\x1f', '',
+    np.str_('alpha'), np.array('alpha', dtype='U5'),
+]
+
+NONE_START_CASES = [
+    (np.array(['abcabc', 'bcxxbc'], dtype='U6'), 'bc', None, None),
+    (np.array(['abcabc', 'bcxxbc'], dtype='U6'), 'bc', None, 3),
+    (np.array([b'abcabc', b'bcxxbc'], dtype='S6'), b'bc', None, None),
+]
+
+
+@pytest.mark.parametrize('_, impl_name, baseline', OCCURRENCE_FUNCS)
+@pytest.mark.parametrize('args', OCCURRENCE_CASES)
+def test_occurrence_matches_numpy(_, impl_name, baseline, args):
     ch = StringInformation()
-
-    def test_string_occurrence(byte_args_, string_args_, method_=method):
-        m = 'measure' if method_ == 'graph' else method_
-
-        ba = list(pack_arguments(byte_args_, [(None, 1, 2, -500, 500), (0, -1, -2, -500, None)]))
-        sa = list(pack_arguments(string_args_, [(None, 1, 2, -500, 500), (0, -1, -2, -500, None)]))
-
-        test_occurrence = CharacterTest(byte_args=ba, string_args=sa)
-
-        test_occurrence.run(m, ch.char_count, np.char.count)
-        test_occurrence.run(m, ch.char_find, np.char.find)
-        test_occurrence.run(m, ch.char_rfind, np.char.rfind)
-        test_occurrence.run(m, ch.char_startswith, np.char.startswith)
-        test_occurrence.run(m, ch.char_endswith, np.char.endswith)
-
-        if method_ == 'graph':
-            test_occurrence.graph(columns=1)
-
-        return test_occurrence
-
-    def test_string_properties(byte_args_, string_args_, method_=method):
-        m = 'measure' if method_ == 'graph' else method_
-
-        test_properties = CharacterTest(byte_args=byte_args_, string_args=string_args_)
-
-        test_properties.run(m, ch.char_str_len, np.char.str_len)
-        test_properties.run(m, ch.char_isalpha, np.char.isalpha)
-        test_properties.run(m, ch.char_isalnum, np.char.isalnum)
-        test_properties.run(m, ch.char_isdigit, np.char.isdigit)
-        test_properties.run(m, ch.char_islower, np.char.islower)
-        test_properties.run(m, ch.char_isspace, np.char.isspace)
-        test_properties.run(m, ch.char_istitle, np.char.istitle)
-        test_properties.run(m, ch.char_isupper, np.char.isupper)
-
-        if method_ == 'graph':
-            test_properties.graph(columns=3)
-
-        # Methods which do not support bytes
-        test_properties = CharacterTest(byte_args=[], string_args=string_args_)
-        test_properties.run(m, ch.char_isnumeric, np.char.isnumeric)
-        test_properties.run(m, ch.char_isdecimal, np.char.isdecimal)
-
-        if method_ == 'graph':
-            test_properties.graph(columns=3)
-
-        return test_properties
-
-    length = 10000
-    np.random.seed(1)
-
-    # Whitespace
-    w = [0, 9, 10, 11, 12, 13, 28, 29, 30, 31, 32]
-
-    # ASCII word pairs
-    a = np.array(['aAaAaA', '  aA  ', 'abBABba', 'AbbAbbbbAbb', ' aA Aa aa AA A1 1A 2a 33 Aa-aa '])
-    p = np.array([chr(np.random.choice(w)).join([''.join([chr(np.random.randint(48, 127))
-                                                          for _ in range(3)]) for _ in range(2)])
-                  for _ in range(length)])
-
-    # ASCII strings of length 0 to 50
-    s = np.array([''.join([chr(np.random.randint(1, 127))
-                           for _ in range(np.random.randint(0, 50))])
-                  for _ in range(length)])
-
-    # UTF-32 strings of length 1 to 200 in range(1, sys.maxunicode)
-    # Python 3.7 can not decode unicode in range(55296, 57344)
-    u = np.array([''.join([chr(np.random.randint(1, 55295)) if i % 2
-                           else chr(np.random.randint(57345, maxunicode))
-                           for i in range(np.random.randint(1, 200))])
-                  for _ in range(length)])
-    # Single ASCII characters
-    c = np.random.choice([chr(i) for i in range(128)], length)
-
-    generics = [
-        (c, np.random.choice(c, c.size)),
-        (s, np.random.choice(s, s.size)),
-    ]
-
-    # Scalar Comparisons
-    scalars = [
-        (a, 'aA'), (a, 'Abb'),
-        ('abc' * 2, 'abc'), ('abc', ''),
-    ]
-
-    # Character buffers of different length
-    buffers = [
-        (a.astype('U35'), np.array('A', 'U40')),
-        (a, np.array('', 'U10'))
-    ]
-
-    # UTF-32
-    utf32 = [
-        (u, np.random.choice(u)),
-        (u, np.random.choice(u, u.size)),
-    ]
-
-    # Test Occurrence Methods
-    byte_args, string_args = [], []
-    if TEST_STRINGS:
-        string_args = generics + scalars + buffers + utf32
-    if TEST_BYTES:
-        byte_args = list(arguments_as_bytes(generics + scalars + buffers))
-
-    test_string_occurrence(byte_args_=[a[::-1] for a in byte_args],
-                           string_args_=[a[::-1] for a in string_args],
-                           method_='test')
-    test_string_occurrence(byte_args, string_args, method)
-
-    # Test Property Methods
-    byte_args, string_args = [], []
-    if TEST_STRINGS:
-        string_args = [(z,) for z in [a, c, p, s]]
-    if TEST_BYTES:
-        byte_args = list(arguments_as_bytes([(z,) for z in [a, c, p, s]]))
-
-    test_string_properties(byte_args, string_args, method)
+    assert_same(getattr(ch, impl_name), baseline, *args)
 
 
-if __name__ == '__main__':
-    test(method='graph')
+@pytest.mark.parametrize('_, implementation, baseline', DEFAULT_OCCURRENCE_FUNCS)
+def test_occurrence_default_arguments_match_numpy(_, implementation, baseline):
+    values = np.array(['abcabc', 'bcxxbc'], dtype='U6')
+    assert_same(implementation, baseline, values, 'bc')
+
+
+@pytest.mark.parametrize('_, impl_name, baseline',
+                         OCCURRENCE_FUNCS + INDEX_FUNCS)
+@pytest.mark.parametrize('args', NONE_START_CASES)
+def test_none_start_matches_numpy_1x(_, impl_name, baseline, args):
+    if NUMPY_MAJOR >= 2:
+        pytest.skip('NumPy 2 rejects start=None for np.char occurrence APIs')
+    ch = StringInformation()
+    assert_same(getattr(ch, impl_name), baseline, *args)
+
+
+@pytest.mark.parametrize('_, impl_name, baseline',
+                         OCCURRENCE_FUNCS + INDEX_FUNCS)
+@pytest.mark.parametrize('args', NONE_START_CASES)
+def test_none_start_rejected_by_numpy_2x(_, impl_name, baseline, args):
+    if NUMPY_MAJOR < 2:
+        pytest.skip('NumPy 1 accepts start=None for np.char occurrence APIs')
+    ch = StringInformation()
+    with pytest.raises(Exception):
+        baseline(*args)
+    with pytest.raises(Exception):
+        getattr(ch, impl_name)(*args)
+
+
+@pytest.mark.parametrize('_, impl_name, baseline', INDEX_FUNCS)
+@pytest.mark.parametrize('args', INDEX_CASES)
+def test_index_matches_numpy(_, impl_name, baseline, args):
+    ch = StringInformation()
+    assert_same(getattr(ch, impl_name), baseline, *args)
+
+
+@pytest.mark.parametrize('_, impl_name, baseline', INDEX_FUNCS)
+@pytest.mark.parametrize(
+    'args',
+    [
+        (np.array(['abc', 'xx'], dtype='U3'), 'zz'),
+        (np.array([b'abc', b'xx'], dtype='S3'), b'zz'),
+        ('abc', 'zz'),
+    ],
+)
+def test_index_not_found_matches_numpy(_, impl_name, baseline, args):
+    ch = StringInformation()
+    assert_same_exception(getattr(ch, impl_name), baseline, *args)
+
+
+@pytest.mark.parametrize('_, impl_name, baseline', PROPERTY_FUNCS)
+@pytest.mark.parametrize('values', [PROPERTY_UNICODE, PROPERTY_BYTES])
+def test_properties_match_numpy(_, impl_name, baseline, values):
+    ch = StringInformation()
+    assert_same(getattr(ch, impl_name), baseline, values)
+
+
+@pytest.mark.parametrize('_, impl_name, baseline', PROPERTY_FUNCS)
+@pytest.mark.parametrize('value', SCALAR_PROPERTIES)
+def test_scalar_properties_match_numpy(_, impl_name, baseline, value):
+    ch = StringInformation()
+    assert_same(getattr(ch, impl_name), baseline, value)
+
+
+@pytest.mark.parametrize('_, impl_name, baseline', PROPERTY_FUNCS)
+@pytest.mark.parametrize(
+    'values',
+    [
+        np.array(['ab\x00cd', 'abc\x00', '\x00abc'], dtype='U5'),
+        np.array([b'ab\x00cd', b'abc\x00', b'\x00abc'], dtype='S5'),
+    ],
+)
+def test_properties_with_embedded_nulls_match_numpy(_, impl_name, baseline,
+                                                   values):
+    ch = StringInformation()
+    assert_same(getattr(ch, impl_name), baseline, values)
+
+
+@pytest.mark.parametrize('_, impl_name, baseline', UNICODE_ONLY_PROPERTY_FUNCS)
+def test_unicode_only_properties_match_numpy(_, impl_name, baseline):
+    ch = StringInformation()
+    assert_same(getattr(ch, impl_name), baseline, PROPERTY_UNICODE)
+
+
+@pytest.mark.parametrize('_, impl_name, baseline', UNICODE_ONLY_PROPERTY_FUNCS)
+@pytest.mark.parametrize('value', SCALAR_UNICODE_PROPERTIES)
+def test_scalar_unicode_only_properties_match_numpy(
+        _, impl_name, baseline, value):
+    ch = StringInformation()
+    assert_same(getattr(ch, impl_name), baseline, value)
+
+
+@pytest.mark.parametrize('_, impl_name, baseline', UNICODE_ONLY_PROPERTY_FUNCS)
+def test_unicode_only_properties_with_embedded_nulls_match_numpy(
+        _, impl_name, baseline):
+    ch = StringInformation()
+    values = np.array(['ab\x00cd', 'abc\x00', '\x00abc'], dtype='U5')
+    assert_same(getattr(ch, impl_name), baseline, values)
