@@ -3,9 +3,13 @@ Numba overloads for numpy.character routines
 """
 
 from charex.core import OPTIONS
-from charex.core.string_intrinsics import (
-    register_array_bytes, register_scalar_bytes,
-    register_array_strings, register_scalar_strings
+from charex.numpy.overloads._shared import (
+    ensure_slice as _ensure_slice,
+    equal_dispatch as _equal_dispatch,
+    equal_kernel as _equal_kernel,
+    order_dispatch as _order_dispatch,
+    register_pair as _register_pair,
+    register_single as _register_single,
 )
 from charex.numpy.overloads.definitions import (
     greater_equal, greater, equal,
@@ -24,9 +28,7 @@ from charex.numpy.overloads.definitions import (
     scalar_bytes_islower, scalar_strings_islower
 )
 from numba.core import types
-from numba.core.errors import (
-    NumbaError, NumbaTypeError, NumbaNotImplementedError, NumbaValueError
-)
+from numba.core.errors import NumbaTypeError
 from numba.core.typing.templates import AttributeTemplate
 from numba.extending import infer_getattr, overload, register_jitable
 from numba import literally
@@ -34,7 +36,6 @@ import numpy as np
 
 
 _CHAR_INFO_SCALARS_AS_ARRAY = not isinstance(np.char.str_len, np.ufunc)
-_NUMPY_MAJOR = int(np.__version__.split('.')[0])
 
 
 def _char_count(a, sub, start=0, end=None):
@@ -159,255 +160,55 @@ def _char_info_scalar_result(value):
 # Comparison Operators
 
 
-def _ensure_slice(start, end):
-    """Ensure start and end slice argument is an integer type."""
-    if _NUMPY_MAJOR < 2:
-        start_ok = start is None or isinstance(start, (
-            int, types.Integer, types.NoneType, types.Omitted
-        ))
-    else:
-        start_ok = isinstance(start, (int, types.Integer, types.Omitted))
-    end_ok = end is None or isinstance(end, (int, types.Integer,
-                                             types.NoneType, types.Omitted))
-    if not start_ok or not end_ok:
-        raise NumbaTypeError("slice indices must be integers or None "
-                             "or have an __index__ method")
-    return 0, np.iinfo(np.int64).max
-
-
-def _ensure_type(x, exception: NumbaError = None):
-    """Ensure argument is a character type with appropriate layout and shape."""
-    ndim = -1
-    if isinstance(x, types.Array):
-        ndim = x.ndim
-        if ndim > 1:
-            raise NumbaValueError('charex supports only scalars and '
-                                  'one-dimensional arrays')
-        if x.layout != 'C':
-            raise NumbaValueError('charex requires C-contiguous arrays; '
-                                  'call numpy.ascontiguousarray')
-        x = x.dtype
-        if not isinstance(x, (types.CharSeq,
-                              types.UnicodeCharSeq)) or not x.count:
-            ndim = None
-    elif isinstance(x, (types.CharSeq, types.UnicodeCharSeq)):
-        ndim = -2
-    elif not isinstance(x, (types.Bytes, types.UnicodeType)):
-        ndim = None
-    if isinstance(exception, NumbaError) and ndim is None:
-        raise exception
-    return x, ndim
-
-
-def _str_type(x, as_np=True):
-    """Infer string-type of an objects Numba instance."""
-    if isinstance(x, types.Array):
-        if isinstance(x.dtype, types.CharSeq):
-            return 'numpy.bytes_' if as_np else 'bytes'
-        if isinstance(x.dtype, types.UnicodeCharSeq):
-            return 'numpy.str_' if as_np else 'str'
-        return f'like {x.dtype.name}'
-
-    if isinstance(x, types.Bytes):
-        return 'numpy.bytes_' if as_np else 'bytes'
-    if isinstance(x, types.UnicodeType):
-        return 'numpy.str_' if as_np else 'str'
-    return f'like {x.name}'
-
-
-def _register_pair(x1, x2, exception: (NumbaError, int) = None):
-    """Determines the call function for the comparison pair, based on type."""
-    e = exception or NumbaTypeError("comparison of non-string arrays")
-    x1_type, x1_dim = _ensure_type(x1, e)
-    x2_type, x2_dim = _ensure_type(x2, e)
-
-    byte_types = (types.Bytes, types.CharSeq)
-    str_types = (types.UnicodeType, types.UnicodeCharSeq)
-
-    if isinstance(x1_type, byte_types) and isinstance(x2_type, byte_types):
-        register_x1 = register_array_bytes if x1_dim >= 0 \
-            else register_scalar_bytes
-        register_x2 = register_array_bytes if x2_dim >= 0 \
-            else register_scalar_bytes
-    elif isinstance(x1_type, str_types) and isinstance(x2_type, str_types):
-        register_x1 = register_array_strings if x1_dim >= 0 \
-            else register_scalar_strings
-        register_x2 = register_array_strings if x2_dim >= 0 \
-            else register_scalar_strings
-    else:
-        if exception == 1:
-            as_type = _str_type(x1, as_np=False)
-            if as_type in ('str', 'bytes'):
-                e = NumbaTypeError(f"must be {as_type}, not {_str_type(x2)}")
-            else:
-                e = NumbaTypeError("string operation on non-string array")
-        else:
-            e = NumbaNotImplementedError('NotImplemented')
-        raise e
-    return register_x1, register_x2, x1_dim, x2_dim
-
-
-def _array_char_width(x):
-    if not isinstance(x, types.Array):
-        return None, 0
-    if isinstance(x.dtype, types.CharSeq):
-        return 'bytes', x.dtype.count
-    if isinstance(x.dtype, types.UnicodeCharSeq):
-        return 'unicode', x.dtype.count
-    return None, 0
-
-
-def _equal_impl(x1, x2):
-    """Choose the equality kernel for fixed-width operands."""
-    kind1, width1 = _array_char_width(x1)
-    kind2, width2 = _array_char_width(x2)
-    array_count = int(width1 > 0) + int(width2 > 0)
-    width = max(width1, width2)
-    same_width = array_count == 2 and kind1 == kind2 and width1 == width2
-
-    if same_width and width < 32:
-        if kind1 == 'bytes':
-            return equal_sub32_bytes
-        if kind1 == 'unicode':
-            return equal_sub32_unicode
-    return equal
-
-
-def _register_single(x1, exception: NumbaError = None):
-    """Determines the call function for the input, based on type."""
-    e = exception or NumbaTypeError("string operation on non-string array")
-    x1_type, x1_dim = _ensure_type(x1, e)
-
-    byte_types = (types.Bytes, types.CharSeq)
-    str_types = (types.UnicodeType, types.UnicodeCharSeq)
-
-    if isinstance(x1_type, byte_types):
-        register_x1 = register_array_bytes if x1_dim >= 0 \
-            else register_scalar_bytes
-        as_bytes = True
-    elif isinstance(x1_type, str_types):
-        register_x1 = register_array_strings if x1_dim >= 0 \
-            else register_scalar_strings
-        as_bytes = False
-    else:
-        raise e
-    return register_x1, x1_dim, as_bytes
-
-
 @overload(np.char.equal, **OPTIONS)
 def ov_char_equal(x1, x2):
     register_x1, register_x2, x1_dim, x2_dim = _register_pair(x1, x2)
-    equal_impl = _equal_impl(x1, x2)
-    left_scalar_like = x1_dim <= 0 < x2_dim
-
-    if x1_dim > 0 or x2_dim > 0:
-        def impl(x1, x2):
-            if left_scalar_like:
-                return equal_impl(*register_x2(x2, False),
-                                  *register_x1(x1, False))
-            return equal_impl(*register_x1(x1, False),
-                              *register_x2(x2, False))
-    else:
-        def impl(x1, x2):
-            return np.array(equal_impl(*register_x1(x1, False),
-                                       *register_x2(x2, False))[0])
-    return impl
+    return _equal_dispatch(register_x1, register_x2, x1_dim, x2_dim,
+                           _equal_kernel(x1, x2, equal, equal_sub32_bytes,
+                                         equal_sub32_unicode), True,
+                           scalar_as_array=True)
 
 
 @overload(np.char.not_equal, **OPTIONS)
 def ov_char_not_equal(x1, x2):
     register_x1, register_x2, x1_dim, x2_dim = _register_pair(x1, x2)
-    equal_impl = _equal_impl(x1, x2)
-    left_scalar_like = x1_dim <= 0 < x2_dim
-
-    if x1_dim > 0 or x2_dim > 0:
-        def impl(x1, x2):
-            if left_scalar_like:
-                return ~equal_impl(*register_x2(x2, False),
-                                   *register_x1(x1, False))
-            return ~equal_impl(*register_x1(x1, False),
-                               *register_x2(x2, False))
-    else:
-        def impl(x1, x2):
-            return np.array(~equal_impl(*register_x1(x1, False),
-                                        *register_x2(x2, False))[0])
-    return impl
+    return _equal_dispatch(register_x1, register_x2, x1_dim, x2_dim,
+                           _equal_kernel(x1, x2, equal, equal_sub32_bytes,
+                                         equal_sub32_unicode),
+                           True, invert=True,
+                           scalar_as_array=True)
 
 
 @overload(np.char.greater_equal, **OPTIONS)
 def ov_char_greater_equal(x1, x2):
     register_x1, register_x2, x1_dim, x2_dim = _register_pair(x1, x2)
-    left_scalar_like = x1_dim <= 0 < x2_dim
-
-    if x1_dim > 0 or x2_dim > 0:
-        def impl(x1, x2):
-            if left_scalar_like:
-                return greater_equal(*register_x2(x2, False),
-                                     *register_x1(x1, False), True)
-            return greater_equal(*register_x1(x1, False),
-                                 *register_x2(x2, False))
-    else:
-        def impl(x1, x2):
-            return np.array(greater_equal(*register_x1(x1, False),
-                                          *register_x2(x2, False))[0])
-    return impl
+    return _order_dispatch(register_x1, register_x2, x1_dim, x2_dim,
+                           greater, greater_equal, 'greater_equal', True,
+                           scalar_as_array=True)
 
 
 @overload(np.char.greater, **OPTIONS)
 def ov_char_greater(x1, x2):
     register_x1, register_x2, x1_dim, x2_dim = _register_pair(x1, x2)
-    left_scalar_like = x1_dim <= 0 < x2_dim
-
-    if x1_dim > 0 or x2_dim > 0:
-        def impl(x1, x2):
-            if left_scalar_like:
-                return greater(*register_x2(x2, False),
-                               *register_x1(x1, False), True)
-            return greater(*register_x1(x1, False),
-                           *register_x2(x2, False))
-    else:
-        def impl(x1, x2):
-            return np.array(greater(*register_x1(x1, False),
-                                    *register_x2(x2, False))[0])
-    return impl
+    return _order_dispatch(register_x1, register_x2, x1_dim, x2_dim,
+                           greater, greater_equal, 'greater', True,
+                           scalar_as_array=True)
 
 
 @overload(np.char.less, **OPTIONS)
 def ov_char_less(x1, x2):
     register_x1, register_x2, x1_dim, x2_dim = _register_pair(x1, x2)
-    left_scalar_like = x1_dim <= 0 < x2_dim
-
-    if x1_dim > 0 or x2_dim > 0:
-        def impl(x1, x2):
-            if left_scalar_like:
-                return ~greater_equal(*register_x2(x2, False),
-                                      *register_x1(x1, False), True)
-            return ~greater_equal(*register_x1(x1, False),
-                                  *register_x2(x2, False))
-    else:
-        def impl(x1, x2):
-            return np.array(~greater_equal(*register_x1(x1, False),
-                                           *register_x2(x2, False))[0])
-    return impl
+    return _order_dispatch(register_x1, register_x2, x1_dim, x2_dim,
+                           greater, greater_equal, 'less', True,
+                           scalar_as_array=True)
 
 
 @overload(np.char.less_equal, **OPTIONS)
 def ov_char_less_equal(x1, x2):
     register_x1, register_x2, x1_dim, x2_dim = _register_pair(x1, x2)
-    left_scalar_like = x1_dim <= 0 < x2_dim
-
-    if x1_dim > 0 or x2_dim > 0:
-        def impl(x1, x2):
-            if left_scalar_like:
-                return ~greater(*register_x2(x2, False),
-                                *register_x1(x1, False), True)
-            return ~greater(*register_x1(x1, False),
-                            *register_x2(x2, False))
-    else:
-        def impl(x1, x2):
-            return np.array(~greater(*register_x1(x1, False),
-                                     *register_x2(x2, False))[0])
-    return impl
+    return _order_dispatch(register_x1, register_x2, x1_dim, x2_dim,
+                           greater, greater_equal, 'less_equal', True,
+                           scalar_as_array=True)
 
 
 @overload(np.char.compare_chararrays, **OPTIONS)

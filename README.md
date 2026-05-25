@@ -2,7 +2,8 @@
 
 String array extensions for Numba.
 
-Importing `charex` registers Numba overloads for NumPy's `np.char` string API:
+Importing `charex` registers Numba overloads for NumPy's `np.char` and
+`np.strings` string APIs:
 
 ```python
 import charex
@@ -23,50 +24,48 @@ release:
 - NumPy `>=1.22,<1.27` or `>=2.0,<2.5`
 - llvmlite `0.47.x`
 
-The implemented API is `np.char`, not `np.strings`. NumPy 2.x still supports
-`np.char`, but documents it as legacy fixed-width string functionality.
-`np.strings` support should be added as a separate API layer because its
-semantics are not a drop-in alias for `np.char`.
+`np.strings` overloads are available on NumPy 2.x. NumPy 1.x does not expose
+`np.strings`, so that registration is conditional.
 
 ## Supported Operations
 
-Comparison:
+Supported for `np.char` on all supported NumPy versions, and for `np.strings`
+on NumPy 2.x, except `compare_chararrays`, which is `np.char` only:
 
-- `char.equal`
-- `char.not_equal`
-- `char.greater_equal`
-- `char.less_equal`
-- `char.greater`
-- `char.less`
-- `char.compare_chararrays`
+- `equal`
+- `not_equal`
+- `greater_equal`
+- `less_equal`
+- `greater`
+- `less`
+- `count`
+- `endswith`
+- `startswith`
+- `find`
+- `rfind`
+- `index`
+- `rindex`
+- `str_len`
+- `isalpha`
+- `isalnum`
+- `isspace`
+- `isdecimal`
+- `isdigit`
+- `isnumeric`
+- `istitle`
+- `isupper`
+- `islower`
 
-Occurrence and property information:
+Additional `np.char` operation:
 
-- `char.count`
-- `char.endswith`
-- `char.startswith`
-- `char.find`
-- `char.rfind`
-- `char.index`
-- `char.rindex`
-- `char.str_len`
-- `char.isalpha`
-- `char.isalnum`
-- `char.isspace`
-- `char.isdecimal`
-- `char.isdigit`
-- `char.isnumeric`
-- `char.istitle`
-- `char.isupper`
-- `char.islower`
+- `compare_chararrays`
 
-Inputs may be scalars or one-dimensional C-contiguous arrays of fixed-width
-Unicode strings or bytes. Unicode property predicates follow NumPy/Python
-Unicode behavior for `U` strings; bytes predicates follow ASCII byte semantics.
+Inputs may be scalars or one-dimensional C-contiguous arrays of fixed-width `S`
+or `U` dtype. NumPy 2.x `StringDType` is not supported.
 
 ## Performance Matrix
 
-Current Numba 0.65.1 benchmark artifacts are in
+Current Numba 0.65.1 `np.char` benchmark artifacts are in
 [docs/benchmarks/numba-v-0.65.1](docs/benchmarks/numba-v-0.65.1/).
 
 Regenerate the matrix from the repository root:

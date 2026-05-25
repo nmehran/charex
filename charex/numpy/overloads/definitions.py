@@ -80,6 +80,8 @@ def _compare_mismatch_trimmed(chr_array, start, size_chr,
                               offset, rstrip):
     chr_ord = chr_array[start + offset]
     cmp_ord = cmp_array[cmp_start + offset]
+    if not rstrip:
+        return chr_ord - cmp_ord
     chr_at_end = _trim_ord(chr_ord, rstrip) \
         and _trim_suffix_zero8(chr_array, start + offset + 1,
                                start + size_chr, rstrip)
@@ -482,6 +484,8 @@ def _equal_records(chr_array, start, size_chr,
 @register_jitable(**JIT_OPTIONS)
 def _equal_fixed_mismatch(chr_array, start,
                           cmp_array, cmp_start, offset, size_chr, rstrip):
+    if not rstrip:
+        return False
     chr_ord = chr_array[start + offset]
     cmp_ord = cmp_array[cmp_start + offset]
     if _trim_ord(chr_ord, rstrip) and _trim_ord(cmp_ord, rstrip):

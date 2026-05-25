@@ -39,6 +39,130 @@ class ComparisonOperators:
         return np.char.compare_chararrays(a1, b1, cmp, rstrip)
 
 
+class StringsComparisonOperators:
+    @staticmethod
+    @njit(nogil=True, cache=False)
+    def strings_equal(x1, x2):
+        return np.strings.equal(x1, x2)
+
+    @staticmethod
+    @njit(nogil=True, cache=False)
+    def strings_not_equal(x1, x2):
+        return np.strings.not_equal(x1, x2)
+
+    @staticmethod
+    @njit(nogil=True, cache=False)
+    def strings_greater(x1, x2):
+        return np.strings.greater(x1, x2)
+
+    @staticmethod
+    @njit(nogil=True, cache=False)
+    def strings_greater_equal(x1, x2):
+        return np.strings.greater_equal(x1, x2)
+
+    @staticmethod
+    @njit(nogil=True, cache=False)
+    def strings_less(x1, x2):
+        return np.strings.less(x1, x2)
+
+    @staticmethod
+    @njit(nogil=True, cache=False)
+    def strings_less_equal(x1, x2):
+        return np.strings.less_equal(x1, x2)
+
+    @staticmethod
+    @njit(nogil=True, cache=False)
+    def numpy_equal(x1, x2):
+        return np.equal(x1, x2)
+
+
+class StringsInformation:
+    @staticmethod
+    @njit(nogil=True, cache=False)
+    def strings_count(a, sub, start=0, end=None):
+        return np.strings.count(a, sub, start, end)
+
+    @staticmethod
+    @njit(nogil=True, cache=False)
+    def strings_endswith(a, suffix, start=0, end=None):
+        return np.strings.endswith(a, suffix, start, end)
+
+    @staticmethod
+    @njit(nogil=True, cache=False)
+    def strings_startswith(a, prefix, start=0, end=None):
+        return np.strings.startswith(a, prefix, start, end)
+
+    @staticmethod
+    @njit(nogil=True, cache=False)
+    def strings_find(a, sub, start=0, end=None):
+        return np.strings.find(a, sub, start, end)
+
+    @staticmethod
+    @njit(nogil=True, cache=False)
+    def strings_index(a, sub, start=0, end=None):
+        return np.strings.index(a, sub, start, end)
+
+    @staticmethod
+    @njit(nogil=True, cache=False)
+    def strings_rfind(a, sub, start=0, end=None):
+        return np.strings.rfind(a, sub, start, end)
+
+    @staticmethod
+    @njit(nogil=True, cache=False)
+    def strings_rindex(a, sub, start=0, end=None):
+        return np.strings.rindex(a, sub, start, end)
+
+    @staticmethod
+    @njit(nogil=True, cache=False)
+    def strings_str_len(a):
+        return np.strings.str_len(a)
+
+    @staticmethod
+    @njit(nogil=True, cache=False)
+    def strings_isalpha(a):
+        return np.strings.isalpha(a)
+
+    @staticmethod
+    @njit(nogil=True, cache=False)
+    def strings_isalnum(a):
+        return np.strings.isalnum(a)
+
+    @staticmethod
+    @njit(nogil=True, cache=False)
+    def strings_isdecimal(a):
+        return np.strings.isdecimal(a)
+
+    @staticmethod
+    @njit(nogil=True, cache=False)
+    def strings_isdigit(a):
+        return np.strings.isdigit(a)
+
+    @staticmethod
+    @njit(nogil=True, cache=False)
+    def strings_islower(a):
+        return np.strings.islower(a)
+
+    @staticmethod
+    @njit(nogil=True, cache=False)
+    def strings_isnumeric(a):
+        return np.strings.isnumeric(a)
+
+    @staticmethod
+    @njit(nogil=True, cache=False)
+    def strings_isspace(a):
+        return np.strings.isspace(a)
+
+    @staticmethod
+    @njit(nogil=True, cache=False)
+    def strings_istitle(a):
+        return np.strings.istitle(a)
+
+    @staticmethod
+    @njit(nogil=True, cache=False)
+    def strings_isupper(a):
+        return np.strings.isupper(a)
+
+
 class StringInformation:
     # Occurrence Methods
     @staticmethod
