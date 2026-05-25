@@ -1,6 +1,6 @@
 from charex.core import JIT_OPTIONS
 from numba.extending import register_jitable
-from numpy import dtype, empty, frombuffer, ravel
+from numpy import dtype, empty, frombuffer
 
 
 # -----------------------------------------------------------------------------
@@ -12,13 +12,14 @@ def register_array_bytes(b, rstrip=True):
     """Expose the ordinal representation of ASCII array bytes."""
     len_chr = b.size
     size_chr = b.itemsize
+    chr_array = frombuffer(b, 'uint8') if b.ndim == 0 else b.view(dtype('uint8'))
     if rstrip:
         return (
-            _rstrip_inner(frombuffer(b, 'uint8').copy(), size_chr),
+            _rstrip_inner(chr_array.copy(), size_chr),
             len_chr,
             size_chr
         )
-    return frombuffer(b, 'uint8'), len_chr, size_chr
+    return chr_array, len_chr, size_chr
 
 
 @register_jitable(**JIT_OPTIONS)
@@ -26,13 +27,16 @@ def register_scalar_bytes(b, rstrip=True):
     """Expose the ordinal representation of scalar ASCII bytes."""
     len_chr = 1
     size_chr = len(b)
+    chr_array = empty(size_chr, 'uint8')
+    for i in range(size_chr):
+        chr_array[i] = b[i]
     if rstrip:
         return (
-            _rstrip_inner(frombuffer(b, 'uint8').copy(), size_chr, True),
+            _rstrip_inner(chr_array, size_chr, True),
             len_chr,
             size_chr
         )
-    return frombuffer(b, 'uint8'), len_chr, size_chr
+    return chr_array, len_chr, size_chr
 
 
 @register_jitable(**JIT_OPTIONS)
@@ -40,9 +44,9 @@ def register_array_strings(s, rstrip=True):
     """Expose the ordinal representation of UTF-32 array strings."""
     len_chr = s.size
     size_chr = s.itemsize // 4
-    chr_array = ravel(s).view(dtype('int32'))
+    chr_array = frombuffer(s, 'int32') if s.ndim == 0 else s.view(dtype('int32'))
     if rstrip:
-        return _rstrip_inner(chr_array, size_chr), len_chr, size_chr
+        return _rstrip_inner(chr_array.copy(), size_chr), len_chr, size_chr
     return chr_array, len_chr, size_chr
 
 
@@ -53,7 +57,7 @@ def register_scalar_strings(s, rstrip=True):
     size_chr = len(s)
     chr_array = empty(size_chr, 'int32')
     for i in range(size_chr):
-        chr_array[i] = ord(s[i])
+        chr_array[i] = ord(str(s[i]))
     if rstrip:
         return _rstrip_inner(chr_array, size_chr, True), len_chr, size_chr
     return chr_array, len_chr, size_chr

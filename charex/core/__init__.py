@@ -6,8 +6,10 @@ JIT_OPTIONS = dict(
     nogil=True,
 )
 
+OVERLOAD_JIT_OPTIONS = dict(JIT_OPTIONS, cache=False)
+
 OPTIONS = dict(
-    jit_options=JIT_OPTIONS,
+    jit_options=OVERLOAD_JIT_OPTIONS,
     prefer_literal=True,
     strict=False,
 )
