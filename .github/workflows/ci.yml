@@ -1,0 +1,56 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  tests:
+    name: py${{ matrix.python }} / numpy ${{ matrix.numpy }}
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - python: "3.10"
+            numpy: "1.22.*"
+          - python: "3.10"
+            numpy: "1.26.*"
+          - python: "3.10"
+            numpy: "2.0.*"
+          - python: "3.10"
+            numpy: "2.4.*"
+          - python: "3.11"
+            numpy: "1.26.*"
+          - python: "3.11"
+            numpy: "2.0.*"
+          - python: "3.11"
+            numpy: "2.4.*"
+          - python: "3.12"
+            numpy: "1.26.*"
+          - python: "3.12"
+            numpy: "2.0.*"
+          - python: "3.12"
+            numpy: "2.4.*"
+          - python: "3.13"
+            numpy: "2.1.*"
+          - python: "3.13"
+            numpy: "2.4.*"
+          - python: "3.14"
+            numpy: "2.4.*"
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python }}
+
+      - name: Install
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install "numpy==${{ matrix.numpy }}" "numba==0.65.1"
+          python -m pip install -e ".[test]"
+
+      - name: Test
+        run: pytest -q

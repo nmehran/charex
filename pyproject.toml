@@ -1,0 +1,29 @@
+[build-system]
+requires = ["setuptools>=69", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "charex"
+version = "0.1.0"
+description = "Numba overloads for NumPy fixed-width string operations"
+readme = "README.md"
+requires-python = ">=3.10,<3.15"
+license = {file = "LICENSE"}
+dependencies = [
+    "numba>=0.65.1,<0.66",
+    "numpy>=1.22,<2.5",
+]
+
+[project.optional-dependencies]
+test = [
+    "pytest>=8",
+]
+bench = [
+    "matplotlib>=3.8",
+]
+
+[tool.setuptools.packages.find]
+include = ["charex*"]
+
+[tool.pytest.ini_options]
+testpaths = ["charex/tests"]
