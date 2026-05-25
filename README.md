@@ -60,6 +60,37 @@ Inputs may be scalars or one-dimensional C-contiguous arrays of fixed-width
 Unicode strings or bytes. Unicode property predicates follow NumPy/Python
 Unicode behavior for `U` strings; bytes predicates follow ASCII byte semantics.
 
+## Performance Matrix
+
+Current Numba 0.65.1 benchmark artifacts are in
+[docs/benchmarks/numba-v-0.65.1](docs/benchmarks/numba-v-0.65.1/).
+
+Regenerate the matrix from the repository root:
+
+```bash
+python -m pip install -e ".[bench]"
+python charex/benchmarks/matrix.py --size 50000 --repeat 5
+```
+
+### Comparison Operators
+
+![comparison-operators-bytes.png](docs/benchmarks/numba-v-0.65.1/comparison-operators-bytes.png)
+![comparison-operators-strings.png](docs/benchmarks/numba-v-0.65.1/comparison-operators-strings.png)
+
+### Occurrence Information
+
+![char-occurrence-bytes.png](docs/benchmarks/numba-v-0.65.1/char-occurrence-bytes.png)
+![char-occurrence-strings.png](docs/benchmarks/numba-v-0.65.1/char-occurrence-strings.png)
+
+### Property Information
+
+![char-properties-bytes.png](docs/benchmarks/numba-v-0.65.1/char-properties-bytes.png)
+![char-properties-strings.png](docs/benchmarks/numba-v-0.65.1/char-properties-strings.png)
+![char-numerics-strings.png](docs/benchmarks/numba-v-0.65.1/char-numerics-strings.png)
+
+The previous Numba 0.59 matrix is archived under
+[charex/benchmarks/numba-v-0.59](charex/benchmarks/numba-v-0.59/).
+
 ## Development
 
 Install test dependencies:
