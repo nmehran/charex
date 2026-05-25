@@ -1,15 +1,32 @@
 # charex
 
-### String Array Extensions for Numba
+String array extensions for Numba.
 
-Enhance Numba with NumPy's string processing features by importing charex:
+Importing `charex` registers Numba overloads for NumPy's legacy
+fixed-width `np.char` string API:
 
 ```python
 import charex
 ```
 
-### Comparison operations:
-##### https://numpy.org/doc/stable/reference/routines.char.html#comparison
+## Compatibility
+
+`charex` targets Numba 0.65.1 and the NumPy ranges tested by that Numba
+release:
+
+- Python `>=3.10,<3.15`
+- Numba `>=0.65.1,<0.66`
+- NumPy `>=1.22,<1.27` or `>=2.0,<2.5`
+- llvmlite `0.47.x`
+
+The implemented API is `np.char`, not `np.strings`. NumPy 2.x still supports
+`np.char`, but documents it as legacy fixed-width string functionality.
+`np.strings` support should be added as a separate API layer because its
+semantics are not a drop-in alias for `np.char`.
+
+## Supported Operations
+
+Comparison:
 
 - `char.equal`
 - `char.not_equal`
@@ -19,8 +36,7 @@ import charex
 - `char.less`
 - `char.compare_chararrays`
 
-### Occurrence and Property information:
-##### https://numpy.org/doc/stable/reference/routines.char.html#string-information
+Occurrence and property information:
 
 - `char.count`
 - `char.endswith`
@@ -40,25 +56,38 @@ import charex
 - `char.isupper`
 - `char.islower`
 
-#### Includes support for UTF-32 strings and ASCII bytes on contiguous arrays of 1-dimension and scalars.
+Inputs may be scalars or one-dimensional C-contiguous arrays of fixed-width
+Unicode strings or bytes. Unicode property predicates follow NumPy/Python
+Unicode behavior for `U` strings; bytes predicates follow ASCII byte semantics.
 
-## Benchmarks
+## Development
 
-Despite a minor initial overhead from Numba's LLVM initialization, `charex` offsets this with increased data scale, outperforming NumPy in handling occurrence and property information.
+Install test dependencies:
 
-### Comparison Operators
-![comparison-operators-bytes.png](charex%2Fbenchmarks%2Fnumba-v-0.59%2Fcomparison-operators-bytes.png)
-![comparison-operators-strings.png](charex%2Fbenchmarks%2Fnumba-v-0.59%2Fcomparison-operators-strings.png)
+```bash
+python -m pip install -e ".[test]"
+```
 
-### Occurrence Information
-![char-occurrence-bytes.png](charex%2Fbenchmarks%2Fnumba-v-0.59%2Fchar-occurrence-bytes.png)
-![char-occurrence-strings.png](charex%2Fbenchmarks%2Fnumba-v-0.59%2Fchar-occurrence-strings.png)
+Run tests:
 
-### Property Information
-![char-properties-bytes.png](charex%2Fbenchmarks%2Fnumba-v-0.59%2Fchar-properties-bytes.png)
-![char-properties-strings.png](charex%2Fbenchmarks%2Fnumba-v-0.59%2Fchar-properties-strings.png)
-![char-numerics-strings.png](charex%2Fbenchmarks%2Fnumba-v-0.59%2Fchar-numerics-strings.png)
+```bash
+pytest -q
+```
 
-The benchmarks are generated during testing using `charex/tests/test_comparison.py` and `charex/tests/test_string_information.py`. 
+Run the benchmark smoke test:
 
-Last tested 2024-02-23: Numba 0.59.0, NumPy 1.26.3
+```bash
+python charex/benchmarks/benchmark.py --size 50000 --repeat 5
+```
+
+Install benchmark plotting dependencies and write CSV/PNG output:
+
+```bash
+python -m pip install -e ".[bench]"
+python charex/benchmarks/benchmark.py --size 50000 --repeat 5 --plot
+```
+
+Last locally tested 2026-05-24 on Python 3.12.8 with:
+
+- Numba 0.65.1, llvmlite 0.47.0, NumPy 1.26.4
+- Numba 0.65.1, llvmlite 0.47.0, NumPy 2.4.6
