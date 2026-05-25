@@ -75,14 +75,72 @@ def _comparison_record_len(chr_array, start, size_chr, rstrip):
 
 
 @register_jitable(**JIT_OPTIONS, locals={'cmp_ord': types.int32})
-def _compare_records(chr_array, start, chr_len,
-                     cmp_array, cmp_start, cmp_len):
-    size_stride = min(chr_len, cmp_len)
-    for j in range(size_stride):
-        cmp_ord = chr_array[start + j] - cmp_array[cmp_start + j]
-        if cmp_ord != 0:
-            return cmp_ord
-    return chr_len - cmp_len
+def _compare_mismatch_trimmed(chr_array, start, size_chr,
+                              cmp_array, cmp_start, size_cmp,
+                              offset, rstrip):
+    chr_ord = chr_array[start + offset]
+    cmp_ord = cmp_array[cmp_start + offset]
+    chr_at_end = _trim_ord(chr_ord, rstrip) \
+        and _trim_suffix_zero8(chr_array, start + offset + 1,
+                               start + size_chr, rstrip)
+    cmp_at_end = _trim_ord(cmp_ord, rstrip) \
+        and _trim_suffix_zero8(cmp_array, cmp_start + offset + 1,
+                               cmp_start + size_cmp, rstrip)
+    if chr_at_end:
+        if cmp_at_end:
+            return 0
+        return -1
+    if cmp_at_end:
+        return 1
+    return chr_ord - cmp_ord
+
+
+@register_jitable(**JIT_OPTIONS, locals={'cmp_ord': types.int32})
+def _compare_records_trimmed(chr_array, start, size_chr,
+                             cmp_array, cmp_start, size_cmp, rstrip):
+    end = start + size_chr
+    cmp_end = cmp_start + size_cmp
+    size_stride = min(size_chr, size_cmp)
+
+    if size_stride and chr_array[start] != cmp_array[cmp_start]:
+        return _compare_mismatch_trimmed(chr_array, start, size_chr,
+                                         cmp_array, cmp_start, size_cmp,
+                                         0, rstrip)
+
+    j = 0
+    while j + 8 <= size_stride:
+        mismatch = _mismatch_chunk8(chr_array, start + j,
+                                    cmp_array, cmp_start + j)
+        if mismatch < 8:
+            j += mismatch
+            break
+        j += 8
+    else:
+        while j + 4 <= size_stride:
+            mismatch = _mismatch_chunk4(chr_array, start + j,
+                                        cmp_array, cmp_start + j)
+            if mismatch < 4:
+                j += mismatch
+                break
+            j += 4
+
+    while j < size_stride:
+        if chr_array[start + j] != cmp_array[cmp_start + j]:
+            return _compare_mismatch_trimmed(chr_array, start, size_chr,
+                                             cmp_array, cmp_start, size_cmp,
+                                             j, rstrip)
+        j += 1
+
+    if size_chr == size_cmp:
+        return 0
+    if size_chr < size_cmp:
+        if _trim_suffix_zero8(cmp_array, cmp_start + size_stride,
+                              cmp_end, rstrip):
+            return 0
+        return -1
+    if _trim_suffix_zero8(chr_array, start + size_stride, end, rstrip):
+        return 0
+    return 1
 
 
 @intrinsic
@@ -143,6 +201,33 @@ def _is_zero_chunk8(typingctx, chr_array, start):
         ptr = cgutils.pointer_add(builder, chr_struct.data, start_bytes,
                                   cgutils.voidptr_t)
         wide_type = ir.IntType(bitwidth * 8)
+        wide_ptr = builder.bitcast(ptr, wide_type.as_pointer())
+        value = builder.load(wide_ptr, align=1)
+        return builder.icmp_unsigned('==', value,
+                                     ir.Constant(wide_type, 0))
+
+    sig = types.boolean(chr_array, start)
+    return sig, codegen
+
+
+@intrinsic
+def _is_zero_chunk4(typingctx, chr_array, start):
+    """Return True if four contiguous ordinal values are all zero."""
+    if not isinstance(chr_array, types.Array):
+        raise TypeError('chunk operand must be an array')
+
+    def codegen(context, builder, signature, args):
+        chr_type, _ = signature.args
+        chr_value, start_value = args
+        chr_struct = context.make_array(chr_type)(context, builder, chr_value)
+
+        bitwidth = chr_type.dtype.bitwidth
+        itemsize = bitwidth // 8
+        start_bytes = builder.mul(start_value,
+                                  ir.Constant(start_value.type, itemsize))
+        ptr = cgutils.pointer_add(builder, chr_struct.data, start_bytes,
+                                  cgutils.voidptr_t)
+        wide_type = ir.IntType(bitwidth * 4)
         wide_ptr = builder.bitcast(ptr, wide_type.as_pointer())
         value = builder.load(wide_ptr, align=1)
         return builder.icmp_unsigned('==', value,
@@ -265,6 +350,8 @@ def _trim_suffix_zero8(chr_array, start, end, rstrip):
         if not _is_zero_chunk8(chr_array, p - 8):
             break
         p -= 8
+    if p - 4 >= start and _is_zero_chunk4(chr_array, p - 4):
+        p -= 4
     while p > start:
         if not _trim_ord(chr_array[p - 1], rstrip):
             return False
@@ -490,12 +577,9 @@ def greater_equal(chr_array, len_chr, size_chr,
     stride = stride_cmp = 0
     step_cmp = (len_cmp > 1 and size_cmp) or 0
     for i in range(len_chr):
-        cmp_ord = _compare_records(
-            chr_array, stride,
-            _comparison_record_len(chr_array, stride, size_chr, rstrip),
-            cmp_array, stride_cmp,
-            _comparison_record_len(cmp_array, stride_cmp, size_cmp, rstrip),
-        )
+        cmp_ord = _compare_records_trimmed(chr_array, stride, size_chr,
+                                           cmp_array, stride_cmp, size_cmp,
+                                           rstrip)
         if inv:
             cmp_ord = -cmp_ord
         greater_equal_than[i] = cmp_ord >= 0
@@ -516,12 +600,9 @@ def greater(chr_array, len_chr, size_chr,
     stride = stride_cmp = 0
     step_cmp = (len_cmp > 1 and size_cmp) or 0
     for i in range(len_chr):
-        cmp_ord = _compare_records(
-            chr_array, stride,
-            _comparison_record_len(chr_array, stride, size_chr, rstrip),
-            cmp_array, stride_cmp,
-            _comparison_record_len(cmp_array, stride_cmp, size_cmp, rstrip),
-        )
+        cmp_ord = _compare_records_trimmed(chr_array, stride, size_chr,
+                                           cmp_array, stride_cmp, size_cmp,
+                                           rstrip)
         if inv:
             cmp_ord = -cmp_ord
         greater_than[i] = cmp_ord > 0
@@ -651,6 +732,27 @@ def count(chr_array, len_chr, size_chr,
 
 
 @register_jitable(**JIT_OPTIONS)
+def _record_last_nonzero(chr_array, start, size_chr):
+    end = start + size_chr
+    used_zero8 = False
+    if end - 8 >= start and chr_array[end - 8] == 0:
+        while end - 8 >= start:
+            if not _is_zero_chunk8(chr_array, end - 8):
+                break
+            end -= 8
+            used_zero8 = True
+    if not used_zero8 and end - 4 >= start and chr_array[end - 4] == 0:
+        while end - 4 >= start:
+            if not _is_zero_chunk4(chr_array, end - 4):
+                break
+            end -= 4
+    p = end - 1
+    while p >= start and chr_array[p] == 0:
+        p -= 1
+    return p
+
+
+@register_jitable(**JIT_OPTIONS)
 def endswith(chr_array, len_chr, size_chr,
              sub_array, len_sub, size_sub,
              start, end):
@@ -658,6 +760,9 @@ def endswith(chr_array, len_chr, size_chr,
     start, end = _init_sub_indices(start, end, size_chr)
     if start > size_chr or start > end + size_chr:
         return np.zeros(max(len_chr, len_sub), 'bool')
+    if len_sub == 1 and start == 0 and end >= size_chr:
+        return _endswith_scalar_default(chr_array, len_chr, size_chr,
+                                        sub_array, size_sub)
 
     chr_lens = str_len(chr_array, len_chr, size_chr)
     sub_lens = str_len(sub_array, len_sub, size_sub)
@@ -687,6 +792,39 @@ def endswith(chr_array, len_chr, size_chr,
 
 
 @register_jitable(**JIT_OPTIONS)
+def _endswith_scalar_default(chr_array, len_chr, size_chr,
+                             sub_array, size_sub):
+    sub_len = _record_len(sub_array, 0, size_sub)
+    endswith_sub = np.empty(len_chr, 'bool')
+    if sub_len == 0:
+        endswith_sub[:] = True
+        return endswith_sub
+    if sub_len > size_chr:
+        endswith_sub[:] = False
+        return endswith_sub
+
+    stride = 0
+    last_sub = sub_array[sub_len - 1]
+    for i in range(len_chr):
+        p = _record_last_nonzero(chr_array, stride, size_chr)
+        chr_len = p - stride + 1
+        if sub_len > chr_len:
+            endswith_sub[i] = False
+        else:
+            if chr_array[p] != last_sub:
+                endswith_sub[i] = False
+            elif sub_len == 1:
+                endswith_sub[i] = True
+            else:
+                start = p - sub_len + 1
+                endswith_sub[i] = _memcmp_array(chr_array, start,
+                                                sub_array, 0,
+                                                sub_len - 1) == 0
+        stride += size_chr
+    return endswith_sub
+
+
+@register_jitable(**JIT_OPTIONS)
 def startswith(chr_array, len_chr, size_chr,
                sub_array, len_sub, size_sub,
                start, end):
@@ -694,6 +832,9 @@ def startswith(chr_array, len_chr, size_chr,
     start, end = _init_sub_indices(start, end, size_chr)
     if start > size_chr or start > end + size_chr:
         return np.zeros(max(len_chr, len_sub), 'bool')
+    if len_sub == 1 and start == 0 and end >= size_chr:
+        return _startswith_scalar_default(chr_array, len_chr, size_chr,
+                                          sub_array, size_sub)
 
     chr_lens = str_len(chr_array, len_chr, size_chr)
     sub_lens = str_len(sub_array, len_sub, size_sub)
@@ -718,6 +859,31 @@ def startswith(chr_array, len_chr, size_chr,
             startswith_sub[i] = not n_sub and o <= n
         stride += size_chr
         stride_sub += size_sub
+    return startswith_sub
+
+
+@register_jitable(**JIT_OPTIONS)
+def _startswith_scalar_default(chr_array, len_chr, size_chr,
+                               sub_array, size_sub):
+    sub_len = _record_len(sub_array, 0, size_sub)
+    startswith_sub = np.empty(len_chr, 'bool')
+    if sub_len == 0:
+        startswith_sub[:] = True
+        return startswith_sub
+    if sub_len > size_chr:
+        startswith_sub[:] = False
+        return startswith_sub
+
+    stride = 0
+    for i in range(len_chr):
+        if chr_array[stride] != sub_array[0]:
+            startswith_sub[i] = False
+        elif sub_len == 1:
+            startswith_sub[i] = True
+        else:
+            startswith_sub[i] = _memcmp_array(chr_array, stride + 1,
+                                              sub_array, 1, sub_len - 1) == 0
+        stride += size_chr
     return startswith_sub
 
 
@@ -768,6 +934,9 @@ def rfind(chr_array, len_chr, size_chr,
     start, end = _init_sub_indices(start, end, size_chr)
     if start > size_chr or start > end + size_chr:
         return -np.ones(max(len_chr, len_sub), 'int64')
+    if len_sub == 1 and start == 0 and end >= size_chr:
+        return _rfind_scalar_default(chr_array, len_chr, size_chr,
+                                     sub_array, size_sub)
 
     chr_lens = str_len(chr_array, len_chr, size_chr)
     sub_lens = str_len(sub_array, len_sub, size_sub)
@@ -798,6 +967,43 @@ def rfind(chr_array, len_chr, size_chr,
             rfind_sub[i] = (o <= n and n + 1) - 1
         stride += size_chr
         stride_sub += size_sub
+    return rfind_sub
+
+
+@register_jitable(**JIT_OPTIONS)
+def _rfind_scalar_default(chr_array, len_chr, size_chr,
+                          sub_array, size_sub):
+    sub_len = _record_len(sub_array, 0, size_sub)
+    rfind_sub = np.empty(len_chr, 'int64')
+
+    stride = 0
+    if sub_len == 0:
+        for i in range(len_chr):
+            rfind_sub[i] = _record_last_nonzero(chr_array, stride, size_chr) \
+                - stride + 1
+            stride += size_chr
+        return rfind_sub
+
+    last_sub = sub_array[sub_len - 1]
+    for i in range(len_chr):
+        p = _record_last_nonzero(chr_array, stride, size_chr)
+        lower = stride + sub_len - 1
+        rfind_sub[i] = -1
+        while p >= lower:
+            if chr_array[p] == last_sub:
+                start = p - sub_len + 1
+                if sub_len == 1:
+                    rfind_sub[i] = start - stride
+                    break
+                if chr_array[start] == sub_array[0] and (
+                    sub_len == 2
+                    or _memcmp_array(chr_array, start + 1,
+                                     sub_array, 1, sub_len - 2) == 0
+                ):
+                    rfind_sub[i] = start - stride
+                    break
+            p -= 1
+        stride += size_chr
     return rfind_sub
 
 
@@ -899,7 +1105,7 @@ def str_len(chr_array, len_chr, size_chr):
     str_length = np.empty(len_chr, 'int64')
     j = 0
     for i in range(0, chr_array.size, size_chr):
-        str_length[j] = _record_len(chr_array, i, size_chr)
+        str_length[j] = _record_last_nonzero(chr_array, i, size_chr) - i + 1
         j += 1
     return str_length
 
@@ -1048,15 +1254,16 @@ def _simple_property(chr_array, len_chr, size_chr, as_bytes, kind):
     for i in range(len_chr):
         seen = False
         valid = True
-        pending_null = False
         for c in range(size_chr):
             chr_ord = chr_array[stride + c]
             if chr_ord == 0:
-                pending_null = True
+                if _trim_suffix_zero8(chr_array, stride + c + 1,
+                                      stride + size_chr, False):
+                    break
+                valid = False
+                break
             else:
-                if pending_null \
-                        or not _is_simple_property_ord(chr_ord,
-                                                       as_bytes, kind):
+                if not _is_simple_property_ord(chr_ord, as_bytes, kind):
                     valid = False
                     break
                 seen = True
