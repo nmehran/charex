@@ -8,7 +8,7 @@ from charex.core.string_intrinsics import (
     register_array_strings, register_scalar_strings
 )
 from charex.numpy.overloads.definitions import (
-    greater_equal, greater, equal, equal_peel,
+    greater_equal, greater, equal,
     equal_sub32_bytes, equal_sub32_unicode,
     compare_chararrays,
     count, endswith, startswith, find, rfind, index, rindex, str_len,
@@ -268,8 +268,6 @@ def _equal_impl(x1, x2):
             return equal_sub32_bytes
         if kind1 == 'unicode':
             return equal_sub32_unicode
-    if array_count and width >= 32:
-        return equal_peel
     return equal
 
 

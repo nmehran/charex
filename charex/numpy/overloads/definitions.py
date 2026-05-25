@@ -312,35 +312,6 @@ def _equal_records(chr_array, start, size_chr,
     if size_chr == size_cmp and size_chr:
         if _memcmp_array(chr_array, start, cmp_array, cmp_start, size_chr) == 0:
             return True
-
-    chr_len = _comparison_record_len(chr_array, start, size_chr, rstrip)
-    if cmp_len < 0:
-        cmp_len = _comparison_record_len(cmp_array, cmp_start, size_cmp,
-                                         rstrip)
-    return chr_len == cmp_len and (
-        chr_len == 0
-        or _memcmp_array(chr_array, start, cmp_array, cmp_start, chr_len) == 0
-    )
-
-
-@register_jitable(**JIT_OPTIONS)
-def _equal_records_peel(chr_array, start, size_chr,
-                        cmp_array, cmp_start, size_cmp, rstrip, cmp_len):
-    size_stride = min(size_chr, size_cmp)
-    if size_stride:
-        chr_ord = chr_array[start]
-        cmp_ord = cmp_array[cmp_start]
-        if chr_ord != cmp_ord:
-            if _trim_ord(chr_ord, rstrip) and _trim_ord(cmp_ord, rstrip):
-                return _trim_suffix(chr_array, start + 1,
-                                    start + size_chr, rstrip) \
-                    and _trim_suffix(cmp_array, cmp_start + 1,
-                                     cmp_start + size_cmp, rstrip)
-            return False
-
-    if size_chr == size_cmp and size_chr:
-        if _memcmp_array(chr_array, start, cmp_array, cmp_start, size_chr) == 0:
-            return True
         return _equal_records_after_raw_mismatch(
             chr_array, start, size_chr,
             cmp_array, cmp_start, size_cmp,
@@ -554,29 +525,6 @@ def equal(chr_array, len_chr, size_chr,
         equal_to[i] = _equal_records(chr_array, stride, size_chr,
                                      cmp_array, stride_cmp, size_cmp,
                                      rstrip, cmp_len)
-        stride += size_chr
-        stride_cmp += step_cmp
-    return equal_to
-
-
-@register_jitable(**JIT_OPTIONS)
-def equal_peel(chr_array, len_chr, size_chr,
-               cmp_array, len_cmp, size_cmp, rstrip=True):
-    """Native Implementation of np.char.equal with a peeled fallback."""
-    if 1 == size_chr == size_cmp and not rstrip:
-        return chr_array == cmp_array
-
-    _ensure_comparison_shape(len_chr, len_cmp)
-    equal_to = np.empty(len_chr, 'bool')
-    stride = stride_cmp = 0
-    step_cmp = (len_cmp > 1 and size_cmp) or 0
-    cmp_len = -1
-    if len_cmp == 1:
-        cmp_len = _comparison_record_len(cmp_array, 0, size_cmp, rstrip)
-    for i in range(len_chr):
-        equal_to[i] = _equal_records_peel(chr_array, stride, size_chr,
-                                          cmp_array, stride_cmp, size_cmp,
-                                          rstrip, cmp_len)
         stride += size_chr
         stride_cmp += step_cmp
     return equal_to
