@@ -17,6 +17,9 @@ from numba import types
 import numpy as np
 
 
+COLD_JIT_OPTIONS = dict(JIT_OPTIONS, forceinline=False)
+
+
 # ----------------------------------------------------------------------------------------------------------------------
 # Comparison Operators
 
@@ -271,10 +274,8 @@ def _trim_suffix_zero8(chr_array, start, end, rstrip):
 
 @register_jitable(**JIT_OPTIONS)
 def _equal_records_after_raw_mismatch(chr_array, start, size_chr,
-                                      cmp_array, cmp_start, size_cmp,
-                                      rstrip):
-    size_stride = min(size_chr, size_cmp)
-    for j in range(1, size_stride):
+                                      cmp_array, cmp_start, rstrip):
+    for j in range(1, size_chr):
         chr_ord = chr_array[start + j]
         cmp_ord = cmp_array[cmp_start + j]
         if chr_ord != cmp_ord:
@@ -282,16 +283,33 @@ def _equal_records_after_raw_mismatch(chr_array, start, size_chr,
                 return _trim_suffix_zero8(chr_array, start + j + 1,
                                           start + size_chr, rstrip) \
                     and _trim_suffix_zero8(cmp_array, cmp_start + j + 1,
-                                           cmp_start + size_cmp, rstrip)
+                                           cmp_start + size_chr, rstrip)
             return False
+    return True
 
-    if size_chr == size_cmp:
-        return True
-    if size_chr > size_cmp:
-        return _trim_suffix_zero8(chr_array, start + size_stride,
-                                  start + size_chr, rstrip)
-    return _trim_suffix_zero8(cmp_array, cmp_start + size_stride,
-                              cmp_start + size_cmp, rstrip)
+
+@register_jitable(**COLD_JIT_OPTIONS)
+def _equal_wide_after_raw_mismatch(chr_array, start, size_chr,
+                                   cmp_array, cmp_start, rstrip):
+    j = 1
+    while j + 8 <= size_chr:
+        mismatch = _mismatch_chunk8(chr_array, start + j,
+                                    cmp_array, cmp_start + j)
+        if mismatch < 8:
+            return _equal_fixed_mismatch(
+                chr_array, start, cmp_array, cmp_start,
+                j + mismatch, size_chr, rstrip,
+            )
+        j += 8
+
+    while j < size_chr:
+        if chr_array[start + j] != cmp_array[cmp_start + j]:
+            return _equal_fixed_mismatch(
+                chr_array, start, cmp_array, cmp_start,
+                j, size_chr, rstrip,
+            )
+        j += 1
+    return True
 
 
 @register_jitable(**JIT_OPTIONS)
@@ -312,9 +330,14 @@ def _equal_records(chr_array, start, size_chr,
     if size_chr == size_cmp and size_chr:
         if _memcmp_array(chr_array, start, cmp_array, cmp_start, size_chr) == 0:
             return True
+        if size_chr >= 32:
+            return _equal_wide_after_raw_mismatch(
+                chr_array, start, size_chr,
+                cmp_array, cmp_start, rstrip,
+            )
         return _equal_records_after_raw_mismatch(
             chr_array, start, size_chr,
-            cmp_array, cmp_start, size_cmp,
+            cmp_array, cmp_start,
             rstrip,
         )
 
