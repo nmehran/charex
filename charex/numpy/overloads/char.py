@@ -12,6 +12,7 @@ from charex.numpy.overloads.definitions import (
     equal_sub32_bytes, equal_sub32_unicode,
     compare_chararrays,
     count, endswith, startswith, find, rfind, index, rindex, str_len,
+    str_len_bytes, _str_len_loop,
     isalpha, isalnum, isdecimal, isdigit, islower, isnumeric, isspace,
     istitle, isupper, scalar_bytes_len, scalar_strings_len,
     scalar_bytes_isalpha, scalar_strings_isalpha,
@@ -28,6 +29,7 @@ from numba.core.errors import (
 )
 from numba.core.typing.templates import AttributeTemplate
 from numba.extending import infer_getattr, overload, register_jitable
+from numba import literally
 import numpy as np
 
 
@@ -601,10 +603,23 @@ def ov_char_rindex(a, sub, start=0, end=None):
 @_overload_char_function(np.char.str_len, _char_str_len)
 def ov_char_str_len(a):
     register_a, a_dim, as_bytes = _register_single(a)
+    array_len = str_len_bytes if as_bytes else str_len
+    width = a.dtype.count if isinstance(a, types.Array) else 0
 
-    if a_dim > 0:
+    if a_dim > 0 and width:
+        if as_bytes:
+            direct_len = _str_len_loop if width <= 8 else str_len_bytes
+
+            def impl(a):
+                return direct_len(a.view(np.uint8), a.size, literally(width))
+        else:
+            direct_len = _str_len_loop if width <= 16 else str_len
+
+            def impl(a):
+                return direct_len(a.view(np.int32), a.size, width)
+    elif a_dim > 0:
         def impl(a):
-            return str_len(*register_a(a, False))
+            return array_len(*register_a(a, False))
     elif a_dim == -2:
         if as_bytes:
             def impl(a):
@@ -614,7 +629,8 @@ def ov_char_str_len(a):
                 return _char_info_scalar_result(scalar_strings_len(a))
     else:
         def impl(a):
-            return _char_info_scalar_result(str_len(*register_a(a, False))[0])
+            return _char_info_scalar_result(
+                array_len(*register_a(a, False))[0])
     return impl
 
 

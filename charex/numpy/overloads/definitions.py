@@ -238,6 +238,47 @@ def _is_zero_chunk4(typingctx, chr_array, start):
 
 
 @intrinsic
+def _last_nonzero_chunk8(typingctx, chr_array, start):
+    """Return the last nonzero offset in an 8-code-unit chunk, else -1."""
+    if not isinstance(chr_array, types.Array):
+        raise TypeError('chunk operand must be an array')
+
+    def codegen(context, builder, signature, args):
+        chr_type, _ = signature.args
+        chr_value, start_value = args
+        chr_struct = context.make_array(chr_type)(context, builder, chr_value)
+
+        bitwidth = chr_type.dtype.bitwidth
+        itemsize = bitwidth // 8
+        start_bytes = builder.mul(start_value,
+                                  ir.Constant(start_value.type, itemsize))
+        ptr = cgutils.pointer_add(builder, chr_struct.data, start_bytes,
+                                  cgutils.voidptr_t)
+        wide_type = ir.IntType(bitwidth * 8)
+        value = builder.load(builder.bitcast(ptr, wide_type.as_pointer()),
+                             align=1)
+
+        zero = builder.icmp_unsigned('==', value, ir.Constant(wide_type, 0))
+        leading = builder.ctlz(value, ir.Constant(ir.IntType(1), 0))
+        highest_bit = builder.sub(
+            ir.Constant(wide_type, wide_type.width - 1),
+            leading,
+        )
+        unit_index = builder.udiv(highest_bit,
+                                  ir.Constant(wide_type, bitwidth))
+
+        return_type = context.get_value_type(types.intp)
+        if wide_type.width > return_type.width:
+            unit_index = builder.trunc(unit_index, return_type)
+        elif wide_type.width < return_type.width:
+            unit_index = builder.zext(unit_index, return_type)
+        return builder.select(zero, ir.Constant(return_type, -1), unit_index)
+
+    sig = types.intp(chr_array, start)
+    return sig, codegen
+
+
+@intrinsic
 def _mismatch_chunk8(typingctx, chr_array, start, cmp_array, cmp_start):
     """Return the first mismatching offset in an 8-code-unit chunk, else 8."""
     if not isinstance(chr_array, types.Array) \
@@ -753,6 +794,34 @@ def _record_last_nonzero(chr_array, start, size_chr):
 
 
 @register_jitable(**JIT_OPTIONS)
+def _record_last_nonzero_bits(chr_array, start, size_chr):
+    end = start + size_chr
+    while end - 8 >= start:
+        offset = _last_nonzero_chunk8(chr_array, end - 8)
+        if offset >= 0:
+            return end - 8 + offset
+        end -= 8
+    p = end - 1
+    while p >= start and chr_array[p] == 0:
+        p -= 1
+    return p
+
+
+@register_jitable(**JIT_OPTIONS)
+def _str_len_loop(chr_array, len_chr, size_chr):
+    str_length = np.empty(len_chr, 'int64')
+    stride = 0
+    for i in range(len_chr):
+        length = 0
+        for p in range(size_chr):
+            if chr_array[stride + p]:
+                length = p + 1
+        str_length[i] = length
+        stride += size_chr
+    return str_length
+
+
+@register_jitable(**JIT_OPTIONS)
 def endswith(chr_array, len_chr, size_chr,
              sub_array, len_sub, size_sub,
              start, end):
@@ -1101,11 +1170,29 @@ def str_len(chr_array, len_chr, size_chr):
     """Native Implementation of np.char.str_len"""
     if not size_chr:
         return np.zeros(len_chr, 'int64')
+    if size_chr <= 16:
+        return _str_len_loop(chr_array, len_chr, size_chr)
 
     str_length = np.empty(len_chr, 'int64')
     j = 0
     for i in range(0, chr_array.size, size_chr):
         str_length[j] = _record_last_nonzero(chr_array, i, size_chr) - i + 1
+        j += 1
+    return str_length
+
+
+@register_jitable(**JIT_OPTIONS)
+def str_len_bytes(chr_array, len_chr, size_chr):
+    """Native Implementation of np.char.str_len for byte arrays."""
+    if not size_chr:
+        return np.zeros(len_chr, 'int64')
+
+    str_length = np.empty(len_chr, 'int64')
+    j = 0
+    for i in range(0, chr_array.size, size_chr):
+        str_length[j] = _record_last_nonzero_bits(
+            chr_array, i, size_chr
+        ) - i + 1
         j += 1
     return str_length
 
