@@ -3,6 +3,7 @@ from csv import DictWriter
 from pathlib import Path
 from platform import python_version
 from time import perf_counter
+import gc
 
 import charex  # noqa: F401
 import llvmlite
@@ -151,13 +152,33 @@ NUMERIC_STRING_FUNCS = [
 ]
 
 
-def median_time(func, args, repeat):
-    times = np.empty(repeat, dtype=np.float64)
-    for i in range(repeat):
-        start = perf_counter()
-        result = func(*args)
-        times[i] = perf_counter() - start
-    return float(np.median(times)), result
+TIMING_BATCH = 3
+
+
+def _time_call(func, args):
+    start = perf_counter()
+    for _ in range(TIMING_BATCH):
+        func(*args)
+    return (perf_counter() - start) / TIMING_BATCH
+
+
+def paired_median_times(jit_func, numpy_func, args, repeat):
+    jit_times = np.empty(repeat, dtype=np.float64)
+    numpy_times = np.empty(repeat, dtype=np.float64)
+    gc_enabled = gc.isenabled()
+    gc.disable()
+    try:
+        for i in range(repeat):
+            if i % 2:
+                numpy_times[i] = _time_call(numpy_func, args)
+                jit_times[i] = _time_call(jit_func, args)
+            else:
+                jit_times[i] = _time_call(jit_func, args)
+                numpy_times[i] = _time_call(numpy_func, args)
+    finally:
+        if gc_enabled:
+            gc.enable()
+    return float(np.median(jit_times)), float(np.median(numpy_times))
 
 
 def bench(group, kind, method, case, jit_func, numpy_func, args, repeat):
@@ -165,8 +186,8 @@ def bench(group, kind, method, case, jit_func, numpy_func, args, repeat):
     actual = jit_func(*args)
     np.testing.assert_array_equal(np.asarray(actual), np.asarray(expected))
 
-    jit_time, _ = median_time(jit_func, args, repeat)
-    numpy_time, _ = median_time(numpy_func, args, repeat)
+    jit_time, numpy_time = paired_median_times(
+        jit_func, numpy_func, args, repeat)
     speedup = numpy_time / jit_time if jit_time else float('inf')
     print(f'{group:11} {kind:7} {method:13} {case:12} '
           f'charex={jit_time * 1000:9.3f} ms  '
@@ -332,13 +353,37 @@ def _set_log_ticks(axis, values, ratio=False):
 
     axis.set_yscale('log')
     lower, upper = axis.get_ylim()
-    ticks = []
-    for exponent in range(-4, 5):
-        scale = 10.0 ** exponent
-        for multiple in (1, 2, 3, 4, 5, 10):
-            value = multiple * scale
-            if lower <= value <= upper:
-                ticks.append(value)
+
+    def candidate_ticks(multiples):
+        ticks = []
+        for exponent in range(-4, 5):
+            scale = 10.0 ** exponent
+            for multiple in multiples:
+                value = multiple * scale
+                if lower <= value <= upper:
+                    ticks.append(value)
+        return ticks
+
+    ticks = candidate_ticks((1, 2, 3, 4, 5, 10))
+    if ratio and len(ticks) < 4:
+        ticks = candidate_ticks(
+            (1, 1.1, 1.2, 1.25, 1.3, 1.4, 1.5, 1.75,
+             2, 2.5, 3, 4, 5, 7.5, 10)
+        )
+    if ratio and len(ticks) < 4:
+        step = (upper - lower) / 3
+        if step > 0:
+            magnitude = 10.0 ** np.floor(np.log10(step))
+            for unit in (1, 2, 2.5, 5, 10):
+                nice_step = unit * magnitude
+                if nice_step >= step:
+                    break
+            start = np.ceil(lower / nice_step) * nice_step
+            value = start
+            while value <= upper:
+                if value > 0:
+                    ticks.append(value)
+                value += nice_step
     if not ticks:
         ticks = [value for value in values if value > 0]
     axis.set_yticks(sorted(set(ticks)))
@@ -430,6 +475,8 @@ def write_readme(output_dir, size, repeat):
         f'- llvmlite: `{llvmlite.__version__}`\n'
         f'- Size: `{size}`\n'
         f'- Repeat: `{repeat}`\n\n'
+        f'Timings are medians from interleaved charex/NumPy calls with '
+        f'`{TIMING_BATCH}` calls per timed sample.\n\n'
         'Regenerate from the repository root:\n\n'
         '```bash\n'
         'python -m pip install -e ".[bench]"\n'

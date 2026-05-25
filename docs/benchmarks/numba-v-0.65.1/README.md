@@ -7,6 +7,8 @@
 - Size: `50000`
 - Repeat: `5`
 
+Timings are medians from interleaved charex/NumPy calls with `3` calls per timed sample.
+
 Regenerate from the repository root:
 
 ```bash
