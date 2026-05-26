@@ -5,6 +5,8 @@
 
 #define CHAREX_NUMPY_2_0_API_VERSION 0x00000012
 #define CHAREX_STRINGDTYPE_ACQUIRE_SLOT 316
+#define CHAREX_STRINGDTYPE_ACQUIRE_ALLOCATORS_SLOT 317
+#define CHAREX_STRINGDTYPE_RELEASE_ALLOCATORS_SLOT 319
 
 #if NPY_API_VERSION >= CHAREX_NUMPY_2_0_API_VERSION
 #define CHAREX_HAS_STRINGDTYPE_API 1
@@ -24,6 +26,49 @@ charex_stringdtype_acquire_allocator(PyObject *array)
 #else
     (void)array;
     return NULL;
+#endif
+}
+
+
+void
+charex_stringdtype_acquire_two_allocators(
+    PyObject *left,
+    PyObject *right,
+    void **allocators
+)
+{
+#if CHAREX_HAS_STRINGDTYPE_API
+    PyArray_Descr *descrs[2] = {
+        PyArray_DESCR((PyArrayObject *)left),
+        PyArray_DESCR((PyArrayObject *)right),
+    };
+    typedef void (*acquire_allocators_func)(
+        size_t,
+        PyArray_Descr *const[],
+        void **
+    );
+    acquire_allocators_func acquire = (acquire_allocators_func)
+        PyArray_API[CHAREX_STRINGDTYPE_ACQUIRE_ALLOCATORS_SLOT];
+    acquire(2, descrs, allocators);
+#else
+    (void)left;
+    (void)right;
+    allocators[0] = NULL;
+    allocators[1] = NULL;
+#endif
+}
+
+
+void
+charex_stringdtype_release_two_allocators(void **allocators)
+{
+#if CHAREX_HAS_STRINGDTYPE_API
+    typedef void (*release_allocators_func)(size_t, void **);
+    release_allocators_func release = (release_allocators_func)
+        PyArray_API[CHAREX_STRINGDTYPE_RELEASE_ALLOCATORS_SLOT];
+    release(2, allocators);
+#else
+    (void)allocators;
 #endif
 }
 

@@ -266,6 +266,56 @@ Runtime distillation checkpoint:
 | long ASCII | 3.098 ms | 40.529 ms | 13.08x |
 | long NUL-tail | 0.901 ms | 6.430 ms | 7.14x |
 
+## Tranche 2: Equality
+
+Exploratory benchmark:
+
+```bash
+python docs/exploration/stringdtype_equal_bench.py
+```
+
+This compares active `np.strings.equal` candidates on default `StringDType`
+arrays. The benchmark randomizes measurement order and validates every
+candidate against NumPy before timing.
+
+Implementation checkpoint:
+
+- `equal` and `not_equal` support one-dimensional C-contiguous default
+  `StringDType` arrays.
+- Scalar/StringDType mixed comparisons are rejected for now.
+- Allocators are acquired as a pair for binary operations. Acquiring the same
+  allocator twice can deadlock on same-array comparisons.
+- The hot loop hoists both ndarray data pointers and passes packed-record
+  pointers to the equality intrinsic.
+- The equality intrinsic uses full-buffer `memcmp` first, then falls back to
+  first-NUL-prefix comparison only when the full buffer differs. This preserves
+  NumPy's observed embedded-NUL behavior without the old byte-by-byte long
+  string cliff.
+
+Rejected equality candidates:
+
+- The original branchless byte loop is clean for short strings, but scans the
+  entire UTF-8 byte span in generated LLVM and was about 0.09x NumPy on 100k
+  long equal and late-mismatch cases.
+- `memchr` before `memcmp` fixes long strings, but pays an unnecessary extra
+  scan for fully equal strings.
+- A packed-size hybrid (`size <= 16`) is defensible, but did not clearly beat
+  the simpler full-`memcmp` shape after broader cases were added.
+
+Representative post-checkpoint 100k-row medians:
+
+| case | NumPy | charex | speedup |
+| ---- | ----- | ------ | ------- |
+| equal short | 0.862 ms | 0.787 ms | 1.10x |
+| first mismatch | 0.940 ms | 0.908 ms | 1.04x |
+| late mismatch | 0.917 ms | 0.897 ms | 1.02x |
+| unequal byte length | 0.886 ms | 0.553 ms | 1.60x |
+| embedded NUL | 0.932 ms | 0.945 ms | 0.99x |
+| Unicode equal | 0.908 ms | 0.744 ms | 1.22x |
+| long equal | 1.808 ms | 1.661 ms | 1.09x |
+| long late mismatch | 1.908 ms | 1.836 ms | 1.04x |
+| long first mismatch | 3.028 ms | 3.246 ms | 0.93x |
+
 ## Prototype Order
 
 1. Type recognition only:

@@ -6,8 +6,9 @@ from charex.numpy.overloads._shared import (
 )
 from charex.numpy.stringdtype import (
     is_stringdtype_array_type, stringdtype_acquire_allocator,
-    stringdtype_codepoint_len_data, stringdtype_data_ptr, stringdtype_equal,
-    stringdtype_release_allocator,
+    stringdtype_acquire_allocators, stringdtype_codepoint_len_data,
+    stringdtype_data_ptr, stringdtype_equal_data,
+    stringdtype_release_allocator, stringdtype_release_allocators,
 )
 from charex.numpy.overloads.definitions import (
     equal, equal_sub32_bytes, equal_sub32_unicode, greater, greater_equal,
@@ -66,7 +67,8 @@ def _overload_equal(left, right, invert):
     if is_stringdtype_array_type(left) or is_stringdtype_array_type(right):
         if not is_stringdtype_array_type(left) \
                 or not is_stringdtype_array_type(right):
-            return None
+            raise NumbaValueError('StringDType comparisons currently require '
+                                  'two StringDType arrays')
         if left.ndim > 1 or right.ndim > 1:
             raise NumbaValueError('charex supports only scalars and '
                                   'one-dimensional arrays')
@@ -79,13 +81,17 @@ def _overload_equal(left, right, invert):
                 raise ValueError('shape mismatch: objects cannot be '
                                  'broadcast to a single shape')
             result = np.empty(left.size, np.bool_)
-            left_allocator = stringdtype_acquire_allocator(left)
-            right_allocator = stringdtype_acquire_allocator(right)
+            allocators = stringdtype_acquire_allocators(left, right)
+            left_allocator = allocators[0]
+            right_allocator = allocators[1]
+            left_data = stringdtype_data_ptr(left)
+            right_data = stringdtype_data_ptr(right)
             for i in range(left.size):
-                result[i] = stringdtype_equal(
-                    left, i, left_allocator, right, i, right_allocator)
-            stringdtype_release_allocator(left_allocator)
-            stringdtype_release_allocator(right_allocator)
+                result[i] = stringdtype_equal_data(
+                    left_data, i, left_allocator,
+                    right_data, i, right_allocator,
+                )
+            stringdtype_release_allocators(allocators)
             return ~result if invert else result
 
         return impl

@@ -44,22 +44,37 @@ class _StaticString(ctypes.Structure):
 
 def _native_stringdtype_helper():
     if _STRING_DTYPE is None:
-        return None, 0
+        return None, 0, 0, 0
     try:
         native = importlib.import_module('charex._stringdtype')
         if not native.has_stringdtype_api():
-            return None, 0
+            return None, 0, 0, 0
         library = ctypes.CDLL(native.__file__)
         acquire = library.charex_stringdtype_acquire_allocator
         acquire.argtypes = [ctypes.py_object]
         acquire.restype = ctypes.c_void_p
-        return library, ctypes.cast(acquire, ctypes.c_void_p).value
+        acquire_two = library.charex_stringdtype_acquire_two_allocators
+        acquire_two.argtypes = [
+            ctypes.py_object, ctypes.py_object,
+            ctypes.POINTER(ctypes.c_void_p),
+        ]
+        acquire_two.restype = None
+        release_two = library.charex_stringdtype_release_two_allocators
+        release_two.argtypes = [ctypes.POINTER(ctypes.c_void_p)]
+        release_two.restype = None
+        return (
+            library,
+            ctypes.cast(acquire, ctypes.c_void_p).value,
+            ctypes.cast(acquire_two, ctypes.c_void_p).value,
+            ctypes.cast(release_two, ctypes.c_void_p).value,
+        )
     except (AttributeError, ImportError, OSError):
-        return None, 0
+        return None, 0, 0, 0
 
 
 # Keep the CDLL object alive for the function address embedded in generated IR.
-_NATIVE_LIBRARY, _NATIVE_ACQUIRE_ADDR = _native_stringdtype_helper()
+_NATIVE_LIBRARY, _NATIVE_ACQUIRE_ADDR, _NATIVE_ACQUIRE_TWO_ADDR, \
+    _NATIVE_RELEASE_TWO_ADDR = _native_stringdtype_helper()
 
 
 if _STRING_DTYPE is not None:
@@ -278,6 +293,89 @@ def stringdtype_release_allocator(typingctx, allocator):
 
 
 @intrinsic
+def stringdtype_acquire_allocators(typingctx, left, right):
+    if not is_stringdtype_array_type(left) \
+            or not is_stringdtype_array_type(right):
+        return None
+
+    allocators_type = types.UniTuple(types.voidptr, 2)
+    sig = signature(allocators_type, left, right)
+
+    def codegen(context, builder, signature, args):
+        intp = context.get_value_type(types.intp)
+        byte_ptr = ir.IntType(8).as_pointer()
+        left_struct = context.make_array(signature.args[0])(
+            context, builder, args[0],
+        )
+        right_struct = context.make_array(signature.args[1])(
+            context, builder, args[1],
+        )
+        allocators = cgutils.alloca_once(builder, byte_ptr, size=2)
+        acquire_type = ir.FunctionType(
+            ir.VoidType(), [byte_ptr, byte_ptr, byte_ptr.as_pointer()],
+        )
+        acquire_addr = context.get_constant(types.uintp,
+                                            _NATIVE_ACQUIRE_TWO_ADDR)
+        acquire = builder.inttoptr(
+            acquire_addr, acquire_type.as_pointer(),
+        )
+        builder.call(
+            acquire,
+            [
+                builder.bitcast(left_struct.parent, byte_ptr),
+                builder.bitcast(right_struct.parent, byte_ptr),
+                allocators,
+            ],
+        )
+        return context.make_tuple(
+            builder,
+            signature.return_type,
+            [
+                builder.load(builder.gep(allocators,
+                                         [ir.Constant(intp, 0)])),
+                builder.load(builder.gep(allocators,
+                                         [ir.Constant(intp, 1)])),
+            ],
+        )
+
+    return sig, codegen
+
+
+@intrinsic
+def stringdtype_release_allocators(typingctx, allocators):
+    allocators_type = types.UniTuple(types.voidptr, 2)
+    if allocators != allocators_type:
+        return None
+
+    sig = signature(types.void, allocators)
+
+    def codegen(context, builder, signature, args):
+        intp = context.get_value_type(types.intp)
+        byte_ptr = ir.IntType(8).as_pointer()
+        allocator_values = cgutils.unpack_tuple(builder, args[0], 2)
+        allocator_array = cgutils.alloca_once(builder, byte_ptr, size=2)
+        builder.store(
+            allocator_values[0],
+            builder.gep(allocator_array, [ir.Constant(intp, 0)]),
+        )
+        builder.store(
+            allocator_values[1],
+            builder.gep(allocator_array, [ir.Constant(intp, 1)]),
+        )
+        release_type = ir.FunctionType(
+            ir.VoidType(), [byte_ptr.as_pointer()],
+        )
+        release_addr = context.get_constant(types.uintp,
+                                            _NATIVE_RELEASE_TWO_ADDR)
+        release = builder.inttoptr(
+            release_addr, release_type.as_pointer(),
+        )
+        builder.call(release, [allocator_array])
+
+    return sig, codegen
+
+
+@intrinsic
 def stringdtype_data_ptr(typingctx, array):
     if not is_stringdtype_array_type(array):
         return None
@@ -368,33 +466,31 @@ def stringdtype_codepoint_len_data(typingctx, data, index, allocator):
 
 
 @intrinsic
-def stringdtype_equal(typingctx, left, left_index, left_allocator,
-                      right, right_index, right_allocator):
-    if not is_stringdtype_array_type(left) \
+def stringdtype_equal_data(typingctx, left_data, left_index, left_allocator,
+                           right_data, right_index, right_allocator):
+    if left_data != types.voidptr \
             or not isinstance(left_index, types.Integer) \
             or left_allocator != types.voidptr \
-            or not is_stringdtype_array_type(right) \
+            or right_data != types.voidptr \
             or not isinstance(right_index, types.Integer) \
             or right_allocator != types.voidptr:
         return None
 
-    sig = signature(types.boolean, left, types.intp, left_allocator,
-                    right, types.intp, right_allocator)
+    sig = signature(types.boolean, left_data, types.intp, left_allocator,
+                    right_data, types.intp, right_allocator)
 
     def codegen(context, builder, signature, args):
-        left_type = signature.args[0]
-        right_type = signature.args[3]
-        left_value, left_index_value, left_allocator, \
-            right_value, right_index_value, right_allocator = args
+        left_data, left_index_value, left_allocator, \
+            right_data, right_index_value, right_allocator = args
 
         int8 = ir.IntType(8)
         int32 = ir.IntType(32)
         intp = context.get_value_type(types.intp)
         byte_ptr = int8.as_pointer()
-        left_packed = _packed_string_ptr(context, builder, left_type,
-                                         left_value, left_index_value)
-        right_packed = _packed_string_ptr(context, builder, right_type,
-                                          right_value, right_index_value)
+        left_packed = _packed_string_ptr_from_data(
+            builder, left_data, left_index_value, intp)
+        right_packed = _packed_string_ptr_from_data(
+            builder, right_data, right_index_value, intp)
         left_status, left_size, left_buffer = _load_string(
             builder, left_allocator, left_packed, intp, byte_ptr)
         right_status, right_size, right_buffer = _load_string(
@@ -411,30 +507,42 @@ def stringdtype_equal(typingctx, left, left_index, left_allocator,
         same_size = builder.icmp_unsigned('==', left_size, right_size)
 
         with builder.if_then(builder.and_(both_valid, same_size)):
-            active = cgutils.alloca_once(builder, ir.IntType(1))
-            builder.store(cgutils.true_bit, result)
-            builder.store(cgutils.true_bit, active)
-            with cgutils.for_range(builder, left_size, intp=intp) as loop:
-                left_char = builder.load(
-                    builder.gep(left_buffer, [loop.index]))
-                right_char = builder.load(
-                    builder.gep(right_buffer, [loop.index]))
-                same_char = builder.icmp_unsigned('==', left_char, right_char)
-                still_active = builder.load(active)
-                builder.store(
-                    builder.select(still_active,
-                                   builder.and_(builder.load(result),
-                                                same_char),
-                                   builder.load(result)),
-                    result,
+            memchr_type = ir.FunctionType(byte_ptr, [byte_ptr, int32, intp])
+            memcmp_type = ir.FunctionType(int32, [byte_ptr, byte_ptr, intp])
+            memchr = cgutils.get_or_insert_function(
+                builder.module, memchr_type, 'memchr',
+            )
+            memcmp = cgutils.get_or_insert_function(
+                builder.module, memcmp_type, 'memcmp',
+            )
+            full_cmp = builder.call(
+                memcmp, [left_buffer, right_buffer, left_size],
+            )
+            full_equal = builder.icmp_signed(
+                '==', full_cmp, ir.Constant(int32, 0))
+            builder.store(full_equal, result)
+            with builder.if_then(builder.not_(full_equal)):
+                nul_ptr = builder.call(
+                    memchr, [left_buffer, ir.Constant(int32, 0), left_size],
                 )
-                nonzero = builder.icmp_unsigned(
-                    '!=', left_char, ir.Constant(int8, 0))
-                builder.store(
-                    builder.and_(still_active,
-                                 builder.and_(same_char, nonzero)),
-                    active,
+                found_nul = builder.icmp_unsigned(
+                    '!=', nul_ptr, ir.Constant(byte_ptr, None),
                 )
+                with builder.if_then(found_nul):
+                    left_addr = builder.ptrtoint(left_buffer, intp)
+                    nul_addr = builder.ptrtoint(nul_ptr, intp)
+                    compare_size = builder.add(
+                        builder.sub(nul_addr, left_addr),
+                        ir.Constant(intp, 1),
+                    )
+                    nul_cmp = builder.call(
+                        memcmp, [left_buffer, right_buffer, compare_size],
+                    )
+                    builder.store(
+                        builder.icmp_signed('==', nul_cmp,
+                                            ir.Constant(int32, 0)),
+                        result,
+                    )
 
         return builder.load(result)
 
@@ -453,7 +561,9 @@ def _install_typeof():
     @typeof_impl.register(np.ndarray)
     def _stringdtype_ndarray_typeof(value, context):
         if is_stringdtype(value.dtype):
-            if not _NATIVE_ACQUIRE_ADDR:
+            if not _NATIVE_ACQUIRE_ADDR \
+                    or not _NATIVE_ACQUIRE_TWO_ADDR \
+                    or not _NATIVE_RELEASE_TWO_ADDR:
                 raise NumbaValueError(
                     'StringDType support requires the compiled '
                     'charex._stringdtype helper; reinstall charex or run '

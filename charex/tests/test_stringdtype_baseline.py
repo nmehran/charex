@@ -162,3 +162,68 @@ def test_stringdtype_array_equal_matches_numpy():
 
     assert_same(strings.strings_equal, STRINGS.equal, left, right)
     assert_same(strings.strings_not_equal, STRINGS.not_equal, left, right)
+
+
+def test_stringdtype_array_equal_same_array_matches_numpy():
+    strings = StringsComparisonOperators()
+    values = stringdtype_array(['a', 'é', '🙂', 'a\x00\x00'])
+
+    assert_same(strings.strings_equal, STRINGS.equal, values, values)
+    assert_same(strings.strings_not_equal, STRINGS.not_equal, values, values)
+
+
+def test_stringdtype_array_equal_empty_arrays_match_numpy():
+    strings = StringsComparisonOperators()
+    left = stringdtype_array([])
+    right = stringdtype_array([])
+
+    assert_same(strings.strings_equal, STRINGS.equal, left, right)
+    assert_same(strings.strings_not_equal, STRINGS.not_equal, left, right)
+
+
+def test_stringdtype_array_equal_readonly_arrays_match_numpy():
+    strings = StringsComparisonOperators()
+    left = stringdtype_array(['a', 'é', '🙂'])
+    right = stringdtype_array(['a', 'e', '🙂'])
+    left.flags.writeable = False
+    right.flags.writeable = False
+
+    assert_same(strings.strings_equal, STRINGS.equal, left, right)
+    assert_same(strings.strings_not_equal, STRINGS.not_equal, left, right)
+
+
+def test_stringdtype_array_equal_shape_mismatch():
+    strings = StringsComparisonOperators()
+    left = stringdtype_array(['a', 'b', 'c'])
+    right = stringdtype_array(['a', 'b'])
+
+    with pytest.raises(ValueError, match='shape mismatch'):
+        strings.strings_equal(left, right)
+    with pytest.raises(ValueError, match='shape mismatch'):
+        strings.strings_not_equal(left, right)
+
+
+def test_stringdtype_array_equal_rejects_noncontiguous_arrays():
+    strings = StringsComparisonOperators()
+    values = stringdtype_array(['a', 'b', 'c', 'd'])
+
+    with pytest.raises(TypingError, match='C-contiguous'):
+        strings.strings_equal(values[::2], values[::2])
+
+
+def test_stringdtype_array_equal_rejects_multidimensional_arrays():
+    strings = StringsComparisonOperators()
+    values = stringdtype_array(['a', 'b', 'c', 'd']).reshape(2, 2)
+
+    with pytest.raises(TypingError, match='one-dimensional arrays'):
+        strings.strings_equal(values, values)
+
+
+@pytest.mark.parametrize('scalar_left', [False, True])
+def test_stringdtype_array_equal_rejects_mixed_stringdtype_inputs(scalar_left):
+    strings = StringsComparisonOperators()
+    values = stringdtype_array(['a', 'b'])
+    args = ('a', values) if scalar_left else (values, 'a')
+
+    with pytest.raises(TypingError, match='two StringDType arrays'):
+        strings.strings_equal(*args)
