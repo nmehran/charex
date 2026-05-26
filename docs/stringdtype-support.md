@@ -70,9 +70,14 @@ contract.
    - get a UTF-8 byte span for one element through NumPy's `NpyString_*` API;
    - define lifetime/locking rules explicitly;
    - reject or handle missing values deliberately.
+   - Current prototype uses a Python `ctypes` callback per element. This is
+     useful for proving semantics but is not the final performance shape and
+     should not be cached across processes.
 3. First operation:
    - `np.strings.str_len` for one-dimensional C-contiguous arrays;
    - count Unicode code points from UTF-8 bytes.
+   - Current prototype matches NumPy for normal values and raises
+     `ValueError` for null strings.
 4. First comparison:
    - `np.strings.equal`;
    - then `not_equal`.

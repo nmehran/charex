@@ -3,7 +3,6 @@
 import numpy as np
 import pytest
 from numba import njit, typeof
-from numba.core.errors import NumbaValueError, TypingError
 
 from charex.tests.definitions import StringsInformation
 from charex.tests.support import assert_same
@@ -21,11 +20,24 @@ def stringdtype_array(values):
     return np.array(values, dtype=STRING_DTYPE())
 
 
-def test_numba_rejects_stringdtype_arrays_before_charex_dispatch():
+def test_charex_registers_stringdtype_array_type():
     values = stringdtype_array(['a', 'é', '🙂'])
 
-    with pytest.raises(NumbaValueError, match='Unsupported array dtype'):
-        typeof(values)
+    value_type = typeof(values)
+
+    assert value_type.ndim == 1
+    assert value_type.layout == 'C'
+    assert value_type.dtype.name == 'StringDTypePacket'
+
+
+def test_stringdtype_shape_metadata_compiles():
+    values = stringdtype_array(['a', 'é', '🙂'])
+
+    @njit
+    def shape_info(value):
+        return value.shape[0], value.itemsize, value.strides[0]
+
+    assert shape_info(values) == (3, 16, 16)
 
 
 def test_numpy_stringdtype_strlen_counts_codepoints():
@@ -37,11 +49,6 @@ def test_numpy_stringdtype_strlen_counts_codepoints():
     )
 
 
-@pytest.mark.xfail(
-    raises=TypingError,
-    strict=True,
-    reason='Numba 0.65.1 rejects StringDType arrays before charex overloads',
-)
 def test_stringdtype_str_len_target_behavior():
     strings = StringsInformation()
     values = stringdtype_array(['a', 'é', '🙂', '', 'a\x00b'])
@@ -49,11 +56,6 @@ def test_stringdtype_str_len_target_behavior():
     assert_same(strings.strings_str_len, STRINGS.str_len, values)
 
 
-@pytest.mark.xfail(
-    raises=TypingError,
-    strict=True,
-    reason='Numba 0.65.1 rejects StringDType arrays before charex overloads',
-)
 def test_direct_numba_stringdtype_target_behavior():
     values = stringdtype_array(['a', 'é', '🙂'])
 
@@ -62,3 +64,14 @@ def test_direct_numba_stringdtype_target_behavior():
         return np.strings.str_len(x)
 
     np.testing.assert_array_equal(strlen(values), STRINGS.str_len(values))
+
+
+def test_stringdtype_str_len_rejects_null_strings():
+    dtype = STRING_DTYPE(na_object=None)
+    values = np.array(['a', None, 'bb'], dtype=dtype)
+    strings = StringsInformation()
+
+    with pytest.raises(ValueError, match='length of a null string'):
+        STRINGS.str_len(values)
+    with pytest.raises(ValueError, match='length of a null string'):
+        strings.strings_str_len(values)

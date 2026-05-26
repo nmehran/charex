@@ -4,11 +4,15 @@ from charex.core import OPTIONS
 from charex.numpy.overloads._shared import (
     equal_dispatch, equal_kernel, order_dispatch, try_register_pair,
 )
+from charex.numpy.stringdtype import (
+    is_stringdtype_array_type, stringdtype_codepoint_len,
+)
 from charex.numpy.overloads.definitions import (
     equal, equal_sub32_bytes, equal_sub32_unicode, greater, greater_equal,
 )
-from charex.numpy.overloads.char import _CHAR_INFO_FUNCTIONS
+from charex.numpy.overloads.char import _CHAR_INFO_FUNCTIONS, ov_char_str_len
 from numba.core import types
+from numba.core.errors import NumbaValueError
 from numba.core.typing.templates import AttributeTemplate
 from numba.extending import infer_getattr, overload
 import numpy as np
@@ -101,6 +105,9 @@ if _STRINGS is not None:
     def _strings_less_equal(left, right):
         return _STRINGS.less_equal(left, right)
 
+    def _strings_str_len(value):
+        return _STRINGS.str_len(value)
+
     _STRINGS_FUNCTIONS = {
         **_CHAR_INFO_FUNCTIONS,
         'equal': _strings_equal,
@@ -109,6 +116,7 @@ if _STRINGS is not None:
         'greater': _strings_greater,
         'less': _strings_less,
         'less_equal': _strings_less_equal,
+        'str_len': _strings_str_len,
     }
 
     @infer_getattr
@@ -143,3 +151,27 @@ if _STRINGS is not None:
     @overload(_strings_less_equal, **OPTIONS)
     def ov_strings_less_equal(left, right):
         return _overload_order(left, right, 'less_equal')
+
+    @overload(_strings_str_len, **OPTIONS)
+    def ov_strings_str_len(value):
+        if not is_stringdtype_array_type(value):
+            return ov_char_str_len(value)
+
+        if value.ndim > 1:
+            raise NumbaValueError('charex supports only scalars and '
+                                  'one-dimensional arrays')
+        if value.layout != 'C':
+            raise NumbaValueError('charex requires C-contiguous arrays; '
+                                  'call numpy.ascontiguousarray')
+
+        def impl(value):
+            result = np.empty(value.size, np.int64)
+            for i in range(value.size):
+                length = stringdtype_codepoint_len(value, i)
+                if length < 0:
+                    raise ValueError(
+                        'The length of a null string is undefined')
+                result[i] = length
+            return result
+
+        return impl
