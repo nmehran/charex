@@ -6,6 +6,7 @@ from llvmlite import binding as llvm
 from llvmlite import ir
 from numba.core import cgutils, types
 from numba.core.datamodel import models, register_default
+from numba.core.errors import NumbaValueError
 from numba.core.typing import signature
 from numba.core.typing.typeof import typeof_impl
 from numba.extending import intrinsic
@@ -97,6 +98,16 @@ class StringDTypePacketModel(models.DataModel):
 
 def is_stringdtype(dtype):
     return _STRING_DTYPE is not None and getattr(dtype, 'char', None) == 'T'
+
+
+def has_stringdtype_na_object(dtype):
+    if not is_stringdtype(dtype):
+        return False
+    try:
+        dtype.na_object
+    except AttributeError:
+        return False
+    return True
 
 
 def is_stringdtype_array_type(value):
@@ -333,6 +344,11 @@ def _install_typeof():
     @typeof_impl.register(np.ndarray)
     def _stringdtype_ndarray_typeof(value, context):
         if is_stringdtype(value.dtype):
+            if has_stringdtype_na_object(value.dtype):
+                raise NumbaValueError(
+                    'charex StringDType support currently requires default '
+                    'StringDType without na_object',
+                )
             layout = numpy_support.map_layout(value)
             readonly = not value.flags.writeable
             return types.Array(

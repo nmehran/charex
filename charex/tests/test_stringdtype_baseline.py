@@ -3,6 +3,7 @@
 import numpy as np
 import pytest
 from numba import njit, typeof
+from numba.core.errors import NumbaValueError, TypingError
 
 from charex.tests.definitions import (
     StringsComparisonOperators, StringsInformation,
@@ -81,8 +82,17 @@ def test_stringdtype_str_len_rejects_null_strings():
 
     with pytest.raises(ValueError, match='length of a null string'):
         STRINGS.str_len(values)
-    with pytest.raises(ValueError, match='length of a null string'):
+    with pytest.raises(TypingError, match='without na_object'):
         strings.strings_str_len(values)
+
+
+@pytest.mark.parametrize('na_object', [None, np.nan, 'MISSING'])
+def test_stringdtype_na_object_variants_are_rejected(na_object):
+    values = np.array(['a', na_object, 'bb'],
+                      dtype=STRING_DTYPE(na_object=na_object))
+
+    with pytest.raises(NumbaValueError, match='without na_object'):
+        typeof(values)
 
 
 def test_stringdtype_array_equal_matches_numpy():
