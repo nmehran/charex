@@ -34,6 +34,7 @@ class StringDTypePacket(types.Type):
 
 stringdtype_packet = StringDTypePacket()
 _UNICODE_PARTS_TYPE = types.UniTuple(types.intp, 2)
+_UTF8_SPAN_TYPE = types.Tuple((types.voidptr, types.intp, types.boolean))
 
 
 def _numpy_api_slots():
@@ -518,6 +519,152 @@ def _stringdtype_byte_compare(builder, left_size, left_buffer,
     )
 
 
+def _utf8_strncmp_equal(builder, string_size, string_buffer, scalar_data,
+                        scalar_size, intp, int8, int32):
+    result = cgutils.alloca_once(builder, ir.IntType(1))
+    builder.store(cgutils.false_bit, result)
+    same_size = builder.icmp_unsigned('==', string_size, scalar_size)
+
+    with builder.if_then(same_size):
+        strncmp_type = ir.FunctionType(
+            int32, [int8.as_pointer(), int8.as_pointer(), intp])
+        strncmp = cgutils.get_or_insert_function(
+            builder.module, strncmp_type, 'strncmp')
+        cmp_result = builder.call(strncmp, [string_buffer, scalar_data,
+                                            string_size])
+        builder.store(
+            builder.icmp_signed('==', cmp_result, ir.Constant(int32, 0)),
+            result,
+        )
+
+    return builder.load(result)
+
+
+def _load_word64(builder, buffer, int64):
+    word = builder.load(builder.bitcast(buffer, int64.as_pointer()))
+    word.align = 1
+    return word
+
+
+def _byte_zero_highbits(builder, word, int64):
+    low_bits = ir.Constant(int64, 0x0101010101010101)
+    high_bits = ir.Constant(int64, 0x8080808080808080)
+    return builder.and_(
+        builder.and_(builder.sub(word, low_bits), builder.not_(word)),
+        high_bits,
+    )
+
+
+def _byte_nonzero_highbits(builder, word, int64):
+    high_bits = ir.Constant(int64, 0x8080808080808080)
+    return builder.and_(builder.not_(_byte_zero_highbits(builder, word, int64)),
+                        high_bits)
+
+
+def _utf8_word8_equal(builder, string_size, string_buffer, scalar_data,
+                      scalar_size, intp, int8, int32):
+    int1 = ir.IntType(1)
+    int64 = ir.IntType(64)
+    result = cgutils.alloca_once(builder, int1)
+    builder.store(cgutils.false_bit, result)
+    same_size = builder.icmp_unsigned('==', string_size, scalar_size)
+
+    with builder.if_then(same_size):
+        enough = builder.icmp_unsigned('>=', string_size,
+                                       ir.Constant(intp, 8))
+        with builder.if_else(enough) as (word_path, fallback):
+            with word_path:
+                left = _load_word64(builder, string_buffer, int64)
+                right = _load_word64(builder, scalar_data, int64)
+                diff = _byte_nonzero_highbits(
+                    builder, builder.xor(left, right), int64)
+                nul = _byte_zero_highbits(builder, left, int64)
+                has_decision = builder.or_(
+                    builder.icmp_unsigned('!=', diff, ir.Constant(int64, 0)),
+                    builder.icmp_unsigned('!=', nul, ir.Constant(int64, 0)),
+                )
+                with builder.if_else(has_decision) as (decide, unknown):
+                    with decide:
+                        first_diff = builder.cttz(diff,
+                                                  ir.Constant(int1, 0))
+                        first_nul = builder.cttz(nul, ir.Constant(int1, 0))
+                        builder.store(
+                            builder.icmp_unsigned('<', first_nul,
+                                                  first_diff),
+                            result,
+                        )
+                    with unknown:
+                        exactly_word = builder.icmp_unsigned(
+                            '==', string_size, ir.Constant(intp, 8))
+                        with builder.if_else(exactly_word) as (exact, longer):
+                            with exact:
+                                builder.store(cgutils.true_bit, result)
+                            with longer:
+                                builder.store(
+                                    _utf8_strncmp_equal(
+                                        builder, string_size, string_buffer,
+                                        scalar_data, scalar_size, intp, int8,
+                                        int32),
+                                    result,
+                                )
+            with fallback:
+                builder.store(
+                    _utf8_strncmp_equal(
+                        builder, string_size, string_buffer, scalar_data,
+                        scalar_size, intp, int8, int32),
+                    result,
+                )
+
+    return builder.load(result)
+
+
+def _utf8_prefilter_compare(builder, string_size, string_buffer, scalar_data,
+                            scalar_size, intp, int8, int32):
+    result = cgutils.alloca_once(builder, int32)
+    builder.store(ir.Constant(int32, 0), result)
+    compare_size = builder.select(
+        builder.icmp_unsigned('<', string_size, scalar_size),
+        string_size,
+        scalar_size,
+    )
+    empty_prefix = builder.icmp_unsigned('==', compare_size,
+                                         ir.Constant(intp, 0))
+
+    with builder.if_else(empty_prefix) as (empty, nonempty):
+        with empty:
+            builder.store(
+                _stringdtype_size_compare(builder, string_size, scalar_size,
+                                          int32),
+                result,
+            )
+        with nonempty:
+            first_left = builder.load(builder.gep(string_buffer, [
+                ir.Constant(intp, 0)]))
+            first_right = builder.load(builder.gep(scalar_data, [
+                ir.Constant(intp, 0)]))
+            first_equal = builder.icmp_unsigned('==', first_left, first_right)
+            with builder.if_else(first_equal) as (same, different):
+                with same:
+                    builder.store(
+                        _stringdtype_byte_compare(
+                            builder, string_size, string_buffer, scalar_size,
+                            scalar_data, intp, int8, int32),
+                        result,
+                    )
+                with different:
+                    builder.store(
+                        builder.select(
+                            builder.icmp_unsigned('>', first_left,
+                                                  first_right),
+                            ir.Constant(int32, 1),
+                            ir.Constant(int32, -1),
+                        ),
+                        result,
+                    )
+
+    return builder.load(result)
+
+
 def _unicode_codepoint(builder, data, kind, index, int32):
     int8 = ir.IntType(8)
     int16 = ir.IntType(16)
@@ -596,6 +743,144 @@ def _unicode_utf8_size(builder, data, length, kind, intp, int32):
         builder.store(builder.add(builder.load(size), width), size)
 
     return builder.load(size)
+
+
+def _store_utf8_byte(builder, buffer, pos, value, int8):
+    builder.store(builder.trunc(value, int8), builder.gep(buffer, [pos]))
+
+
+def _store_utf8_codepoint(builder, buffer, pos, codepoint, intp, int8, int32):
+    result = cgutils.alloca_once(builder, intp)
+    builder.store(pos, result)
+
+    one_byte = builder.icmp_unsigned('<', codepoint, ir.Constant(int32, 0x80))
+    two_byte = builder.icmp_unsigned('<', codepoint, ir.Constant(int32, 0x800))
+    three_byte = builder.icmp_unsigned('<', codepoint,
+                                       ir.Constant(int32, 0x10000))
+
+    with builder.if_else(one_byte) as (is_one, not_one):
+        with is_one:
+            _store_utf8_byte(builder, buffer, pos, codepoint, int8)
+            builder.store(builder.add(pos, ir.Constant(intp, 1)), result)
+        with not_one:
+            with builder.if_else(two_byte) as (is_two, not_two):
+                with is_two:
+                    first = builder.or_(
+                        builder.lshr(codepoint, ir.Constant(int32, 6)),
+                        ir.Constant(int32, 0xc0),
+                    )
+                    second = builder.or_(
+                        builder.and_(codepoint, ir.Constant(int32, 0x3f)),
+                        ir.Constant(int32, 0x80),
+                    )
+                    _store_utf8_byte(builder, buffer, pos, first, int8)
+                    _store_utf8_byte(
+                        builder, buffer, builder.add(pos, ir.Constant(intp, 1)),
+                        second, int8,
+                    )
+                    builder.store(builder.add(pos, ir.Constant(intp, 2)),
+                                  result)
+                with not_two:
+                    with builder.if_else(three_byte) as (is_three, is_four):
+                        with is_three:
+                            first = builder.or_(
+                                builder.lshr(codepoint,
+                                             ir.Constant(int32, 12)),
+                                ir.Constant(int32, 0xe0),
+                            )
+                            second = builder.or_(
+                                builder.and_(
+                                    builder.lshr(codepoint,
+                                                 ir.Constant(int32, 6)),
+                                    ir.Constant(int32, 0x3f),
+                                ),
+                                ir.Constant(int32, 0x80),
+                            )
+                            third = builder.or_(
+                                builder.and_(codepoint,
+                                             ir.Constant(int32, 0x3f)),
+                                ir.Constant(int32, 0x80),
+                            )
+                            _store_utf8_byte(builder, buffer, pos, first, int8)
+                            _store_utf8_byte(
+                                builder, buffer,
+                                builder.add(pos, ir.Constant(intp, 1)),
+                                second, int8,
+                            )
+                            _store_utf8_byte(
+                                builder, buffer,
+                                builder.add(pos, ir.Constant(intp, 2)),
+                                third, int8,
+                            )
+                            builder.store(
+                                builder.add(pos, ir.Constant(intp, 3)),
+                                result,
+                            )
+                        with is_four:
+                            first = builder.or_(
+                                builder.lshr(codepoint,
+                                             ir.Constant(int32, 18)),
+                                ir.Constant(int32, 0xf0),
+                            )
+                            second = builder.or_(
+                                builder.and_(
+                                    builder.lshr(codepoint,
+                                                 ir.Constant(int32, 12)),
+                                    ir.Constant(int32, 0x3f),
+                                ),
+                                ir.Constant(int32, 0x80),
+                            )
+                            third = builder.or_(
+                                builder.and_(
+                                    builder.lshr(codepoint,
+                                                 ir.Constant(int32, 6)),
+                                    ir.Constant(int32, 0x3f),
+                                ),
+                                ir.Constant(int32, 0x80),
+                            )
+                            fourth = builder.or_(
+                                builder.and_(codepoint,
+                                             ir.Constant(int32, 0x3f)),
+                                ir.Constant(int32, 0x80),
+                            )
+                            _store_utf8_byte(builder, buffer, pos, first, int8)
+                            _store_utf8_byte(
+                                builder, buffer,
+                                builder.add(pos, ir.Constant(intp, 1)),
+                                second, int8,
+                            )
+                            _store_utf8_byte(
+                                builder, buffer,
+                                builder.add(pos, ir.Constant(intp, 2)),
+                                third, int8,
+                            )
+                            _store_utf8_byte(
+                                builder, buffer,
+                                builder.add(pos, ir.Constant(intp, 3)),
+                                fourth, int8,
+                            )
+                            builder.store(
+                                builder.add(pos, ir.Constant(intp, 4)),
+                                result,
+                            )
+
+    return builder.load(result)
+
+
+def _encode_utf8_buffer(builder, unicode_struct, value_length, buffer, intp,
+                        int8, int32):
+    pos = cgutils.alloca_once(builder, intp)
+    builder.store(ir.Constant(intp, 0), pos)
+    with cgutils.for_range(builder, value_length, intp=intp) as loop:
+        codepoint = _unicode_codepoint(
+            builder, unicode_struct.data, unicode_struct.kind, loop.index,
+            int32,
+        )
+        builder.store(
+            _store_utf8_codepoint(builder, buffer, builder.load(pos),
+                                  codepoint, intp, int8, int32),
+            pos,
+        )
 
 
 def _unicode_parts(context, builder, unicode_value, intp, int32,
@@ -1702,20 +1987,111 @@ def stringdtype_unicode_parts(typingctx, value):
 
 
 @intrinsic
+def stringdtype_unicode_utf8_span(typingctx, value, value_length, value_size):
+    if not isinstance(value, types.UnicodeType) \
+            or not isinstance(value_length, types.Integer) \
+            or not isinstance(value_size, types.Integer):
+        return None
+
+    sig = signature(_UTF8_SPAN_TYPE, value, types.intp, types.intp)
+
+    def codegen(context, builder, signature, args):
+        value, value_length, value_size = args
+
+        int1 = ir.IntType(1)
+        int8 = ir.IntType(8)
+        int32 = ir.IntType(32)
+        intp = context.get_value_type(types.intp)
+        byte_ptr = int8.as_pointer()
+        unicode_struct, value_length, value_size = _unicode_parts(
+            context, builder, value, intp, int32, value_length, value_size)
+
+        direct = builder.bitcast(unicode_struct.data, byte_ptr)
+        buffer = cgutils.alloca_once(builder, byte_ptr)
+        allocated = cgutils.alloca_once(builder, int1)
+        builder.store(direct, buffer)
+        builder.store(cgutils.false_bit, allocated)
+
+        is_ascii = builder.icmp_unsigned(
+            '!=', unicode_struct.is_ascii, ir.Constant(int32, 0))
+        use_direct = builder.and_(
+            is_ascii,
+            builder.icmp_signed('==', unicode_struct.kind,
+                                ir.Constant(int32, 1)),
+        )
+        with builder.if_then(builder.not_(use_direct)):
+            stack = builder.alloca(
+                int8, size=ir.Constant(intp, _PACKED_STRING_SIZE))
+            use_stack = builder.icmp_unsigned(
+                '<=', value_size, ir.Constant(intp, _PACKED_STRING_SIZE))
+            with builder.if_else(use_stack) as (stack_path, heap_path):
+                with stack_path:
+                    _encode_utf8_buffer(
+                        builder, unicode_struct, value_length, stack, intp,
+                        int8, int32,
+                    )
+                    builder.store(stack, buffer)
+                with heap_path:
+                    malloc_type = ir.FunctionType(byte_ptr, [intp])
+                    malloc = cgutils.get_or_insert_function(
+                        builder.module, malloc_type, 'malloc')
+                    alloc_size = builder.select(
+                        builder.icmp_unsigned('>', value_size,
+                                              ir.Constant(intp, 0)),
+                        value_size,
+                        ir.Constant(intp, 1),
+                    )
+                    heap = builder.call(malloc, [alloc_size])
+                    _encode_utf8_buffer(
+                        builder, unicode_struct, value_length, heap, intp,
+                        int8, int32,
+                    )
+                    builder.store(heap, buffer)
+                    builder.store(cgutils.true_bit, allocated)
+
+        return context.make_tuple(
+            builder, signature.return_type,
+            [builder.load(buffer), value_size, builder.load(allocated)],
+        )
+
+    return sig, codegen
+
+
+@intrinsic
+def stringdtype_free_utf8_span(typingctx, data, allocated):
+    if data != types.voidptr or not isinstance(allocated, types.Boolean):
+        return None
+
+    sig = signature(types.void, data, allocated)
+
+    def codegen(context, builder, signature, args):
+        data, allocated = args
+        free_type = ir.FunctionType(ir.VoidType(), [ir.IntType(8).as_pointer()])
+        free = cgutils.get_or_insert_function(builder.module, free_type,
+                                              'free')
+        with builder.if_then(allocated):
+            builder.call(free, [data])
+        return context.get_dummy_value()
+
+    return sig, codegen
+
+
+@intrinsic
 def stringdtype_equal_unicode_data(typingctx, data, index, allocator, value,
-                                   value_parts):
+                                   value_length, value_size):
     if data != types.voidptr \
             or not isinstance(index, types.Integer) \
             or allocator != types.voidptr \
             or not isinstance(value, types.UnicodeType) \
-            or value_parts != _UNICODE_PARTS_TYPE:
+            or not isinstance(value_length, types.Integer) \
+            or not isinstance(value_size, types.Integer):
         return None
 
     sig = signature(types.boolean, data, types.intp, allocator, value,
-                    _UNICODE_PARTS_TYPE)
+                    types.intp, types.intp)
 
     def codegen(context, builder, signature, args):
-        data, index_value, allocator, value, value_parts = args
+        data, index_value, allocator, value, value_length, value_size = args
 
         int8 = ir.IntType(8)
         int32 = ir.IntType(32)
@@ -1729,8 +2105,6 @@ def stringdtype_equal_unicode_data(typingctx, data, index, allocator, value,
         builder.store(cgutils.false_bit, result)
         valid = builder.icmp_signed('==', status, ir.Constant(int32, 0))
         with builder.if_then(valid):
-            value_length, value_size = cgutils.unpack_tuple(
-                builder, value_parts, 2)
             builder.store(
                 _stringdtype_unicode_equal(
                     builder, size, buffer, value, value_length, value_size,
@@ -1745,19 +2119,20 @@ def stringdtype_equal_unicode_data(typingctx, data, index, allocator, value,
 
 @intrinsic
 def stringdtype_compare_unicode_data(typingctx, data, index, allocator, value,
-                                     value_parts):
+                                     value_length, value_size):
     if data != types.voidptr \
             or not isinstance(index, types.Integer) \
             or allocator != types.voidptr \
             or not isinstance(value, types.UnicodeType) \
-            or value_parts != _UNICODE_PARTS_TYPE:
+            or not isinstance(value_length, types.Integer) \
+            or not isinstance(value_size, types.Integer):
         return None
 
     sig = signature(types.int32, data, types.intp, allocator, value,
-                    _UNICODE_PARTS_TYPE)
+                    types.intp, types.intp)
 
     def codegen(context, builder, signature, args):
-        data, index_value, allocator, value, value_parts = args
+        data, index_value, allocator, value, value_length, value_size = args
 
         int8 = ir.IntType(8)
         int32 = ir.IntType(32)
@@ -1771,8 +2146,6 @@ def stringdtype_compare_unicode_data(typingctx, data, index, allocator, value,
         builder.store(ir.Constant(int32, 0), result)
         valid = builder.icmp_signed('==', status, ir.Constant(int32, 0))
         with builder.if_then(valid):
-            value_length, value_size = cgutils.unpack_tuple(
-                builder, value_parts, 2)
             builder.store(
                 _stringdtype_unicode_compare(
                     builder, size, buffer, value, value_length, value_size,
@@ -1783,6 +2156,75 @@ def stringdtype_compare_unicode_data(typingctx, data, index, allocator, value,
         return builder.load(result)
 
     return sig, codegen
+
+
+def _stringdtype_utf8_data(typingctx, data, index, allocator, scalar_data,
+                           scalar_size, compare):
+    if data != types.voidptr \
+            or not isinstance(index, types.Integer) \
+            or allocator != types.voidptr \
+            or scalar_data != types.voidptr \
+            or not isinstance(scalar_size, types.Integer):
+        return None
+
+    return_type = types.int32 if compare else types.boolean
+    sig = signature(return_type, data, types.intp, allocator, scalar_data,
+                    types.intp)
+
+    def codegen(context, builder, signature, args):
+        data, index_value, allocator, scalar_data, scalar_size = args
+
+        int8 = ir.IntType(8)
+        int32 = ir.IntType(32)
+        intp = context.get_value_type(types.intp)
+        byte_ptr = int8.as_pointer()
+        packed = _packed_string_ptr_from_data(builder, data, index_value, intp)
+        status, size, buffer = _load_string(builder, allocator, packed, intp,
+                                            byte_ptr)
+
+        if compare:
+            result = cgutils.alloca_once(builder, int32)
+            builder.store(ir.Constant(int32, 0), result)
+        else:
+            result = cgutils.alloca_once(builder, ir.IntType(1))
+            builder.store(cgutils.false_bit, result)
+
+        valid = builder.icmp_signed('==', status, ir.Constant(int32, 0))
+        with builder.if_then(valid):
+            if compare:
+                builder.store(
+                    _utf8_prefilter_compare(
+                        builder, size, buffer, scalar_data, scalar_size, intp,
+                        int8, int32,
+                    ),
+                    result,
+                )
+            else:
+                builder.store(
+                    _utf8_word8_equal(
+                        builder, size, buffer, scalar_data, scalar_size, intp,
+                        int8, int32,
+                    ),
+                    result,
+                )
+
+        return builder.load(result)
+
+    return sig, codegen
+
+
+@intrinsic
+def stringdtype_equal_utf8_data(typingctx, data, index, allocator, scalar_data,
+                                scalar_size):
+    return _stringdtype_utf8_data(
+        typingctx, data, index, allocator, scalar_data, scalar_size, False)
+
+
+@intrinsic
+def stringdtype_compare_utf8_data(typingctx, data, index, allocator,
+                                  scalar_data, scalar_size):
+    return _stringdtype_utf8_data(
+        typingctx, data, index, allocator, scalar_data, scalar_size, True)
 
 
 def _stringdtype_affix_data(typingctx, value_data, value_index,

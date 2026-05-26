@@ -531,6 +531,60 @@ def test_stringdtype_array_order_mixed_python_str_matches_numpy(
     ('strings_not_equal', STRINGS.not_equal),
     *STRINGDTYPE_ORDER_COMPARISONS,
 ])
+def test_stringdtype_array_comparison_long_mixed_python_str_matches_numpy(
+        impl_name, baseline):
+    strings = StringsComparisonOperators()
+    values = stringdtype_array([
+        'a' * 256,
+        'b' + 'a' * 255,
+        'a' * 7 + 'b' + 'a' * 248,
+        'a' * 255 + 'b',
+        'a' * 128 + '\x00x',
+        'é' * 128,
+        'é' * 127 + 'x',
+        '🙂' * 64,
+        '🙂' * 63 + 'x',
+    ])
+    scalars = [
+        'a' * 256,
+        'a' * 7 + 'm' + 'a' * 248,
+        'a' * 128 + '\x00z',
+        'é' * 128,
+        '🙂' * 64,
+    ]
+
+    for scalar in scalars:
+        assert_same(getattr(strings, impl_name), baseline, values, scalar)
+        assert_same(getattr(strings, impl_name), baseline, scalar, values)
+
+
+@pytest.mark.parametrize('impl_name, baseline', [
+    ('strings_equal', STRINGS.equal),
+    ('strings_not_equal', STRINGS.not_equal),
+    *STRINGDTYPE_ORDER_COMPARISONS,
+])
+def test_stringdtype_zero_dimensional_comparison_long_mixed_python_str_matches_numpy(
+        impl_name, baseline):
+    strings = StringsComparisonOperators()
+    value = np.array('a' * 256, dtype=STRING_DTYPE())
+    scalars = [
+        'a' * 256,
+        'a' * 255 + 'b',
+        'a' * 128 + '\x00z',
+        'é' * 128,
+        '🙂' * 64,
+    ]
+
+    for scalar in scalars:
+        assert_same(getattr(strings, impl_name), baseline, value, scalar)
+        assert_same(getattr(strings, impl_name), baseline, scalar, value)
+
+
+@pytest.mark.parametrize('impl_name, baseline', [
+    ('strings_equal', STRINGS.equal),
+    ('strings_not_equal', STRINGS.not_equal),
+    *STRINGDTYPE_ORDER_COMPARISONS,
+])
 @pytest.mark.parametrize('scalar', ['\ud800', 'a\ud800', 'a\x00\ud800'])
 def test_stringdtype_array_comparison_mixed_python_str_invalid_unicode_matches_numpy(
         impl_name, baseline, scalar):

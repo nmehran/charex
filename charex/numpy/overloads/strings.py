@@ -6,14 +6,16 @@ from charex.numpy.overloads._shared import (
     try_register_pair,
 )
 from charex.numpy.stringdtype import (
-    is_stringdtype_array_type, stringdtype_acquire_allocator,
-    stringdtype_acquire_allocators, stringdtype_codepoint_len_data,
-    stringdtype_compare_data, stringdtype_compare_unicode_data,
+    _PACKED_STRING_SIZE, is_stringdtype_array_type,
+    stringdtype_acquire_allocator, stringdtype_acquire_allocators,
+    stringdtype_codepoint_len_data, stringdtype_compare_data,
+    stringdtype_compare_unicode_data, stringdtype_compare_utf8_data,
     stringdtype_count_data, stringdtype_count_unicode_data,
     stringdtype_data_ptr, stringdtype_endswith_data,
     stringdtype_endswith_unicode_data, stringdtype_equal_data,
-    stringdtype_equal_unicode_data, stringdtype_find_data,
-    stringdtype_find_unicode_data,
+    stringdtype_equal_unicode_data, stringdtype_equal_utf8_data,
+    stringdtype_find_data, stringdtype_find_unicode_data,
+    stringdtype_free_utf8_span,
     stringdtype_isalnum_data, stringdtype_isalpha_data,
     stringdtype_isdecimal_data, stringdtype_isdigit_data,
     stringdtype_islower_data, stringdtype_isnumeric_data,
@@ -22,8 +24,8 @@ from charex.numpy.stringdtype import (
     stringdtype_release_allocators, stringdtype_rfind_data,
     stringdtype_rfind_unicode_data, stringdtype_startswith_data,
     stringdtype_startswith_unicode_data, stringdtype_unicode_parts,
-    stringdtype_unicode_valid, unicode_count_stringdtype_data,
-    unicode_endswith_stringdtype_data,
+    stringdtype_unicode_utf8_span, stringdtype_unicode_valid,
+    unicode_count_stringdtype_data, unicode_endswith_stringdtype_data,
     unicode_find_stringdtype_data, unicode_rfind_stringdtype_data,
     unicode_startswith_stringdtype_data,
 )
@@ -111,9 +113,18 @@ def _overload_equal(left, right, invert):
                         raise TypeError('Invalid unicode code point found')
                     right_parts = stringdtype_unicode_parts(right)
                     allocator = stringdtype_acquire_allocator(left)
-                    result = stringdtype_equal_unicode_data(
-                        stringdtype_data_ptr(left), 0, allocator, right,
-                        right_parts[0], right_parts[1])
+                    if right_parts[1] > _PACKED_STRING_SIZE:
+                        right_span = stringdtype_unicode_utf8_span(
+                            right, right_parts[0], right_parts[1])
+                        result = stringdtype_equal_utf8_data(
+                            stringdtype_data_ptr(left), 0, allocator,
+                            right_span[0], right_span[1])
+                        stringdtype_free_utf8_span(right_span[0],
+                                                   right_span[2])
+                    else:
+                        result = stringdtype_equal_unicode_data(
+                            stringdtype_data_ptr(left), 0, allocator, right,
+                            right_parts[0], right_parts[1])
                     stringdtype_release_allocator(allocator)
                     return not result if invert else result
 
@@ -128,10 +139,19 @@ def _overload_equal(left, right, invert):
                     return ~result if invert else result
                 allocator = stringdtype_acquire_allocator(left)
                 data = stringdtype_data_ptr(left)
-                for i in range(left.size):
-                    result[i] = stringdtype_equal_unicode_data(
-                        data, i, allocator, right, right_parts[0],
-                        right_parts[1])
+                if right_parts[1] > _PACKED_STRING_SIZE:
+                    right_span = stringdtype_unicode_utf8_span(
+                        right, right_parts[0], right_parts[1])
+                    for i in range(left.size):
+                        result[i] = stringdtype_equal_utf8_data(
+                            data, i, allocator, right_span[0],
+                            right_span[1])
+                    stringdtype_free_utf8_span(right_span[0], right_span[2])
+                else:
+                    for i in range(left.size):
+                        result[i] = stringdtype_equal_unicode_data(
+                            data, i, allocator, right, right_parts[0],
+                            right_parts[1])
                 stringdtype_release_allocator(allocator)
                 return ~result if invert else result
 
@@ -145,9 +165,18 @@ def _overload_equal(left, right, invert):
                         raise TypeError('Invalid unicode code point found')
                     left_parts = stringdtype_unicode_parts(left)
                     allocator = stringdtype_acquire_allocator(right)
-                    result = stringdtype_equal_unicode_data(
-                        stringdtype_data_ptr(right), 0, allocator, left,
-                        left_parts[0], left_parts[1])
+                    if left_parts[1] > _PACKED_STRING_SIZE:
+                        left_span = stringdtype_unicode_utf8_span(
+                            left, left_parts[0], left_parts[1])
+                        result = stringdtype_equal_utf8_data(
+                            stringdtype_data_ptr(right), 0, allocator,
+                            left_span[0], left_span[1])
+                        stringdtype_free_utf8_span(left_span[0],
+                                                   left_span[2])
+                    else:
+                        result = stringdtype_equal_unicode_data(
+                            stringdtype_data_ptr(right), 0, allocator, left,
+                            left_parts[0], left_parts[1])
                     stringdtype_release_allocator(allocator)
                     return not result if invert else result
 
@@ -162,10 +191,18 @@ def _overload_equal(left, right, invert):
                     return ~result if invert else result
                 allocator = stringdtype_acquire_allocator(right)
                 data = stringdtype_data_ptr(right)
-                for i in range(right.size):
-                    result[i] = stringdtype_equal_unicode_data(
-                        data, i, allocator, left, left_parts[0],
-                        left_parts[1])
+                if left_parts[1] > _PACKED_STRING_SIZE:
+                    left_span = stringdtype_unicode_utf8_span(
+                        left, left_parts[0], left_parts[1])
+                    for i in range(right.size):
+                        result[i] = stringdtype_equal_utf8_data(
+                            data, i, allocator, left_span[0], left_span[1])
+                    stringdtype_free_utf8_span(left_span[0], left_span[2])
+                else:
+                    for i in range(right.size):
+                        result[i] = stringdtype_equal_unicode_data(
+                            data, i, allocator, left, left_parts[0],
+                            left_parts[1])
                 stringdtype_release_allocator(allocator)
                 return ~result if invert else result
 
@@ -240,9 +277,18 @@ def _overload_order(left, right, op):
                         raise TypeError('Invalid unicode code point found')
                     right_parts = stringdtype_unicode_parts(right)
                     allocator = stringdtype_acquire_allocator(left)
-                    cmp_result = stringdtype_compare_unicode_data(
-                        stringdtype_data_ptr(left), 0, allocator, right,
-                        right_parts[0], right_parts[1])
+                    if right_parts[1] > _PACKED_STRING_SIZE:
+                        right_span = stringdtype_unicode_utf8_span(
+                            right, right_parts[0], right_parts[1])
+                        cmp_result = stringdtype_compare_utf8_data(
+                            stringdtype_data_ptr(left), 0, allocator,
+                            right_span[0], right_span[1])
+                        stringdtype_free_utf8_span(right_span[0],
+                                                   right_span[2])
+                    else:
+                        cmp_result = stringdtype_compare_unicode_data(
+                            stringdtype_data_ptr(left), 0, allocator, right,
+                            right_parts[0], right_parts[1])
                     stringdtype_release_allocator(allocator)
                     if op == 'greater':
                         return cmp_result > 0
@@ -263,18 +309,35 @@ def _overload_order(left, right, op):
                     return result
                 allocator = stringdtype_acquire_allocator(left)
                 data = stringdtype_data_ptr(left)
-                for i in range(left.size):
-                    cmp_result = stringdtype_compare_unicode_data(
-                        data, i, allocator, right, right_parts[0],
-                        right_parts[1])
-                    if op == 'greater':
-                        result[i] = cmp_result > 0
-                    elif op == 'greater_equal':
-                        result[i] = cmp_result >= 0
-                    elif op == 'less':
-                        result[i] = cmp_result < 0
-                    else:
-                        result[i] = cmp_result <= 0
+                if right_parts[1] > _PACKED_STRING_SIZE:
+                    right_span = stringdtype_unicode_utf8_span(
+                        right, right_parts[0], right_parts[1])
+                    for i in range(left.size):
+                        cmp_result = stringdtype_compare_utf8_data(
+                            data, i, allocator, right_span[0],
+                            right_span[1])
+                        if op == 'greater':
+                            result[i] = cmp_result > 0
+                        elif op == 'greater_equal':
+                            result[i] = cmp_result >= 0
+                        elif op == 'less':
+                            result[i] = cmp_result < 0
+                        else:
+                            result[i] = cmp_result <= 0
+                    stringdtype_free_utf8_span(right_span[0], right_span[2])
+                else:
+                    for i in range(left.size):
+                        cmp_result = stringdtype_compare_unicode_data(
+                            data, i, allocator, right, right_parts[0],
+                            right_parts[1])
+                        if op == 'greater':
+                            result[i] = cmp_result > 0
+                        elif op == 'greater_equal':
+                            result[i] = cmp_result >= 0
+                        elif op == 'less':
+                            result[i] = cmp_result < 0
+                        else:
+                            result[i] = cmp_result <= 0
                 stringdtype_release_allocator(allocator)
                 return result
 
@@ -288,9 +351,18 @@ def _overload_order(left, right, op):
                         raise TypeError('Invalid unicode code point found')
                     left_parts = stringdtype_unicode_parts(left)
                     allocator = stringdtype_acquire_allocator(right)
-                    cmp_result = -stringdtype_compare_unicode_data(
-                        stringdtype_data_ptr(right), 0, allocator, left,
-                        left_parts[0], left_parts[1])
+                    if left_parts[1] > _PACKED_STRING_SIZE:
+                        left_span = stringdtype_unicode_utf8_span(
+                            left, left_parts[0], left_parts[1])
+                        cmp_result = -stringdtype_compare_utf8_data(
+                            stringdtype_data_ptr(right), 0, allocator,
+                            left_span[0], left_span[1])
+                        stringdtype_free_utf8_span(left_span[0],
+                                                   left_span[2])
+                    else:
+                        cmp_result = -stringdtype_compare_unicode_data(
+                            stringdtype_data_ptr(right), 0, allocator, left,
+                            left_parts[0], left_parts[1])
                     stringdtype_release_allocator(allocator)
                     if op == 'greater':
                         return cmp_result > 0
@@ -311,18 +383,34 @@ def _overload_order(left, right, op):
                     return result
                 allocator = stringdtype_acquire_allocator(right)
                 data = stringdtype_data_ptr(right)
-                for i in range(right.size):
-                    cmp_result = -stringdtype_compare_unicode_data(
-                        data, i, allocator, left, left_parts[0],
-                        left_parts[1])
-                    if op == 'greater':
-                        result[i] = cmp_result > 0
-                    elif op == 'greater_equal':
-                        result[i] = cmp_result >= 0
-                    elif op == 'less':
-                        result[i] = cmp_result < 0
-                    else:
-                        result[i] = cmp_result <= 0
+                if left_parts[1] > _PACKED_STRING_SIZE:
+                    left_span = stringdtype_unicode_utf8_span(
+                        left, left_parts[0], left_parts[1])
+                    for i in range(right.size):
+                        cmp_result = -stringdtype_compare_utf8_data(
+                            data, i, allocator, left_span[0], left_span[1])
+                        if op == 'greater':
+                            result[i] = cmp_result > 0
+                        elif op == 'greater_equal':
+                            result[i] = cmp_result >= 0
+                        elif op == 'less':
+                            result[i] = cmp_result < 0
+                        else:
+                            result[i] = cmp_result <= 0
+                    stringdtype_free_utf8_span(left_span[0], left_span[2])
+                else:
+                    for i in range(right.size):
+                        cmp_result = -stringdtype_compare_unicode_data(
+                            data, i, allocator, left, left_parts[0],
+                            left_parts[1])
+                        if op == 'greater':
+                            result[i] = cmp_result > 0
+                        elif op == 'greater_equal':
+                            result[i] = cmp_result >= 0
+                        elif op == 'less':
+                            result[i] = cmp_result < 0
+                        else:
+                            result[i] = cmp_result <= 0
                 stringdtype_release_allocator(allocator)
                 return result
 
