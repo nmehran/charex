@@ -135,6 +135,38 @@ keep allocator acquisition at operation scope, and choose between a minimal
 two-pass data-pointer kernel or the `size <= 16` hybrid after broader operation
 coverage shows whether the extra surface is justified.
 
+Third pass findings:
+
+- Backward trimming is a major improvement over the forward effective-size
+  scan. It checks trailing NUL bytes from the end, then counts code points over
+  the effective prefix. This is especially strong for long heap-backed strings
+  and Unicode-heavy short strings.
+- A safe peeled-16 small-string path is the fastest inline-size path. It uses
+  fixed lanes guarded by `size > lane`, so it does not read beyond the
+  `NpyString_load` span.
+- The fastest short and fastest long kernels do not combine for free. A
+  peeled-16/backward hybrid is strong, but code layout and the per-element
+  branch cost mean it can be slower on short-only data than a peeled-16/two-pass
+  hybrid, even when the fallback is never taken.
+- The C-helper allocator path tracks the parent-offset prototype closely with
+  these kernels, so the final access direction remains valid.
+
+Representative 100k-row medians from the third pass:
+
+| case | current | backward | peeled16 | peeled16/backward | best |
+| ---- | ------- | -------- | -------- | ----------------- | ---- |
+| mixed short | 0.505 ms | 0.363 ms | 0.328 ms | 0.349 ms | peeled16 |
+| ASCII short | 0.687 ms | 0.456 ms | 0.434 ms | 0.462 ms | peeled16 |
+| NUL heavy | 0.402 ms | 0.325 ms | 0.286 ms | 0.332 ms | peeled16 |
+| Unicode short | 0.741 ms | 0.480 ms | 0.580 ms | 0.575 ms | backward |
+| long mixed | 2.280 ms | 1.277 ms | 2.250 ms | 1.300 ms | backward |
+
+Near-term candidate after this pass: use a C helper only for descriptor access,
+hoist the data pointer, and treat backward trim as the default long-string
+kernel. Continue evaluating whether peeled-16 should be used as the universal
+small-string path or only exposed through specialized fast paths where the code
+layout cost is acceptable.
+
 ## Prototype Order
 
 1. Type recognition only:
@@ -171,14 +203,31 @@ coverage shows whether the extra surface is justified.
    - `find`, `rfind`, `count`, `index`, `rindex`;
    - predicates.
 
-## Open Questions
+## Resolved Decisions
 
-- Can the native helper safely call the NumPy C API from Numba nopython code
-  while preserving charex's current `nogil` posture?
-- Should StringDType kernels acquire the allocator once per call, once per
-  outer loop, or once per element?
-- Can the dtype descriptor be reached safely from the array `parent` object in
-  lowering, or do we need a small compiled extension helper?
-- How should missing sentinels propagate for each `np.strings` operation?
-- Is this suitable for charex as an extension, or should part of it be upstream
-  Numba dtype support?
+- Call NumPy's `NpyString_*` C API directly from nopython-generated code for
+  element unpacking.
+- Keep C code limited to descriptor/allocator access unless a later benchmark
+  shows a specific whole-loop helper wins. The whole-loop helper tried here was
+  slower than Numba-generated loops.
+- Acquire each StringDType allocator once per array operation, outside the
+  element loop. Per-element acquire is too expensive.
+- Replace the parent-object descriptor offset probe with a compiled helper
+  before any merge-ready implementation. The offset probe is exploratory only.
+- Reject `StringDType(na_object=...)` arrays until sentinel propagation is
+  implemented exactly.
+- Keep this in charex while prototyping. The dtype recognition and helper
+  approach are enough for exploration; a future upstream Numba proposal can be
+  cut from the distilled implementation if it proves generally useful.
+
+## Remaining Questions
+
+- What is the final `str_len` kernel shape: backward trim only, peeled-16 for
+  small strings plus backward fallback, or separate specialized fast paths that
+  avoid slowing the small path with a larger fallback body?
+- What exact propagation rules do missing sentinels require for each
+  `np.strings` operation?
+- How much of the access/helper layer should become reusable infrastructure
+  across comparison, occurrence, predicate, and transformation kernels?
+- What packaging shape cleanly provides the compiled helper while preserving
+  NumPy 1.x compatibility?
