@@ -15,7 +15,14 @@ def copy_args(args):
 def assert_arrays_unchanged(args, before):
     for arg, expected in zip(args, before):
         if isinstance(arg, np.ndarray):
-            np.testing.assert_array_equal(arg, expected)
+            if np.array_equal(arg, expected):
+                continue
+            try:
+                unchanged = np.array_equal(arg, expected, equal_nan=True)
+            except TypeError:
+                unchanged = False
+            if not unchanged:
+                np.testing.assert_array_equal(arg, expected)
 
 
 def assert_same(implementation, baseline, *args):

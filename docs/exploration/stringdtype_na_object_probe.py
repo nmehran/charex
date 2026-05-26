@@ -14,7 +14,10 @@ import numpy as np
 
 
 StringDType = np.dtypes.StringDType
-NA_OBJECTS = (None, np.nan, "MISSING", "", "é", "🙂", 0, False)
+NA_OBJECTS = (
+    None, np.nan, np.float32(np.nan), complex(np.nan, 0),
+    "MISSING", "", "é", "🙂", 0, False,
+)
 
 
 UNARY_OPS = [

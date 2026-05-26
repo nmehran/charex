@@ -1059,7 +1059,8 @@ incrementally, only where exact NumPy behavior has been audited.
 Sentinel variants under test:
 
 - `np.dtypes.StringDType(na_object=None)`
-- `np.dtypes.StringDType(na_object=np.nan)`
+- NaN-like sentinels such as `np.nan`, `np.float32(np.nan)`, and
+  `complex(np.nan, 0)`;
 - string sentinels, including empty and non-ASCII strings;
 - non-string, non-NaN sentinels such as `0` and `False`;
 - other user-provided sentinel values accepted by NumPy.
@@ -1078,7 +1079,7 @@ First findings:
   Exact support needs descriptor metadata, not just a changed null branch.
 - `na_object=None` raises for `str_len`, predicates, ordering, affix, and
   search when a null participates, but equality treats null equal to null.
-- `na_object=np.nan` raises for `str_len` and search. Predicates and
+- NaN-like `na_object` values raise for `str_len` and search. Predicates and
   comparison/affix operations return `False` where null participates.
 - A string `na_object` behaves like its sentinel text for the audited unary
   operations and search/affix/comparison examples.
@@ -1132,10 +1133,12 @@ Prototype checkpoint:
 
 - Numba now recognizes default and sentinel `StringDType` arrays as distinct
   packet types carrying compile-time sentinel metadata.
-- `np.strings.str_len` matches NumPy for `na_object=None`, `np.nan`, string
-  sentinels including empty/non-ASCII text, and non-string non-NaN sentinels.
-- Unicode predicates match NumPy for `na_object=None`, `np.nan`, string
-  sentinels including empty/non-ASCII text, and non-string non-NaN sentinels.
+- `np.strings.str_len` matches NumPy for `na_object=None`, NaN-like sentinels,
+  string sentinels including empty/non-ASCII text, and non-string non-NaN
+  sentinels.
+- Unicode predicates match NumPy for `na_object=None`, NaN-like sentinels,
+  string sentinels including empty/non-ASCII text, and non-string non-NaN
+  sentinels.
 - 0-D sentinel arrays are covered for `str_len` and representative predicates.
 - Binary operations still reject sentinel dtypes explicitly while their exact
   operation-specific tables are built.

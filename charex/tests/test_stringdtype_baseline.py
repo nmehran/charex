@@ -27,7 +27,8 @@ def stringdtype_array(values):
 
 
 NA_OBJECT_VARIANTS = [
-    None, np.nan, 'MISSING', '', 'é', '🙂', 0, False,
+    None, np.nan, np.float32(np.nan), complex(np.nan, 0),
+    'MISSING', '', 'é', '🙂', 0, False,
 ]
 
 
