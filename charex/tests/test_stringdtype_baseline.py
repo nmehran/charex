@@ -194,6 +194,130 @@ def test_stringdtype_mixed_zero_dimensional_unicode_nul_matches_numpy(
     assert_same(strings_impl(impl_name), baseline, value, patterns)
 
 
+@pytest.mark.parametrize('impl_name, baseline', [
+    ('strings_equal', STRINGS.equal),
+    ('strings_not_equal', STRINGS.not_equal),
+    *STRINGDTYPE_ORDER_COMPARISONS,
+    ('strings_startswith', STRINGS.startswith),
+    ('strings_endswith', STRINGS.endswith),
+    ('strings_find', STRINGS.find),
+    ('strings_rfind', STRINGS.rfind),
+    ('strings_count', STRINGS.count),
+    ('strings_index', STRINGS.index),
+    ('strings_rindex', STRINGS.rindex),
+])
+def test_stringdtype_mixed_unicode_arrays_match_numpy(
+        impl_name, baseline):
+    values = stringdtype_array(['abcabc', 'a', 'ba', 'a🙂', 'éa'])
+    patterns = stringdtype_array(['a', '', 'b', '🙂', 'é'])
+    unicode_values = np.array(['abcabc', 'a', 'ba', 'a🙂', 'éa'],
+                              dtype='U16')
+    unicode_patterns = np.array(['a', '', 'b', '🙂', 'é'],
+                                dtype='U16')
+    value = np.array('abcabcé🙂', dtype=STRING_DTYPE())
+    pattern = np.array('a', dtype=STRING_DTYPE())
+
+    assert_same(strings_impl(impl_name), baseline,
+                values, unicode_patterns)
+    assert_same(strings_impl(impl_name), baseline,
+                unicode_values, patterns)
+    assert_same(strings_impl(impl_name), baseline,
+                value, unicode_patterns)
+    assert_same(strings_impl(impl_name), baseline,
+                unicode_values, pattern)
+
+
+@pytest.mark.parametrize('impl_name, baseline', [
+    ('strings_equal', STRINGS.equal),
+    ('strings_not_equal', STRINGS.not_equal),
+    *STRINGDTYPE_ORDER_COMPARISONS,
+    ('strings_startswith', STRINGS.startswith),
+    ('strings_endswith', STRINGS.endswith),
+    ('strings_find', STRINGS.find),
+    ('strings_rfind', STRINGS.rfind),
+    ('strings_count', STRINGS.count),
+])
+def test_stringdtype_mixed_unicode_array_nul_matches_numpy(
+        impl_name, baseline):
+    values = stringdtype_array(['a\x00x', 'a', '\x00x', '', 'ab\x00c'])
+    patterns = stringdtype_array(['a\x00x', 'a', '\x00x', '', 'ab\x00'])
+    unicode_values = np.array(['a\x00x', 'a', '\x00x', '', 'ab\x00c'],
+                              dtype='U8')
+    unicode_patterns = np.array(['a\x00x', 'a', '\x00x', '', 'ab\x00'],
+                                dtype='U8')
+
+    assert_same(strings_impl(impl_name), baseline,
+                values, unicode_patterns)
+    assert_same(strings_impl(impl_name), baseline,
+                unicode_values, patterns)
+
+
+@pytest.mark.parametrize('impl_name, baseline', [
+    ('strings_equal', STRINGS.equal),
+    ('strings_not_equal', STRINGS.not_equal),
+    *STRINGDTYPE_ORDER_COMPARISONS,
+    ('strings_startswith', STRINGS.startswith),
+    ('strings_endswith', STRINGS.endswith),
+    ('strings_find', STRINGS.find),
+    ('strings_rfind', STRINGS.rfind),
+    ('strings_count', STRINGS.count),
+    ('strings_index', STRINGS.index),
+    ('strings_rindex', STRINGS.rindex),
+])
+def test_stringdtype_mixed_unicode_array_shape_mismatch_matches_numpy(
+        impl_name, baseline):
+    values = stringdtype_array(['abc', 'def', 'ghi'])
+    patterns = stringdtype_array(['a', 'd', 'g'])
+    unicode_values = np.array(['abc', 'def'], dtype='U8')
+    unicode_patterns = np.array(['a', 'd'], dtype='U8')
+
+    assert_same_exception(strings_impl(impl_name), baseline,
+                          values, unicode_patterns)
+    assert_same_exception(strings_impl(impl_name), baseline,
+                          unicode_values, patterns)
+
+
+@pytest.mark.parametrize('impl_name, baseline', [
+    ('strings_equal', STRINGS.equal),
+    ('strings_not_equal', STRINGS.not_equal),
+])
+def test_stringdtype_mixed_none_equality_matches_numpy(
+        impl_name, baseline):
+    values = stringdtype_array(['a', '', 'a\x00x'])
+    value = np.array('a', dtype=STRING_DTYPE())
+
+    assert_same(strings_impl(impl_name), baseline, values, None)
+    assert_same(strings_impl(impl_name), baseline, None, values)
+    assert_same(strings_impl(impl_name), baseline, value, None)
+    assert_same(strings_impl(impl_name), baseline, None, value)
+
+
+@pytest.mark.parametrize('impl_name, baseline', [
+    ('strings_equal', STRINGS.equal),
+    ('strings_greater', STRINGS.greater),
+    ('strings_startswith', STRINGS.startswith),
+    ('strings_find', STRINGS.find),
+])
+@pytest.mark.parametrize('operand', [
+    b'a',
+    np.bytes_(b'a'),
+    np.array(b'a', dtype='S8'),
+    np.array([b'a', b'b'], dtype='S8'),
+])
+def test_stringdtype_mixed_bytes_operands_are_rejected(
+        impl_name, baseline, operand):
+    values = stringdtype_array(['a', 'b'])
+
+    with pytest.raises(Exception):
+        baseline(values, operand)
+    with pytest.raises(Exception):
+        strings_impl(impl_name)(values, operand)
+    with pytest.raises(Exception):
+        baseline(operand, values)
+    with pytest.raises(Exception):
+        strings_impl(impl_name)(operand, values)
+
+
 def test_numpy_stringdtype_strlen_counts_codepoints():
     values = stringdtype_array([
         'a', 'é', '🙂', '', 'a\x00b', 'a\x00', 'a\x00\x00',

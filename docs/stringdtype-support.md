@@ -1001,10 +1001,43 @@ Remaining scalar bridge work:
 
 - Scalar-only return types are covered where NumPy accepts Python `str`,
   NumPy `str_`, and 0-D fixed-width Unicode inputs.
-- Non-scalar fixed-width Unicode arrays mixed with `StringDType` are a current
-  implementation gap. NumPy accepts them, so this is not a design rejection.
+- Non-scalar fixed-width Unicode arrays mixed with `StringDType` now use the
+  same Unicode bridge one element at a time for comparisons, prefix/suffix
+  checks, search, `index`, and `rindex`.
+- `None` is supported for `equal` and `not_equal`, matching NumPy's all-False
+  / all-True result. Ordering, prefix/suffix, and search reject `None`, as
+  NumPy does.
+- Fixed-width bytes (`S`) and bytes scalars are intentionally rejected because
+  NumPy has no `StringDType` loop for those mixed operands.
+- Object arrays/scalars are still not part of the nopython StringDType bridge.
+  NumPy accepts object operands for comparison through Python object semantics,
+  but prefix/suffix and search reject them. Supporting the accepted comparison
+  subset would require a separate object-mode design, not the current
+  `StringDType` fast path.
 - Keep future scalar optimizations operation-specific. The comparison bridge is
   not automatically the right shape for search or transformations.
+
+Fixed-width Unicode array checkpoint:
+
+- Implemented one-dimensional C-contiguous fixed-width Unicode arrays mixed
+  with scalar/0-D/1-D default `StringDType`.
+- The first implementation uses the existing Unicode scalar bridge per element:
+  `str(value[i])`, then the same StringDType-vs-Unicode intrinsics already used
+  by Python `str` and 0-D fixed-width Unicode operands.
+- This keeps the code path simple and exact, with no new raw fixed-width `U`
+  memory intrinsics yet. A future performance branch can revisit direct `U`
+  buffer access if broader benchmarking justifies the extra surface.
+
+200k-row sanity medians on Python 3.12.8, NumPy 2.4.6, Numba 0.65.1:
+
+| case | charex | NumPy | speedup |
+| ---- | ------ | ----- | ------- |
+| equal StringDType/Unicode | 5.845 ms | 6.685 ms | 1.14x |
+| equal Unicode/StringDType | 7.721 ms | 9.179 ms | 1.19x |
+| greater StringDType/Unicode | 6.076 ms | 6.537 ms | 1.08x |
+| startswith StringDType/Unicode | 6.946 ms | 8.196 ms | 1.18x |
+| find StringDType/Unicode | 7.070 ms | 8.559 ms | 1.21x |
+| find Unicode/StringDType | 10.115 ms | 10.906 ms | 1.08x |
 
 ## Tranche 9: Missing Sentinels And `na_object`
 

@@ -76,8 +76,27 @@ def _is_unicode_array_scalar(value):
         and value.dtype.count
 
 
+def _is_unicode_array(value):
+    return isinstance(value, types.Array) \
+        and isinstance(value.dtype, types.UnicodeCharSeq) \
+        and value.dtype.count
+
+
+def _is_none(value):
+    return isinstance(value, types.NoneType)
+
+
 def _is_unicode_scalar_like(value):
     return _is_unicode_scalar(value) or _is_unicode_array_scalar(value)
+
+
+def _validate_unicode_array(value):
+    if value.ndim > 1:
+        raise NumbaValueError('charex StringDType support currently '
+                              'requires scalar or one-dimensional arrays')
+    if value.ndim == 1 and value.layout != 'C':
+        raise NumbaValueError('charex requires C-contiguous arrays; '
+                              'call numpy.ascontiguousarray')
 
 
 def _unicode_scalar_value(value):
@@ -93,6 +112,10 @@ def ov_unicode_scalar_value(value):
     if _is_unicode_scalar(value):
         def impl(value):
             return value
+        return impl
+    if isinstance(value, types.UnicodeCharSeq):
+        def impl(value):
+            return str(value)
         return impl
 
 
@@ -243,6 +266,96 @@ def _overload_equal(left, right, invert):
                             left_parts[1])
                 stringdtype_release_allocator(allocator)
                 return ~result if invert else result
+
+            return impl
+
+        if left_stringdtype and _is_unicode_array(right) and right.ndim == 1:
+            _validate_stringdtype_array(left)
+            _validate_unicode_array(right)
+            left_scalar = left.ndim == 0
+
+            def impl(left, right):
+                if not left_scalar and left.size != right.size:
+                    raise ValueError('shape mismatch: objects cannot be '
+                                     'broadcast to a single shape')
+                size = right.size if left_scalar else left.size
+                result = np.empty(size, np.bool_)
+                if size == 0:
+                    return ~result if invert else result
+                allocator = stringdtype_acquire_allocator(left)
+                data = stringdtype_data_ptr(left)
+                for i in range(size):
+                    right_value = _unicode_scalar_value(right[i])
+                    if not stringdtype_unicode_valid(right_value):
+                        stringdtype_release_allocator(allocator)
+                        raise TypeError('Invalid unicode code point found')
+                    right_parts = stringdtype_unicode_parts(right_value)
+                    result[i] = stringdtype_equal_unicode_data(
+                        data, 0 if left_scalar else i, allocator,
+                        right_value, right_parts[0], right_parts[1])
+                stringdtype_release_allocator(allocator)
+                return ~result if invert else result
+
+            return impl
+
+        if _is_unicode_array(left) and left.ndim == 1 and right_stringdtype:
+            _validate_unicode_array(left)
+            _validate_stringdtype_array(right)
+            right_scalar = right.ndim == 0
+
+            def impl(left, right):
+                if not right_scalar and left.size != right.size:
+                    raise ValueError('shape mismatch: objects cannot be '
+                                     'broadcast to a single shape')
+                size = left.size
+                result = np.empty(size, np.bool_)
+                if size == 0:
+                    return ~result if invert else result
+                allocator = stringdtype_acquire_allocator(right)
+                data = stringdtype_data_ptr(right)
+                for i in range(size):
+                    left_value = _unicode_scalar_value(left[i])
+                    if not stringdtype_unicode_valid(left_value):
+                        stringdtype_release_allocator(allocator)
+                        raise TypeError('Invalid unicode code point found')
+                    left_parts = stringdtype_unicode_parts(left_value)
+                    result[i] = stringdtype_equal_unicode_data(
+                        data, 0 if right_scalar else i, allocator,
+                        left_value, left_parts[0], left_parts[1])
+                stringdtype_release_allocator(allocator)
+                return ~result if invert else result
+
+            return impl
+
+        if left_stringdtype and _is_none(right):
+            _validate_stringdtype_array(left)
+            if left.ndim == 0:
+                def impl(left, right):
+                    return True if invert else False
+
+                return impl
+
+            def impl(left, right):
+                result = np.empty(left.size, np.bool_)
+                for i in range(left.size):
+                    result[i] = True if invert else False
+                return result
+
+            return impl
+
+        if _is_none(left) and right_stringdtype:
+            _validate_stringdtype_array(right)
+            if right.ndim == 0:
+                def impl(left, right):
+                    return True if invert else False
+
+                return impl
+
+            def impl(left, right):
+                result = np.empty(right.size, np.bool_)
+                for i in range(right.size):
+                    result[i] = True if invert else False
+                return result
 
             return impl
 
@@ -453,6 +566,80 @@ def _overload_order(left, right, op):
                             result[i] = cmp_result < 0
                         else:
                             result[i] = cmp_result <= 0
+                stringdtype_release_allocator(allocator)
+                return result
+
+            return impl
+
+        if left_stringdtype and _is_unicode_array(right) and right.ndim == 1:
+            _validate_stringdtype_array(left)
+            _validate_unicode_array(right)
+            left_scalar = left.ndim == 0
+
+            def impl(left, right):
+                if not left_scalar and left.size != right.size:
+                    raise ValueError('shape mismatch: objects cannot be '
+                                     'broadcast to a single shape')
+                size = right.size if left_scalar else left.size
+                result = np.empty(size, np.bool_)
+                if size == 0:
+                    return result
+                allocator = stringdtype_acquire_allocator(left)
+                data = stringdtype_data_ptr(left)
+                for i in range(size):
+                    right_value = _unicode_scalar_value(right[i])
+                    if not stringdtype_unicode_valid(right_value):
+                        stringdtype_release_allocator(allocator)
+                        raise TypeError('Invalid unicode code point found')
+                    right_parts = stringdtype_unicode_parts(right_value)
+                    cmp_result = stringdtype_compare_unicode_data(
+                        data, 0 if left_scalar else i, allocator,
+                        right_value, right_parts[0], right_parts[1])
+                    if op == 'greater':
+                        result[i] = cmp_result > 0
+                    elif op == 'greater_equal':
+                        result[i] = cmp_result >= 0
+                    elif op == 'less':
+                        result[i] = cmp_result < 0
+                    else:
+                        result[i] = cmp_result <= 0
+                stringdtype_release_allocator(allocator)
+                return result
+
+            return impl
+
+        if _is_unicode_array(left) and left.ndim == 1 and right_stringdtype:
+            _validate_unicode_array(left)
+            _validate_stringdtype_array(right)
+            right_scalar = right.ndim == 0
+
+            def impl(left, right):
+                if not right_scalar and left.size != right.size:
+                    raise ValueError('shape mismatch: objects cannot be '
+                                     'broadcast to a single shape')
+                size = left.size
+                result = np.empty(size, np.bool_)
+                if size == 0:
+                    return result
+                allocator = stringdtype_acquire_allocator(right)
+                data = stringdtype_data_ptr(right)
+                for i in range(size):
+                    left_value = _unicode_scalar_value(left[i])
+                    if not stringdtype_unicode_valid(left_value):
+                        stringdtype_release_allocator(allocator)
+                        raise TypeError('Invalid unicode code point found')
+                    left_parts = stringdtype_unicode_parts(left_value)
+                    cmp_result = -stringdtype_compare_unicode_data(
+                        data, 0 if right_scalar else i, allocator,
+                        left_value, left_parts[0], left_parts[1])
+                    if op == 'greater':
+                        result[i] = cmp_result > 0
+                    elif op == 'greater_equal':
+                        result[i] = cmp_result >= 0
+                    elif op == 'less':
+                        result[i] = cmp_result < 0
+                    else:
+                        result[i] = cmp_result <= 0
                 stringdtype_release_allocator(allocator)
                 return result
 
@@ -675,6 +862,89 @@ def _overload_affix(value, pattern, start, end, suffix):
                             slice_parts[2], data, i, allocator)
                 stringdtype_release_allocator(allocator)
                 stringdtype_free_utf8_span(value_span[0], value_span[2])
+                return result
+
+            return impl
+
+        if value_stringdtype and _is_unicode_array(pattern) \
+                and pattern.ndim == 1:
+            _validate_stringdtype_array(value)
+            _validate_unicode_array(pattern)
+            value_scalar = value.ndim == 0
+
+            def impl(value, pattern, start=0, end=None):
+                start = start or s
+                end = e if end is None else end
+                if not value_scalar and value.size != pattern.size:
+                    raise ValueError('shape mismatch: objects cannot be '
+                                     'broadcast to a single shape')
+                size = pattern.size if value_scalar else value.size
+                result = np.empty(size, np.bool_)
+                if size == 0:
+                    return result
+                allocator = stringdtype_acquire_allocator(value)
+                data = stringdtype_data_ptr(value)
+                for i in range(size):
+                    pattern_value = _unicode_scalar_value(pattern[i])
+                    if not stringdtype_unicode_valid(pattern_value):
+                        stringdtype_release_allocator(allocator)
+                        raise TypeError('Invalid unicode code point found')
+                    pattern_parts = stringdtype_unicode_parts(pattern_value)
+                    if suffix:
+                        result[i] = stringdtype_endswith_unicode_data(
+                            data, 0 if value_scalar else i, allocator,
+                            pattern_value, pattern_parts[0],
+                            pattern_parts[1], start, end)
+                    else:
+                        result[i] = stringdtype_startswith_unicode_data(
+                            data, 0 if value_scalar else i, allocator,
+                            pattern_value, pattern_parts[0],
+                            pattern_parts[1], start, end)
+                stringdtype_release_allocator(allocator)
+                return result
+
+            return impl
+
+        if _is_unicode_array(value) and value.ndim == 1 \
+                and pattern_stringdtype:
+            _validate_unicode_array(value)
+            _validate_stringdtype_array(pattern)
+            pattern_scalar = pattern.ndim == 0
+
+            def impl(value, pattern, start=0, end=None):
+                start = start or s
+                end = e if end is None else end
+                if not pattern_scalar and value.size != pattern.size:
+                    raise ValueError('shape mismatch: objects cannot be '
+                                     'broadcast to a single shape')
+                size = value.size
+                result = np.empty(size, np.bool_)
+                if size == 0:
+                    return result
+                allocator = stringdtype_acquire_allocator(pattern)
+                data = stringdtype_data_ptr(pattern)
+                for i in range(size):
+                    value_value = _unicode_scalar_value(value[i])
+                    if not stringdtype_unicode_valid(value_value):
+                        stringdtype_release_allocator(allocator)
+                        raise TypeError('Invalid unicode code point found')
+                    value_parts = stringdtype_unicode_parts(value_value)
+                    value_span = stringdtype_unicode_utf8_span(
+                        value_value, value_parts[0], value_parts[1])
+                    slice_parts = stringdtype_utf8_slice(
+                        value_span[0], value_span[1], start, end)
+                    if suffix:
+                        result[i] = utf8_endswith_stringdtype_sliced_data(
+                            value_span[0], slice_parts[0], slice_parts[1],
+                            slice_parts[2], data,
+                            0 if pattern_scalar else i, allocator)
+                    else:
+                        result[i] = utf8_startswith_stringdtype_sliced_data(
+                            value_span[0], slice_parts[0], slice_parts[1],
+                            slice_parts[2], data,
+                            0 if pattern_scalar else i, allocator)
+                    stringdtype_free_utf8_span(value_span[0], value_span[2])
+                stringdtype_release_allocator(allocator)
                 return result
 
             return impl
@@ -954,6 +1224,113 @@ def _overload_search(value, pattern, start, end, op):
                     result[i] = found
                 stringdtype_release_allocator(allocator)
                 stringdtype_free_utf8_span(value_span[0], value_span[2])
+                if not_found:
+                    raise ValueError('substring not found')
+                return result
+
+            return impl
+
+        if value_stringdtype and _is_unicode_array(pattern) \
+                and pattern.ndim == 1:
+            _validate_stringdtype_array(value)
+            _validate_unicode_array(pattern)
+            value_scalar = value.ndim == 0
+
+            def impl(value, pattern, start=0, end=None):
+                start = start or s
+                end = e if end is None else end
+                if not value_scalar and value.size != pattern.size:
+                    raise ValueError('shape mismatch: objects cannot be '
+                                     'broadcast to a single shape')
+                size = pattern.size if value_scalar else value.size
+                result = np.empty(size, np.int64)
+                if size == 0:
+                    return result
+                allocator = stringdtype_acquire_allocator(value)
+                data = stringdtype_data_ptr(value)
+                not_found = False
+                for i in range(size):
+                    pattern_value = _unicode_scalar_value(pattern[i])
+                    if not stringdtype_unicode_valid(pattern_value):
+                        stringdtype_release_allocator(allocator)
+                        raise TypeError('Invalid unicode code point found')
+                    pattern_parts = stringdtype_unicode_parts(pattern_value)
+                    if forward:
+                        found = stringdtype_find_unicode_data(
+                            data, 0 if value_scalar else i, allocator,
+                            pattern_value, pattern_parts[0],
+                            pattern_parts[1], start, end)
+                    elif reverse:
+                        found = stringdtype_rfind_unicode_data(
+                            data, 0 if value_scalar else i, allocator,
+                            pattern_value, pattern_parts[0],
+                            pattern_parts[1], start, end)
+                    else:
+                        found = stringdtype_count_unicode_data(
+                            data, 0 if value_scalar else i, allocator,
+                            pattern_value, pattern_parts[0],
+                            pattern_parts[1], start, end)
+                    if raise_not_found and found < 0:
+                        not_found = True
+                        break
+                    result[i] = found
+                stringdtype_release_allocator(allocator)
+                if not_found:
+                    raise ValueError('substring not found')
+                return result
+
+            return impl
+
+        if _is_unicode_array(value) and value.ndim == 1 \
+                and pattern_stringdtype:
+            _validate_unicode_array(value)
+            _validate_stringdtype_array(pattern)
+            pattern_scalar = pattern.ndim == 0
+
+            def impl(value, pattern, start=0, end=None):
+                start = start or s
+                end = e if end is None else end
+                if not pattern_scalar and value.size != pattern.size:
+                    raise ValueError('shape mismatch: objects cannot be '
+                                     'broadcast to a single shape')
+                size = value.size
+                result = np.empty(size, np.int64)
+                if size == 0:
+                    return result
+                allocator = stringdtype_acquire_allocator(pattern)
+                data = stringdtype_data_ptr(pattern)
+                not_found = False
+                for i in range(size):
+                    value_value = _unicode_scalar_value(value[i])
+                    if not stringdtype_unicode_valid(value_value):
+                        stringdtype_release_allocator(allocator)
+                        raise TypeError('Invalid unicode code point found')
+                    value_parts = stringdtype_unicode_parts(value_value)
+                    value_span = stringdtype_unicode_utf8_span(
+                        value_value, value_parts[0], value_parts[1])
+                    slice_parts = stringdtype_utf8_search_slice(
+                        value_span[0], value_span[1], start, end)
+                    if forward:
+                        found = utf8_find_stringdtype_sliced_data(
+                            value_span[0], slice_parts[0], slice_parts[1],
+                            slice_parts[2], slice_parts[3], slice_parts[4],
+                            data, 0 if pattern_scalar else i, allocator)
+                    elif reverse:
+                        found = utf8_rfind_stringdtype_sliced_data(
+                            value_span[0], slice_parts[0], slice_parts[1],
+                            slice_parts[2], slice_parts[3], slice_parts[4],
+                            data, 0 if pattern_scalar else i, allocator)
+                    else:
+                        found = utf8_count_stringdtype_sliced_data(
+                            value_span[0], slice_parts[0], slice_parts[1],
+                            slice_parts[2], slice_parts[3], slice_parts[4],
+                            data, 0 if pattern_scalar else i, allocator)
+                    stringdtype_free_utf8_span(value_span[0], value_span[2])
+                    if raise_not_found and found < 0:
+                        not_found = True
+                        break
+                    result[i] = found
+                stringdtype_release_allocator(allocator)
                 if not_found:
                     raise ValueError('substring not found')
                 return result
