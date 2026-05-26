@@ -523,8 +523,8 @@ Runtime checkpoint:
   NumPy. All-NUL substrings are empty. For non-empty substrings, `count` uses
   the raw substring bytes, while `find`/`rfind` use the raw bytes except for a
   single-byte effective substring, which NumPy treats as that one byte.
-- `index` and `rindex` are still deferred until the not-found aggregation path
-  can raise exactly once for any failing element.
+- `index` and `rindex` are handled in Tranche 5 because they need array-wide
+  not-found aggregation before raising.
 
 Exploratory benchmark:
 
@@ -791,6 +791,17 @@ Review-pass notes to revisit before distillation:
   NumPy. The 100k-row path is the meaningful public target for now.
 - A future max-performance branch could evaluate a short-string inline path,
   but this tranche intentionally avoids a threshold gate.
+
+Review-pass findings:
+
+- A randomized ordering stress pass over ASCII, multibyte Unicode, non-BMP
+  characters, embedded NULs, one-sided NULs, and low control bytes matched
+  NumPy for all four order operations.
+- No ordering algorithm changes were promoted. The `strncmp` plus stored-length
+  tie-break remains the cleanest current shape.
+- Same-shape empty prefix/suffix calls now return before acquiring paired
+  StringDType allocators, matching the empty-array fast paths used by the newer
+  comparison, search, and predicate overloads.
 
 ## Prototype Order
 
