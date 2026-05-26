@@ -316,6 +316,74 @@ Representative post-checkpoint 100k-row medians:
 | long late mismatch | 1.908 ms | 1.836 ms | 1.04x |
 | long first mismatch | 3.028 ms | 3.246 ms | 0.93x |
 
+## Tranche 3: Prefix/Suffix And Span Slicing
+
+The next tranche should not jump directly to the full occurrence catalog. The
+shared primitive is Python-style `start`/`end` slicing over a UTF-8
+StringDType span. `startswith` and `endswith` are the smallest useful public
+operations that exercise that primitive without also committing to substring
+search strategy.
+
+Target operations:
+
+- `np.strings.startswith`
+- `np.strings.endswith`
+
+Initial runtime scope:
+
+- default `StringDType` only, still rejecting `na_object` variants;
+- one-dimensional C-contiguous arrays;
+- array-array same-shape inputs first;
+- scalar prefix/suffix support only after the scalar UTF-8 access path is
+  understood and measured;
+- `start` and `end` with positive, negative, omitted, and out-of-range values.
+
+Correctness questions to answer before implementation:
+
+- Whether `start` and `end` are always Python codepoint offsets for
+  StringDType, including non-BMP characters.
+- How trailing NUL trimming interacts with prefix/suffix and slicing.
+- Whether embedded NUL comparison follows Python string behavior for these
+  operations, unlike equality's first-NUL-prefix behavior.
+- Exact empty-prefix and empty-suffix behavior for empty and non-empty spans.
+- Whether NumPy accepts mixed `StringDType` array and Python/NumPy scalar
+  pattern inputs, and what error shape charex should use before supporting
+  them.
+
+Implementation shape to prototype:
+
+- Reuse operation-scope allocator acquisition and hoisted packed data pointers.
+- Add a small internal span representation: status, byte pointer, raw byte
+  size, and effective byte size after operation-specific trimming.
+- Add a slice-normalization helper that converts codepoint `start`/`end` into
+  byte offsets. Keep this byte-wise and simple first; aggressive SWAR or index
+  caching belongs in a later optimization pass.
+- Implement prefix/suffix checks with length guards plus `memcmp`.
+- Keep the first public overload narrow and explicit. Unsupported scalar,
+  dimensionality, layout, and shape cases should fail early with targeted
+  messages.
+
+Benchmark and test harness:
+
+- Add a focused exploration benchmark for `startswith` and `endswith`.
+- Randomize measurement order and validate every candidate against NumPy before
+  timing, matching the previous exploration harnesses.
+- Cover ASCII, multibyte Unicode, non-BMP characters, empty pattern, empty
+  value, trailing NUL, embedded NUL, positive/negative `start`/`end`, early
+  mismatch, late mismatch, and long strings.
+- Include same-array, readonly, empty-array, shape mismatch, non-contiguous,
+  multidimensional, and unsupported mixed-input tests.
+
+Acceptance bar for this tranche:
+
+- Exact NumPy behavior for the supported surface.
+- No mutation of inputs.
+- No per-element allocator acquisition.
+- No arbitrary performance gates. Any branch must follow from semantics or a
+  stable representation boundary, not from one benchmark case.
+- No broad helper abstraction unless `find`/`count` reuse is already obvious
+  from the prototype.
+
 ## Prototype Order
 
 1. Type recognition only:
@@ -347,7 +415,7 @@ Representative post-checkpoint 100k-row medians:
      lengths to match, then compares through the first NUL byte. Bytes after
      the first NUL do not affect equality if the stored byte lengths match.
 5. Broader operations:
-   - `startswith`, `endswith`;
+   - `startswith`, `endswith` after a shared codepoint span-slicing primitive;
    - `find`, `rfind`, `count`, `index`, `rindex`;
    - predicates.
 
@@ -378,3 +446,6 @@ Representative post-checkpoint 100k-row medians:
   `np.strings` operation?
 - How much of the access/helper layer should become reusable infrastructure
   across comparison, occurrence, predicate, and transformation kernels?
+- Whether scalar prefix/suffix support should be implemented by a dedicated
+  UTF-8 scalar bridge or deferred until a broader scalar StringDType strategy is
+  designed.
