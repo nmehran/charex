@@ -648,6 +648,18 @@ NumPy 2.4.6, Numba 0.65.1:
 | long last | 6.41x | 7.63x |
 | long repeated | 4.04x | 5.29x |
 
+Review-pass findings:
+
+- `index` and `rindex` now stop scanning after the first not-found element.
+  This keeps the allocator release and single exception point, while avoiding
+  wasted work on failure-only results.
+- The operation classification is kept inside the overload implementation.
+  Hoisting it outside looked cleaner, but Numba 0.65.1 did not capture those
+  closure booleans reliably during overload typing.
+- Failure coverage now includes both a later not-found element and a
+  first-element not-found case, followed by a successful search to guard
+  allocator release.
+
 ## Prototype Order
 
 1. Type recognition only:

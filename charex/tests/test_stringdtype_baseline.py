@@ -514,11 +514,21 @@ def test_stringdtype_array_index_matches_numpy(
     ('strings_index', STRINGS.index),
     ('strings_rindex', STRINGS.rindex),
 ])
+@pytest.mark.parametrize('values, patterns', [
+    (
+        ['abc', 'def', '🙂a', 'a\x00b'],
+        ['a', 'z', '🙂', '\x00b\x00'],
+    ),
+    (
+        ['xxx', 'abc', 'def', '🙂a'],
+        ['z', 'a', 'd', '🙂'],
+    ),
+])
 def test_stringdtype_array_index_not_found_matches_numpy(
-        impl_name, baseline):
+        impl_name, baseline, values, patterns):
     strings = StringsInformation()
-    values = stringdtype_array(['abc', 'def', '🙂a', 'a\x00b'])
-    patterns = stringdtype_array(['a', 'z', '🙂', '\x00b\x00'])
+    values = stringdtype_array(values)
+    patterns = stringdtype_array(patterns)
 
     with pytest.raises(ValueError, match='substring not found'):
         baseline(values, patterns)

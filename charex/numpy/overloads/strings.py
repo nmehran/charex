@@ -205,15 +205,18 @@ def _overload_search(value, pattern, start, end, op):
             pattern_allocator = allocators[1]
             value_data = stringdtype_data_ptr(value)
             pattern_data = stringdtype_data_ptr(pattern)
+            forward = op == 'find' or op == 'index'
+            reverse = op == 'rfind' or op == 'rindex'
+            raise_not_found = op == 'index' or op == 'rindex'
             not_found = False
             for i in range(value.size):
-                if op == 'find' or op == 'index':
+                if forward:
                     found = stringdtype_find_data(
                         value_data, i, value_allocator,
                         pattern_data, i, pattern_allocator,
                         start, end,
                     )
-                elif op == 'rfind' or op == 'rindex':
+                elif reverse:
                     found = stringdtype_rfind_data(
                         value_data, i, value_allocator,
                         pattern_data, i, pattern_allocator,
@@ -225,8 +228,9 @@ def _overload_search(value, pattern, start, end, op):
                         pattern_data, i, pattern_allocator,
                         start, end,
                     )
-                if op == 'index' or op == 'rindex':
-                    not_found = not_found or found < 0
+                if raise_not_found and found < 0:
+                    not_found = True
+                    break
                 result[i] = found
             stringdtype_release_allocators(allocators)
             if not_found:
