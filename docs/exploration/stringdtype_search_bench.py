@@ -103,16 +103,25 @@ def main():
     ]
 
     operations = [
-        ('find', np.strings.find, strings.strings_find),
-        ('rfind', np.strings.rfind, strings.strings_rfind),
-        ('count', np.strings.count, strings.strings_count),
+        ('find', np.strings.find, strings.strings_find, False),
+        ('rfind', np.strings.rfind, strings.strings_rfind, False),
+        ('count', np.strings.count, strings.strings_count, False),
+        ('index', np.strings.index, strings.strings_index, True),
+        ('rindex', np.strings.rindex, strings.strings_rindex, True),
     ]
+    index_cases = {
+        'short-slice', 'empty-pattern', 'embedded-nul', 'unicode',
+        'long-first', 'long-last', 'long-repeated',
+    }
 
     for n in [1000, 100000]:
         print(f'\nn={n}')
         for case_name, start, end, values_pattern, patterns_pattern in cases:
             values, patterns = make_values(values_pattern, patterns_pattern, n)
-            for op_name, numpy_op, charex_method in operations:
+            for op_name, numpy_op, charex_method, requires_success in \
+                    operations:
+                if requires_success and case_name not in index_cases:
+                    continue
                 label = f'{op_name}:{case_name}'
                 bench_pair(label, numpy_op, charex_method,
                            values, patterns, start, end)

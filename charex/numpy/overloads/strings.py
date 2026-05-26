@@ -18,7 +18,8 @@ from charex.numpy.overloads.definitions import (
 )
 from charex.numpy.overloads.char import (
     _CHAR_INFO_FUNCTIONS, ov_char_count, ov_char_endswith, ov_char_find,
-    ov_char_rfind, ov_char_startswith, ov_char_str_len,
+    ov_char_index, ov_char_rfind, ov_char_rindex, ov_char_startswith,
+    ov_char_str_len,
 )
 from numba.core import types
 from numba.core.errors import NumbaValueError
@@ -204,26 +205,32 @@ def _overload_search(value, pattern, start, end, op):
             pattern_allocator = allocators[1]
             value_data = stringdtype_data_ptr(value)
             pattern_data = stringdtype_data_ptr(pattern)
+            not_found = False
             for i in range(value.size):
-                if op == 'find':
-                    result[i] = stringdtype_find_data(
+                if op == 'find' or op == 'index':
+                    found = stringdtype_find_data(
                         value_data, i, value_allocator,
                         pattern_data, i, pattern_allocator,
                         start, end,
                     )
-                elif op == 'rfind':
-                    result[i] = stringdtype_rfind_data(
+                elif op == 'rfind' or op == 'rindex':
+                    found = stringdtype_rfind_data(
                         value_data, i, value_allocator,
                         pattern_data, i, pattern_allocator,
                         start, end,
                     )
                 else:
-                    result[i] = stringdtype_count_data(
+                    found = stringdtype_count_data(
                         value_data, i, value_allocator,
                         pattern_data, i, pattern_allocator,
                         start, end,
                     )
+                if op == 'index' or op == 'rindex':
+                    not_found = not_found or found < 0
+                result[i] = found
             stringdtype_release_allocators(allocators)
+            if not_found:
+                raise ValueError('substring not found')
             return result
 
         return impl
@@ -232,6 +239,10 @@ def _overload_search(value, pattern, start, end, op):
         return ov_char_find(value, pattern, start, end)
     if op == 'rfind':
         return ov_char_rfind(value, pattern, start, end)
+    if op == 'index':
+        return ov_char_index(value, pattern, start, end)
+    if op == 'rindex':
+        return ov_char_rindex(value, pattern, start, end)
     return ov_char_count(value, pattern, start, end)
 
 
@@ -244,6 +255,9 @@ if _STRINGS is not None:
 
     def _strings_find(value, sub, start=0, end=None):
         return _STRINGS.find(value, sub, start, end)
+
+    def _strings_index(value, sub, start=0, end=None):
+        return _STRINGS.index(value, sub, start, end)
 
     def _strings_not_equal(left, right):
         return _STRINGS.not_equal(left, right)
@@ -263,6 +277,9 @@ if _STRINGS is not None:
     def _strings_rfind(value, sub, start=0, end=None):
         return _STRINGS.rfind(value, sub, start, end)
 
+    def _strings_rindex(value, sub, start=0, end=None):
+        return _STRINGS.rindex(value, sub, start, end)
+
     def _strings_endswith(value, suffix, start=0, end=None):
         return _STRINGS.endswith(value, suffix, start, end)
 
@@ -278,12 +295,14 @@ if _STRINGS is not None:
         'endswith': _strings_endswith,
         'equal': _strings_equal,
         'find': _strings_find,
+        'index': _strings_index,
         'not_equal': _strings_not_equal,
         'greater_equal': _strings_greater_equal,
         'greater': _strings_greater,
         'less': _strings_less,
         'less_equal': _strings_less_equal,
         'rfind': _strings_rfind,
+        'rindex': _strings_rindex,
         'startswith': _strings_startswith,
         'str_len': _strings_str_len,
     }
@@ -309,6 +328,10 @@ if _STRINGS is not None:
     def ov_strings_find(value, sub, start=0, end=None):
         return _overload_search(value, sub, start, end, 'find')
 
+    @overload(_strings_index, **OPTIONS)
+    def ov_strings_index(value, sub, start=0, end=None):
+        return _overload_search(value, sub, start, end, 'index')
+
     @overload(_strings_not_equal, **OPTIONS)
     def ov_strings_not_equal(left, right):
         return _overload_equal(left, right, True)
@@ -332,6 +355,10 @@ if _STRINGS is not None:
     @overload(_strings_rfind, **OPTIONS)
     def ov_strings_rfind(value, sub, start=0, end=None):
         return _overload_search(value, sub, start, end, 'rfind')
+
+    @overload(_strings_rindex, **OPTIONS)
+    def ov_strings_rindex(value, sub, start=0, end=None):
+        return _overload_search(value, sub, start, end, 'rindex')
 
     @overload(_strings_endswith, **OPTIONS)
     def ov_strings_endswith(value, suffix, start=0, end=None):

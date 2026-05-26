@@ -621,6 +621,33 @@ Acceptance bar for this tranche:
 - No new search algorithm gates.
 - No public support expansion beyond the agreed array-array StringDType scope.
 
+Runtime checkpoint:
+
+- `np.strings.index` and `np.strings.rindex` now support same-shape,
+  one-dimensional C-contiguous default `StringDType` arrays.
+- Successful calls reuse the `find`/`rfind` search semantics and return
+  codepoint offsets.
+- Failing calls track a not-found flag across the array, release the paired
+  StringDType allocators, then raise `ValueError('substring not found')`.
+- Empty arrays return an empty integer result. Mixed scalar/array inputs,
+  non-contiguous arrays, multidimensional arrays, 0-D arrays, and `na_object`
+  variants remain rejected.
+- A failure-path regression test runs a successful StringDType search
+  immediately after a failing `index`/`rindex` call to guard allocator release.
+
+Representative successful-call 100k-row speedups on Python 3.12.8,
+NumPy 2.4.6, Numba 0.65.1:
+
+| case | index | rindex |
+| ---- | ----- | ------ |
+| short slice | 1.64x | 1.63x |
+| empty pattern | 1.41x | 1.37x |
+| embedded NUL | 1.91x | 1.83x |
+| Unicode | 1.89x | 2.00x |
+| long first | 5.40x | 4.07x |
+| long last | 6.41x | 7.63x |
+| long repeated | 4.04x | 5.29x |
+
 ## Prototype Order
 
 1. Type recognition only:
