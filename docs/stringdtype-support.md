@@ -60,9 +60,9 @@ The hard part is element unpacking:
   StringDType allocator can deadlock. Keep C-API unpacking probes and future
   native helpers clear about lock lifetime.
 
-The first implementation should reject non-default or missing-sentinel
-StringDType variants unless we can handle them exactly. Correctness is the
-contract.
+Implementations should reject any non-default or missing-sentinel surface
+unless that operation has been audited against NumPy. Correctness is the
+contract; support is added operation by operation.
 
 ## Tranche 1: Access Layer
 
@@ -98,8 +98,9 @@ Findings:
 - The current parent-offset prototype is useful for exploration only. It reads
   NumPy object layout discovered at import time and should be replaced before a
   merge-ready implementation.
-- Until sentinel propagation is implemented exactly, charex rejects
-  `StringDType(na_object=...)` arrays during Numba typing.
+- Sentinel support is deliberately operation-specific. Default `StringDType`
+  keeps the fast path; audited unary sentinel operations are supported; other
+  sentinel operation families still reject explicitly.
 
 Second pass findings:
 
@@ -1085,13 +1086,13 @@ First findings:
   operations and search/affix/comparison examples.
 - Mixed default-`StringDType` and sentinel-`StringDType` operands are
   operation- and operand-order-sensitive. These need separate binary truth
-  tables before implementation.
+  tables before binary support can land.
 
-Correctness questions to answer before implementation:
+Remaining correctness questions before extending sentinel support:
 
-- Exact result and exception behavior for every currently supported operation:
-  `str_len`, predicates, equality/order comparisons, prefix/suffix, search,
-  `index`, and `rindex`.
+- Exact result and exception behavior for the remaining operation families:
+  equality/order comparisons, prefix/suffix, search, `index`, `rindex`, and
+  mixed default/sentinel operands.
 - Whether `None`, `np.nan`, and string sentinels have different propagation
   rules.
 - Whether sentinel values compare equal to themselves, to normal strings with
@@ -1112,8 +1113,9 @@ Implementation shape to prototype:
 
 Benchmark and test harness:
 
-- Build an operation-by-operation truth table against NumPy for `na_object=None`,
-  `na_object=np.nan`, and a string sentinel.
+- Build operation-by-operation truth tables against NumPy for
+  `na_object=None`, NaN-like sentinels, string sentinels, and non-string
+  non-NaN sentinels.
 - Cover sentinel in the value operand, pattern/right operand, both operands,
   mixed sentinel and normal text, empty arrays, readonly arrays, and failure
   paths.
@@ -1161,8 +1163,8 @@ Prototype checkpoint:
 3. First operation:
    - `np.strings.str_len` for one-dimensional C-contiguous arrays;
    - count Unicode code points from UTF-8 bytes.
-  - Current prototype matches NumPy for normal values and raises
-    `NumbaValueError` for `StringDType(na_object=...)` variants.
+  - The current unary checkpoint matches NumPy for normal values and audited
+    `StringDType(na_object=...)` variants.
   - Quick local timing on mixed short strings: still slower below about 1k
     rows, but faster than NumPy at 10k+ rows.
 4. First comparison:
@@ -1212,8 +1214,9 @@ Prototype checkpoint:
   trimmed codepoint length plus UTF-8 byte size once per operation. Short
   scalars stay on the Unicode/codepoint bridge; longer scalars use a UTF-8
   span outside the element loop.
-- Reject `StringDType(na_object=...)` arrays until Tranche 9 implements
-  sentinel propagation exactly.
+- Keep `StringDType(na_object=...)` support operation-specific: unary
+  `str_len` and predicates are supported after audit; binary sentinel
+  operations still reject until their exact propagation tables are implemented.
 - Keep this in charex while prototyping. The dtype recognition and helper
   approach are enough for exploration; a future upstream Numba proposal can be
   cut from the distilled implementation if it proves generally useful.
@@ -1223,8 +1226,8 @@ Prototype checkpoint:
 - Whether the max-performance `str_len` path should add SWAR continuation
   counting or peeled-16 inline handling after portability, code-layout, and
   broader operation reuse are understood.
-- What exact propagation rules do missing sentinels require for each
-  `np.strings` operation?
+- What exact propagation rules do missing sentinels require for the remaining
+  binary, affix, search, and transformation operations?
 - How much of the access/helper layer should become reusable infrastructure
   across comparison, occurrence, predicate, and transformation kernels?
 - Whether Python string scalars should use a dedicated UTF-8 scalar bridge, a
