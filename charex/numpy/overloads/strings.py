@@ -1,6 +1,6 @@
 """Numba overloads for NumPy's np.strings routines."""
 
-from charex.core import OPTIONS
+from charex.core import JIT_OPTIONS, OPTIONS
 from charex.numpy.overloads._shared import (
     ensure_slice, equal_dispatch, equal_kernel, order_dispatch,
     try_register_pair,
@@ -50,7 +50,7 @@ from charex.numpy.overloads.char import (
 from numba.core import types
 from numba.core.errors import NumbaValueError
 from numba.core.typing.templates import AttributeTemplate
-from numba.extending import infer_getattr, overload
+from numba.extending import infer_getattr, overload, register_jitable
 import numpy as np
 
 
@@ -153,6 +153,99 @@ def _numpy_fallback(op):
         def impl(left, right):
             return np.less_equal(left, right)
     return impl
+
+
+@register_jitable(**JIT_OPTIONS)
+def _order_result(cmp_result, op_code):
+    if op_code == 0:
+        return cmp_result > 0
+    if op_code == 1:
+        return cmp_result >= 0
+    if op_code == 2:
+        return cmp_result < 0
+    return cmp_result <= 0
+
+
+@register_jitable(**JIT_OPTIONS)
+def _stringdtype_unicode_affix(data, index, allocator, pattern,
+                               pattern_length, pattern_size, start, end,
+                               suffix):
+    if suffix:
+        return stringdtype_endswith_unicode_data(
+            data, index, allocator, pattern, pattern_length, pattern_size,
+            start, end)
+    return stringdtype_startswith_unicode_data(
+        data, index, allocator, pattern, pattern_length, pattern_size, start,
+        end)
+
+
+@register_jitable(**JIT_OPTIONS)
+def _stringdtype_utf8_affix(data, index, allocator, pattern_data,
+                            pattern_size, start, end, suffix):
+    if suffix:
+        return stringdtype_endswith_utf8_data(
+            data, index, allocator, pattern_data, pattern_size, start, end)
+    return stringdtype_startswith_utf8_data(
+        data, index, allocator, pattern_data, pattern_size, start, end)
+
+
+@register_jitable(**JIT_OPTIONS)
+def _utf8_stringdtype_affix(value_data, start_byte, end_byte, start_index,
+                            pattern_data, pattern_index, allocator, suffix):
+    if suffix:
+        return utf8_endswith_stringdtype_sliced_data(
+            value_data, start_byte, end_byte, start_index, pattern_data,
+            pattern_index, allocator)
+    return utf8_startswith_stringdtype_sliced_data(
+        value_data, start_byte, end_byte, start_index, pattern_data,
+        pattern_index, allocator)
+
+
+@register_jitable(**JIT_OPTIONS)
+def _stringdtype_unicode_search(data, index, allocator, pattern,
+                                pattern_length, pattern_size, start, end,
+                                search_op):
+    if search_op == 0:
+        return stringdtype_find_unicode_data(
+            data, index, allocator, pattern, pattern_length, pattern_size,
+            start, end)
+    if search_op == 1:
+        return stringdtype_rfind_unicode_data(
+            data, index, allocator, pattern, pattern_length, pattern_size,
+            start, end)
+    return stringdtype_count_unicode_data(
+        data, index, allocator, pattern, pattern_length, pattern_size, start,
+        end)
+
+
+@register_jitable(**JIT_OPTIONS)
+def _stringdtype_utf8_search(data, index, allocator, pattern_data,
+                             pattern_size, start, end, search_op):
+    if search_op == 0:
+        return stringdtype_find_utf8_data(
+            data, index, allocator, pattern_data, pattern_size, start, end)
+    if search_op == 1:
+        return stringdtype_rfind_utf8_data(
+            data, index, allocator, pattern_data, pattern_size, start, end)
+    return stringdtype_count_utf8_data(
+        data, index, allocator, pattern_data, pattern_size, start, end)
+
+
+@register_jitable(**JIT_OPTIONS)
+def _utf8_stringdtype_search(value_data, start_byte, end_byte, start_index,
+                             end_index, start_offset, pattern_data,
+                             pattern_index, allocator, search_op):
+    if search_op == 0:
+        return utf8_find_stringdtype_sliced_data(
+            value_data, start_byte, end_byte, start_index, end_index,
+            start_offset, pattern_data, pattern_index, allocator)
+    if search_op == 1:
+        return utf8_rfind_stringdtype_sliced_data(
+            value_data, start_byte, end_byte, start_index, end_index,
+            start_offset, pattern_data, pattern_index, allocator)
+    return utf8_count_stringdtype_sliced_data(
+        value_data, start_byte, end_byte, start_index, end_index,
+        start_offset, pattern_data, pattern_index, allocator)
 
 
 def _overload_equal(left, right, invert):
@@ -417,6 +510,15 @@ def _overload_order(left, right, op):
     left_stringdtype = is_stringdtype_array_type(left)
     right_stringdtype = is_stringdtype_array_type(right)
     if left_stringdtype or right_stringdtype:
+        if op == 'greater':
+            op_code = 0
+        elif op == 'greater_equal':
+            op_code = 1
+        elif op == 'less':
+            op_code = 2
+        else:
+            op_code = 3
+
         if left_stringdtype and _is_unicode_scalar_like(right):
             _validate_stringdtype_array(left)
             if left.ndim == 0:
@@ -439,13 +541,7 @@ def _overload_order(left, right, op):
                             stringdtype_data_ptr(left), 0, allocator,
                             right_value, right_parts[0], right_parts[1])
                     stringdtype_release_allocator(allocator)
-                    if op == 'greater':
-                        return cmp_result > 0
-                    if op == 'greater_equal':
-                        return cmp_result >= 0
-                    if op == 'less':
-                        return cmp_result < 0
-                    return cmp_result <= 0
+                    return _order_result(cmp_result, op_code)
 
                 return impl
 
@@ -466,28 +562,14 @@ def _overload_order(left, right, op):
                         cmp_result = stringdtype_compare_utf8_data(
                             data, i, allocator, right_span[0],
                             right_span[1])
-                        if op == 'greater':
-                            result[i] = cmp_result > 0
-                        elif op == 'greater_equal':
-                            result[i] = cmp_result >= 0
-                        elif op == 'less':
-                            result[i] = cmp_result < 0
-                        else:
-                            result[i] = cmp_result <= 0
+                        result[i] = _order_result(cmp_result, op_code)
                     stringdtype_free_utf8_span(right_span[0], right_span[2])
                 else:
                     for i in range(left.size):
                         cmp_result = stringdtype_compare_unicode_data(
                             data, i, allocator, right_value, right_parts[0],
                             right_parts[1])
-                        if op == 'greater':
-                            result[i] = cmp_result > 0
-                        elif op == 'greater_equal':
-                            result[i] = cmp_result >= 0
-                        elif op == 'less':
-                            result[i] = cmp_result < 0
-                        else:
-                            result[i] = cmp_result <= 0
+                        result[i] = _order_result(cmp_result, op_code)
                 stringdtype_release_allocator(allocator)
                 return result
 
@@ -515,13 +597,7 @@ def _overload_order(left, right, op):
                             stringdtype_data_ptr(right), 0, allocator,
                             left_value, left_parts[0], left_parts[1])
                     stringdtype_release_allocator(allocator)
-                    if op == 'greater':
-                        return cmp_result > 0
-                    if op == 'greater_equal':
-                        return cmp_result >= 0
-                    if op == 'less':
-                        return cmp_result < 0
-                    return cmp_result <= 0
+                    return _order_result(cmp_result, op_code)
 
                 return impl
 
@@ -541,28 +617,14 @@ def _overload_order(left, right, op):
                     for i in range(right.size):
                         cmp_result = -stringdtype_compare_utf8_data(
                             data, i, allocator, left_span[0], left_span[1])
-                        if op == 'greater':
-                            result[i] = cmp_result > 0
-                        elif op == 'greater_equal':
-                            result[i] = cmp_result >= 0
-                        elif op == 'less':
-                            result[i] = cmp_result < 0
-                        else:
-                            result[i] = cmp_result <= 0
+                        result[i] = _order_result(cmp_result, op_code)
                     stringdtype_free_utf8_span(left_span[0], left_span[2])
                 else:
                     for i in range(right.size):
                         cmp_result = -stringdtype_compare_unicode_data(
                             data, i, allocator, left_value, left_parts[0],
                             left_parts[1])
-                        if op == 'greater':
-                            result[i] = cmp_result > 0
-                        elif op == 'greater_equal':
-                            result[i] = cmp_result >= 0
-                        elif op == 'less':
-                            result[i] = cmp_result < 0
-                        else:
-                            result[i] = cmp_result <= 0
+                        result[i] = _order_result(cmp_result, op_code)
                 stringdtype_release_allocator(allocator)
                 return result
 
@@ -592,14 +654,7 @@ def _overload_order(left, right, op):
                     cmp_result = stringdtype_compare_unicode_data(
                         data, 0 if left_scalar else i, allocator,
                         right_value, right_parts[0], right_parts[1])
-                    if op == 'greater':
-                        result[i] = cmp_result > 0
-                    elif op == 'greater_equal':
-                        result[i] = cmp_result >= 0
-                    elif op == 'less':
-                        result[i] = cmp_result < 0
-                    else:
-                        result[i] = cmp_result <= 0
+                    result[i] = _order_result(cmp_result, op_code)
                 stringdtype_release_allocator(allocator)
                 return result
 
@@ -629,14 +684,7 @@ def _overload_order(left, right, op):
                     cmp_result = -stringdtype_compare_unicode_data(
                         data, 0 if right_scalar else i, allocator,
                         left_value, left_parts[0], left_parts[1])
-                    if op == 'greater':
-                        result[i] = cmp_result > 0
-                    elif op == 'greater_equal':
-                        result[i] = cmp_result >= 0
-                    elif op == 'less':
-                        result[i] = cmp_result < 0
-                    else:
-                        result[i] = cmp_result <= 0
+                    result[i] = _order_result(cmp_result, op_code)
                 stringdtype_release_allocator(allocator)
                 return result
 
@@ -656,13 +704,7 @@ def _overload_order(left, right, op):
                     stringdtype_data_ptr(right), 0, allocators[1],
                 )
                 stringdtype_release_allocators(allocators)
-                if op == 'greater':
-                    return cmp_result > 0
-                if op == 'greater_equal':
-                    return cmp_result >= 0
-                if op == 'less':
-                    return cmp_result < 0
-                return cmp_result <= 0
+                return _order_result(cmp_result, op_code)
 
             return impl
 
@@ -687,14 +729,7 @@ def _overload_order(left, right, op):
                     left_data, 0 if left_scalar else i, left_allocator,
                     right_data, 0 if right_scalar else i, right_allocator,
                 )
-                if op == 'greater':
-                    result[i] = cmp_result > 0
-                elif op == 'greater_equal':
-                    result[i] = cmp_result >= 0
-                elif op == 'less':
-                    result[i] = cmp_result < 0
-                else:
-                    result[i] = cmp_result <= 0
+                result[i] = _order_result(cmp_result, op_code)
             stringdtype_release_allocators(allocators)
             return result
 
@@ -733,27 +768,16 @@ def _overload_affix(value, pattern, start, end, suffix):
                         pattern_span = stringdtype_unicode_utf8_span(
                             pattern_value, pattern_parts[0],
                             pattern_parts[1])
-                        if suffix:
-                            result = stringdtype_endswith_utf8_data(
-                                data, 0, allocator, pattern_span[0],
-                                pattern_span[1], start, end)
-                        else:
-                            result = stringdtype_startswith_utf8_data(
-                                data, 0, allocator, pattern_span[0],
-                                pattern_span[1], start, end)
+                        result = _stringdtype_utf8_affix(
+                            data, 0, allocator, pattern_span[0],
+                            pattern_span[1], start, end, suffix)
                         stringdtype_free_utf8_span(pattern_span[0],
                                                    pattern_span[2])
                     else:
-                        if suffix:
-                            result = stringdtype_endswith_unicode_data(
-                                data, 0, allocator, pattern_value,
-                                pattern_parts[0], pattern_parts[1], start,
-                                end)
-                        else:
-                            result = stringdtype_startswith_unicode_data(
-                                data, 0, allocator, pattern_value,
-                                pattern_parts[0], pattern_parts[1], start,
-                                end)
+                        result = _stringdtype_unicode_affix(
+                            data, 0, allocator, pattern_value,
+                            pattern_parts[0], pattern_parts[1], start, end,
+                            suffix)
                     stringdtype_release_allocator(allocator)
                     return result
 
@@ -775,28 +799,17 @@ def _overload_affix(value, pattern, start, end, suffix):
                     pattern_span = stringdtype_unicode_utf8_span(
                         pattern_value, pattern_parts[0], pattern_parts[1])
                     for i in range(value.size):
-                        if suffix:
-                            result[i] = stringdtype_endswith_utf8_data(
-                                data, i, allocator, pattern_span[0],
-                                pattern_span[1], start, end)
-                        else:
-                            result[i] = stringdtype_startswith_utf8_data(
-                                data, i, allocator, pattern_span[0],
-                                pattern_span[1], start, end)
+                        result[i] = _stringdtype_utf8_affix(
+                            data, i, allocator, pattern_span[0],
+                            pattern_span[1], start, end, suffix)
                     stringdtype_free_utf8_span(pattern_span[0],
                                                pattern_span[2])
                 else:
                     for i in range(value.size):
-                        if suffix:
-                            result[i] = stringdtype_endswith_unicode_data(
-                                data, i, allocator, pattern_value,
-                                pattern_parts[0], pattern_parts[1], start,
-                                end)
-                        else:
-                            result[i] = stringdtype_startswith_unicode_data(
-                                data, i, allocator, pattern_value,
-                                pattern_parts[0], pattern_parts[1], start,
-                                end)
+                        result[i] = _stringdtype_unicode_affix(
+                            data, i, allocator, pattern_value,
+                            pattern_parts[0], pattern_parts[1], start, end,
+                            suffix)
                 stringdtype_release_allocator(allocator)
                 return result
 
@@ -818,14 +831,9 @@ def _overload_affix(value, pattern, start, end, suffix):
                         value_span[0], value_span[1], start, end)
                     allocator = stringdtype_acquire_allocator(pattern)
                     data = stringdtype_data_ptr(pattern)
-                    if suffix:
-                        result = utf8_endswith_stringdtype_sliced_data(
-                            value_span[0], slice_parts[0], slice_parts[1],
-                            slice_parts[2], data, 0, allocator)
-                    else:
-                        result = utf8_startswith_stringdtype_sliced_data(
-                            value_span[0], slice_parts[0], slice_parts[1],
-                            slice_parts[2], data, 0, allocator)
+                    result = _utf8_stringdtype_affix(
+                        value_span[0], slice_parts[0], slice_parts[1],
+                        slice_parts[2], data, 0, allocator, suffix)
                     stringdtype_release_allocator(allocator)
                     stringdtype_free_utf8_span(value_span[0], value_span[2])
                     return result
@@ -849,14 +857,9 @@ def _overload_affix(value, pattern, start, end, suffix):
                 allocator = stringdtype_acquire_allocator(pattern)
                 data = stringdtype_data_ptr(pattern)
                 for i in range(pattern.size):
-                    if suffix:
-                        result[i] = utf8_endswith_stringdtype_sliced_data(
-                            value_span[0], slice_parts[0], slice_parts[1],
-                            slice_parts[2], data, i, allocator)
-                    else:
-                        result[i] = utf8_startswith_stringdtype_sliced_data(
-                            value_span[0], slice_parts[0], slice_parts[1],
-                            slice_parts[2], data, i, allocator)
+                    result[i] = _utf8_stringdtype_affix(
+                        value_span[0], slice_parts[0], slice_parts[1],
+                        slice_parts[2], data, i, allocator, suffix)
                 stringdtype_release_allocator(allocator)
                 stringdtype_free_utf8_span(value_span[0], value_span[2])
                 return result
@@ -887,16 +890,10 @@ def _overload_affix(value, pattern, start, end, suffix):
                         stringdtype_release_allocator(allocator)
                         raise TypeError('Invalid unicode code point found')
                     pattern_parts = stringdtype_unicode_parts(pattern_value)
-                    if suffix:
-                        result[i] = stringdtype_endswith_unicode_data(
-                            data, 0 if value_scalar else i, allocator,
-                            pattern_value, pattern_parts[0],
-                            pattern_parts[1], start, end)
-                    else:
-                        result[i] = stringdtype_startswith_unicode_data(
-                            data, 0 if value_scalar else i, allocator,
-                            pattern_value, pattern_parts[0],
-                            pattern_parts[1], start, end)
+                    result[i] = _stringdtype_unicode_affix(
+                        data, 0 if value_scalar else i, allocator,
+                        pattern_value, pattern_parts[0], pattern_parts[1],
+                        start, end, suffix)
                 stringdtype_release_allocator(allocator)
                 return result
 
@@ -930,16 +927,10 @@ def _overload_affix(value, pattern, start, end, suffix):
                         value_value, value_parts[0], value_parts[1])
                     slice_parts = stringdtype_utf8_slice(
                         value_span[0], value_span[1], start, end)
-                    if suffix:
-                        result[i] = utf8_endswith_stringdtype_sliced_data(
-                            value_span[0], slice_parts[0], slice_parts[1],
-                            slice_parts[2], data,
-                            0 if pattern_scalar else i, allocator)
-                    else:
-                        result[i] = utf8_startswith_stringdtype_sliced_data(
-                            value_span[0], slice_parts[0], slice_parts[1],
-                            slice_parts[2], data,
-                            0 if pattern_scalar else i, allocator)
+                    result[i] = _utf8_stringdtype_affix(
+                        value_span[0], slice_parts[0], slice_parts[1],
+                        slice_parts[2], data, 0 if pattern_scalar else i,
+                        allocator, suffix)
                     stringdtype_free_utf8_span(value_span[0], value_span[2])
                 stringdtype_release_allocator(allocator)
                 return result
@@ -1026,6 +1017,7 @@ def _overload_search(value, pattern, start, end, op):
         forward = op == 'find' or op == 'index'
         reverse = op == 'rfind' or op == 'rindex'
         raise_not_found = op == 'index' or op == 'rindex'
+        search_op = 0 if forward else 1 if reverse else 2
 
         if value_stringdtype and _is_unicode_scalar_like(pattern):
             _validate_stringdtype_array(value)
@@ -1043,36 +1035,16 @@ def _overload_search(value, pattern, start, end, op):
                         pattern_span = stringdtype_unicode_utf8_span(
                             pattern_value, pattern_parts[0],
                             pattern_parts[1])
-                        if forward:
-                            found = stringdtype_find_utf8_data(
-                                data, 0, allocator, pattern_span[0],
-                                pattern_span[1], start, end)
-                        elif reverse:
-                            found = stringdtype_rfind_utf8_data(
-                                data, 0, allocator, pattern_span[0],
-                                pattern_span[1], start, end)
-                        else:
-                            found = stringdtype_count_utf8_data(
-                                data, 0, allocator, pattern_span[0],
-                                pattern_span[1], start, end)
+                        found = _stringdtype_utf8_search(
+                            data, 0, allocator, pattern_span[0],
+                            pattern_span[1], start, end, search_op)
                         stringdtype_free_utf8_span(pattern_span[0],
                                                    pattern_span[2])
                     else:
-                        if forward:
-                            found = stringdtype_find_unicode_data(
-                                data, 0, allocator, pattern_value,
-                                pattern_parts[0], pattern_parts[1], start,
-                                end)
-                        elif reverse:
-                            found = stringdtype_rfind_unicode_data(
-                                data, 0, allocator, pattern_value,
-                                pattern_parts[0], pattern_parts[1], start,
-                                end)
-                        else:
-                            found = stringdtype_count_unicode_data(
-                                data, 0, allocator, pattern_value,
-                                pattern_parts[0], pattern_parts[1], start,
-                                end)
+                        found = _stringdtype_unicode_search(
+                            data, 0, allocator, pattern_value,
+                            pattern_parts[0], pattern_parts[1], start, end,
+                            search_op)
                     stringdtype_release_allocator(allocator)
                     if raise_not_found and found < 0:
                         raise ValueError('substring not found')
@@ -1097,18 +1069,9 @@ def _overload_search(value, pattern, start, end, op):
                     pattern_span = stringdtype_unicode_utf8_span(
                         pattern_value, pattern_parts[0], pattern_parts[1])
                     for i in range(value.size):
-                        if forward:
-                            found = stringdtype_find_utf8_data(
-                                data, i, allocator, pattern_span[0],
-                                pattern_span[1], start, end)
-                        elif reverse:
-                            found = stringdtype_rfind_utf8_data(
-                                data, i, allocator, pattern_span[0],
-                                pattern_span[1], start, end)
-                        else:
-                            found = stringdtype_count_utf8_data(
-                                data, i, allocator, pattern_span[0],
-                                pattern_span[1], start, end)
+                        found = _stringdtype_utf8_search(
+                            data, i, allocator, pattern_span[0],
+                            pattern_span[1], start, end, search_op)
                         if raise_not_found and found < 0:
                             not_found = True
                             break
@@ -1117,21 +1080,10 @@ def _overload_search(value, pattern, start, end, op):
                                                pattern_span[2])
                 else:
                     for i in range(value.size):
-                        if forward:
-                            found = stringdtype_find_unicode_data(
-                                data, i, allocator, pattern_value,
-                                pattern_parts[0], pattern_parts[1], start,
-                                end)
-                        elif reverse:
-                            found = stringdtype_rfind_unicode_data(
-                                data, i, allocator, pattern_value,
-                                pattern_parts[0], pattern_parts[1], start,
-                                end)
-                        else:
-                            found = stringdtype_count_unicode_data(
-                                data, i, allocator, pattern_value,
-                                pattern_parts[0], pattern_parts[1], start,
-                                end)
+                        found = _stringdtype_unicode_search(
+                            data, i, allocator, pattern_value,
+                            pattern_parts[0], pattern_parts[1], start, end,
+                            search_op)
                         if raise_not_found and found < 0:
                             not_found = True
                             break
@@ -1159,21 +1111,10 @@ def _overload_search(value, pattern, start, end, op):
                         value_span[0], value_span[1], start, end)
                     allocator = stringdtype_acquire_allocator(pattern)
                     data = stringdtype_data_ptr(pattern)
-                    if forward:
-                        found = utf8_find_stringdtype_sliced_data(
-                            value_span[0], slice_parts[0], slice_parts[1],
-                            slice_parts[2], slice_parts[3], slice_parts[4],
-                            data, 0, allocator)
-                    elif reverse:
-                        found = utf8_rfind_stringdtype_sliced_data(
-                            value_span[0], slice_parts[0], slice_parts[1],
-                            slice_parts[2], slice_parts[3], slice_parts[4],
-                            data, 0, allocator)
-                    else:
-                        found = utf8_count_stringdtype_sliced_data(
-                            value_span[0], slice_parts[0], slice_parts[1],
-                            slice_parts[2], slice_parts[3], slice_parts[4],
-                            data, 0, allocator)
+                    found = _utf8_stringdtype_search(
+                        value_span[0], slice_parts[0], slice_parts[1],
+                        slice_parts[2], slice_parts[3], slice_parts[4],
+                        data, 0, allocator, search_op)
                     stringdtype_release_allocator(allocator)
                     stringdtype_free_utf8_span(value_span[0], value_span[2])
                     if raise_not_found and found < 0:
@@ -1200,21 +1141,10 @@ def _overload_search(value, pattern, start, end, op):
                 data = stringdtype_data_ptr(pattern)
                 not_found = False
                 for i in range(pattern.size):
-                    if forward:
-                        found = utf8_find_stringdtype_sliced_data(
-                            value_span[0], slice_parts[0], slice_parts[1],
-                            slice_parts[2], slice_parts[3], slice_parts[4],
-                            data, i, allocator)
-                    elif reverse:
-                        found = utf8_rfind_stringdtype_sliced_data(
-                            value_span[0], slice_parts[0], slice_parts[1],
-                            slice_parts[2], slice_parts[3], slice_parts[4],
-                            data, i, allocator)
-                    else:
-                        found = utf8_count_stringdtype_sliced_data(
-                            value_span[0], slice_parts[0], slice_parts[1],
-                            slice_parts[2], slice_parts[3], slice_parts[4],
-                            data, i, allocator)
+                    found = _utf8_stringdtype_search(
+                        value_span[0], slice_parts[0], slice_parts[1],
+                        slice_parts[2], slice_parts[3], slice_parts[4],
+                        data, i, allocator, search_op)
                     if raise_not_found and found < 0:
                         not_found = True
                         break
@@ -1252,21 +1182,10 @@ def _overload_search(value, pattern, start, end, op):
                         stringdtype_release_allocator(allocator)
                         raise TypeError('Invalid unicode code point found')
                     pattern_parts = stringdtype_unicode_parts(pattern_value)
-                    if forward:
-                        found = stringdtype_find_unicode_data(
-                            data, 0 if value_scalar else i, allocator,
-                            pattern_value, pattern_parts[0],
-                            pattern_parts[1], start, end)
-                    elif reverse:
-                        found = stringdtype_rfind_unicode_data(
-                            data, 0 if value_scalar else i, allocator,
-                            pattern_value, pattern_parts[0],
-                            pattern_parts[1], start, end)
-                    else:
-                        found = stringdtype_count_unicode_data(
-                            data, 0 if value_scalar else i, allocator,
-                            pattern_value, pattern_parts[0],
-                            pattern_parts[1], start, end)
+                    found = _stringdtype_unicode_search(
+                        data, 0 if value_scalar else i, allocator,
+                        pattern_value, pattern_parts[0], pattern_parts[1],
+                        start, end, search_op)
                     if raise_not_found and found < 0:
                         not_found = True
                         break
@@ -1307,21 +1226,11 @@ def _overload_search(value, pattern, start, end, op):
                         value_value, value_parts[0], value_parts[1])
                     slice_parts = stringdtype_utf8_search_slice(
                         value_span[0], value_span[1], start, end)
-                    if forward:
-                        found = utf8_find_stringdtype_sliced_data(
-                            value_span[0], slice_parts[0], slice_parts[1],
-                            slice_parts[2], slice_parts[3], slice_parts[4],
-                            data, 0 if pattern_scalar else i, allocator)
-                    elif reverse:
-                        found = utf8_rfind_stringdtype_sliced_data(
-                            value_span[0], slice_parts[0], slice_parts[1],
-                            slice_parts[2], slice_parts[3], slice_parts[4],
-                            data, 0 if pattern_scalar else i, allocator)
-                    else:
-                        found = utf8_count_stringdtype_sliced_data(
-                            value_span[0], slice_parts[0], slice_parts[1],
-                            slice_parts[2], slice_parts[3], slice_parts[4],
-                            data, 0 if pattern_scalar else i, allocator)
+                    found = _utf8_stringdtype_search(
+                        value_span[0], slice_parts[0], slice_parts[1],
+                        slice_parts[2], slice_parts[3], slice_parts[4],
+                        data, 0 if pattern_scalar else i, allocator,
+                        search_op)
                     stringdtype_free_utf8_span(value_span[0], value_span[2])
                     if raise_not_found and found < 0:
                         not_found = True

@@ -1029,17 +1029,27 @@ Fixed-width Unicode array checkpoint:
   buffer access if broader benchmarking justifies the extra surface.
 - Fixed-width Unicode arrays do not need to be C-contiguous for this path
   because the kernels only use normal indexed access on the Unicode side.
+- Distillation pass kept the explicit operation-family branches, but moved the
+  repeated `greater`/`less`, prefix/suffix, and search operation dispatch into
+  tiny force-inlined helpers. This reduced duplicated hot-loop control flow
+  without moving allocator acquisition or UTF-8 span allocation into per-element
+  helpers.
 
-200k-row sanity medians on Python 3.12.8, NumPy 2.4.6, Numba 0.65.1:
+200k-row sanity medians after distillation on Python 3.12.8, NumPy 2.4.6,
+Numba 0.65.1:
 
 | case | charex | NumPy | speedup |
 | ---- | ------ | ----- | ------- |
-| equal StringDType/Unicode | 5.845 ms | 6.685 ms | 1.14x |
-| equal Unicode/StringDType | 7.721 ms | 9.179 ms | 1.19x |
-| greater StringDType/Unicode | 6.076 ms | 6.537 ms | 1.08x |
-| startswith StringDType/Unicode | 6.946 ms | 8.196 ms | 1.18x |
-| find StringDType/Unicode | 7.070 ms | 8.559 ms | 1.21x |
-| find Unicode/StringDType | 10.115 ms | 10.906 ms | 1.08x |
+| equal StringDType/Unicode | 5.735 ms | 6.883 ms | 1.20x |
+| equal Unicode/StringDType | 7.757 ms | 9.579 ms | 1.23x |
+| greater StringDType/Unicode | 6.234 ms | 7.006 ms | 1.12x |
+| startswith StringDType/Unicode | 7.120 ms | 8.763 ms | 1.23x |
+| find StringDType/Unicode | 7.458 ms | 9.012 ms | 1.21x |
+| find Unicode/StringDType | 10.347 ms | 11.430 ms | 1.10x |
+| greater StringDType/StringDType | 1.082 ms | 1.337 ms | 1.24x |
+| startswith StringDType/StringDType | 1.827 ms | 3.111 ms | 1.70x |
+| find StringDType/StringDType | 1.947 ms | 3.905 ms | 2.01x |
+| count StringDType/StringDType | 2.036 ms | 3.293 ms | 1.62x |
 
 ## Tranche 9: Missing Sentinels And `na_object`
 
