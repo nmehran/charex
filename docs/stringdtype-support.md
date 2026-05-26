@@ -86,6 +86,11 @@ contract.
 4. First comparison:
    - `np.strings.equal`;
    - then `not_equal`.
+   - Current prototype supports non-scalar StringDType array-array
+     `equal`/`not_equal`.
+   - Observed NumPy behavior: StringDType equality requires the stored byte
+     lengths to match, then compares through the first NUL byte. Bytes after
+     the first NUL do not affect equality if the stored byte lengths match.
 5. Broader operations:
    - `startswith`, `endswith`;
    - `find`, `rfind`, `count`, `index`, `rindex`;

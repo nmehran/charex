@@ -4,7 +4,9 @@ import numpy as np
 import pytest
 from numba import njit, typeof
 
-from charex.tests.definitions import StringsInformation
+from charex.tests.definitions import (
+    StringsComparisonOperators, StringsInformation,
+)
 from charex.tests.support import assert_same
 
 
@@ -41,17 +43,23 @@ def test_stringdtype_shape_metadata_compiles():
 
 
 def test_numpy_stringdtype_strlen_counts_codepoints():
-    values = stringdtype_array(['a', 'é', '🙂', '', 'a\x00b'])
+    values = stringdtype_array([
+        'a', 'é', '🙂', '', 'a\x00b', 'a\x00', 'a\x00\x00',
+        '\x00b', '\x00\x00',
+    ])
 
     np.testing.assert_array_equal(
         STRINGS.str_len(values),
-        np.array([1, 1, 1, 0, 3]),
+        np.array([1, 1, 1, 0, 3, 1, 1, 2, 0]),
     )
 
 
 def test_stringdtype_str_len_target_behavior():
     strings = StringsInformation()
-    values = stringdtype_array(['a', 'é', '🙂', '', 'a\x00b'])
+    values = stringdtype_array([
+        'a', 'é', '🙂', '', 'a\x00b', 'a\x00', 'a\x00\x00',
+        '\x00b', '\x00\x00',
+    ])
 
     assert_same(strings.strings_str_len, STRINGS.str_len, values)
 
@@ -75,3 +83,18 @@ def test_stringdtype_str_len_rejects_null_strings():
         STRINGS.str_len(values)
     with pytest.raises(ValueError, match='length of a null string'):
         strings.strings_str_len(values)
+
+
+def test_stringdtype_array_equal_matches_numpy():
+    strings = StringsComparisonOperators()
+    left = stringdtype_array([
+        'a', 'é', '🙂', '', 'a\x00b', 'a\x00', 'a\x00\x00',
+        '\x00b', '\x00\x00', 'a\x00b\x00',
+    ])
+    right = stringdtype_array([
+        'a', 'e', '🙂', '', 'a\x00c', 'a', 'a\x00b',
+        '\x00c', '\x00c', 'a\x00c\x00',
+    ])
+
+    assert_same(strings.strings_equal, STRINGS.equal, left, right)
+    assert_same(strings.strings_not_equal, STRINGS.not_equal, left, right)

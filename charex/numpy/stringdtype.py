@@ -117,6 +117,34 @@ def _array_descriptor(context, builder, array_type, array_value):
     return builder.load(builder.bitcast(descr_addr, byte_ptr.as_pointer()))
 
 
+def _packed_string_ptr(context, builder, array_type, array_value, index_value):
+    int8 = ir.IntType(8)
+    byte_ptr = int8.as_pointer()
+    array_struct = context.make_array(array_type)(
+        context, builder, array_value,
+    )
+    data = builder.bitcast(array_struct.data, byte_ptr)
+    stride = builder.extract_value(array_struct.strides, 0)
+    offset = builder.mul(index_value, stride)
+    return builder.gep(data, [offset])
+
+
+def _load_string(builder, allocator, packed, intp, byte_ptr):
+    int32 = ir.IntType(32)
+    static_type = ir.LiteralStructType([intp, byte_ptr])
+    load_type = ir.FunctionType(
+        int32, [byte_ptr, byte_ptr, static_type.as_pointer()],
+    )
+    load = cgutils.get_or_insert_function(
+        builder.module, load_type, 'charex_NpyString_load',
+    )
+    static = cgutils.alloca_once(builder, static_type)
+    status = builder.call(load, [allocator, packed, static])
+    unpacked = builder.load(static)
+    return status, builder.extract_value(unpacked, 0), \
+        builder.extract_value(unpacked, 1)
+
+
 @intrinsic
 def stringdtype_acquire_allocator(typingctx, array):
     if not is_stringdtype_array_type(array):
@@ -167,43 +195,40 @@ def stringdtype_codepoint_len(typingctx, array, index, allocator):
     def codegen(context, builder, signature, args):
         array_type = signature.args[0]
         array_value, index_value, allocator = args
-        array_struct = context.make_array(array_type)(
-            context, builder, array_value,
-        )
 
         int8 = ir.IntType(8)
         int32 = ir.IntType(32)
         intp = context.get_value_type(types.intp)
         byte_ptr = int8.as_pointer()
-        data = builder.bitcast(array_struct.data, byte_ptr)
-        stride = builder.extract_value(array_struct.strides, 0)
-        offset = builder.mul(index_value, stride)
-        packed = builder.gep(data, [offset])
+        packed = _packed_string_ptr(context, builder, array_type, array_value,
+                                    index_value)
 
-        static_type = ir.LiteralStructType([intp, byte_ptr])
-        load_type = ir.FunctionType(
-            int32, [byte_ptr, byte_ptr, static_type.as_pointer()],
-        )
-
-        load = cgutils.get_or_insert_function(
-            builder.module, load_type, 'charex_NpyString_load',
-        )
-
-        static = cgutils.alloca_once(builder, static_type)
-        status = builder.call(load, [allocator, packed, static])
+        status, size, buffer = _load_string(builder, allocator, packed, intp,
+                                            byte_ptr)
 
         result = cgutils.alloca_once(builder, intp)
         builder.store(ir.Constant(intp, -1), result)
         valid = builder.icmp_signed('==', status, ir.Constant(int32, 0))
 
         with builder.if_then(valid):
-            unpacked = builder.load(static)
-            size = builder.extract_value(unpacked, 0)
-            buffer = builder.extract_value(unpacked, 1)
+            effective_size = cgutils.alloca_once(builder, intp)
+            builder.store(ir.Constant(intp, 0), effective_size)
+            with cgutils.for_range(builder, size, intp=intp) as loop:
+                char = builder.load(builder.gep(buffer, [loop.index]))
+                is_nonzero = builder.icmp_unsigned(
+                    '!=', char, ir.Constant(int8, 0))
+                next_size = builder.add(loop.index, ir.Constant(intp, 1))
+                builder.store(
+                    builder.select(is_nonzero, next_size,
+                                   builder.load(effective_size)),
+                    effective_size,
+                )
+
             count = cgutils.alloca_once(builder, intp)
             builder.store(ir.Constant(intp, 0), count)
 
-            with cgutils.for_range(builder, size, intp=intp) as loop:
+            with cgutils.for_range(builder, builder.load(effective_size),
+                                   intp=intp) as loop:
                 char = builder.load(builder.gep(buffer, [loop.index]))
                 tag = builder.and_(char, ir.Constant(int8, 0xc0))
                 continuation = builder.icmp_unsigned(
@@ -216,6 +241,80 @@ def stringdtype_codepoint_len(typingctx, array, index, allocator):
                               count)
 
             builder.store(builder.load(count), result)
+
+        return builder.load(result)
+
+    return sig, codegen
+
+
+@intrinsic
+def stringdtype_equal(typingctx, left, left_index, left_allocator,
+                      right, right_index, right_allocator):
+    if not is_stringdtype_array_type(left) \
+            or not isinstance(left_index, types.Integer) \
+            or left_allocator != types.voidptr \
+            or not is_stringdtype_array_type(right) \
+            or not isinstance(right_index, types.Integer) \
+            or right_allocator != types.voidptr:
+        return None
+
+    sig = signature(types.boolean, left, types.intp, left_allocator,
+                    right, types.intp, right_allocator)
+
+    def codegen(context, builder, signature, args):
+        left_type = signature.args[0]
+        right_type = signature.args[3]
+        left_value, left_index_value, left_allocator, \
+            right_value, right_index_value, right_allocator = args
+
+        int8 = ir.IntType(8)
+        int32 = ir.IntType(32)
+        intp = context.get_value_type(types.intp)
+        byte_ptr = int8.as_pointer()
+        left_packed = _packed_string_ptr(context, builder, left_type,
+                                         left_value, left_index_value)
+        right_packed = _packed_string_ptr(context, builder, right_type,
+                                          right_value, right_index_value)
+        left_status, left_size, left_buffer = _load_string(
+            builder, left_allocator, left_packed, intp, byte_ptr)
+        right_status, right_size, right_buffer = _load_string(
+            builder, right_allocator, right_packed, intp, byte_ptr)
+
+        result = cgutils.alloca_once(builder, ir.IntType(1))
+        builder.store(cgutils.false_bit, result)
+
+        left_valid = builder.icmp_signed(
+            '==', left_status, ir.Constant(int32, 0))
+        right_valid = builder.icmp_signed(
+            '==', right_status, ir.Constant(int32, 0))
+        both_valid = builder.and_(left_valid, right_valid)
+        same_size = builder.icmp_unsigned('==', left_size, right_size)
+
+        with builder.if_then(builder.and_(both_valid, same_size)):
+            active = cgutils.alloca_once(builder, ir.IntType(1))
+            builder.store(cgutils.true_bit, result)
+            builder.store(cgutils.true_bit, active)
+            with cgutils.for_range(builder, left_size, intp=intp) as loop:
+                left_char = builder.load(
+                    builder.gep(left_buffer, [loop.index]))
+                right_char = builder.load(
+                    builder.gep(right_buffer, [loop.index]))
+                same_char = builder.icmp_unsigned('==', left_char, right_char)
+                still_active = builder.load(active)
+                builder.store(
+                    builder.select(still_active,
+                                   builder.and_(builder.load(result),
+                                                same_char),
+                                   builder.load(result)),
+                    result,
+                )
+                nonzero = builder.icmp_unsigned(
+                    '!=', left_char, ir.Constant(int8, 0))
+                builder.store(
+                    builder.and_(still_active,
+                                 builder.and_(same_char, nonzero)),
+                    active,
+                )
 
         return builder.load(result)
 

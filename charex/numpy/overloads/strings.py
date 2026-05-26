@@ -6,7 +6,8 @@ from charex.numpy.overloads._shared import (
 )
 from charex.numpy.stringdtype import (
     is_stringdtype_array_type, stringdtype_acquire_allocator,
-    stringdtype_codepoint_len, stringdtype_release_allocator,
+    stringdtype_codepoint_len, stringdtype_equal,
+    stringdtype_release_allocator,
 )
 from charex.numpy.overloads.definitions import (
     equal, equal_sub32_bytes, equal_sub32_unicode, greater, greater_equal,
@@ -62,6 +63,33 @@ def _numpy_fallback(op):
 
 
 def _overload_equal(left, right, invert):
+    if is_stringdtype_array_type(left) or is_stringdtype_array_type(right):
+        if not is_stringdtype_array_type(left) \
+                or not is_stringdtype_array_type(right):
+            return None
+        if left.ndim > 1 or right.ndim > 1:
+            raise NumbaValueError('charex supports only scalars and '
+                                  'one-dimensional arrays')
+        if left.layout != 'C' or right.layout != 'C':
+            raise NumbaValueError('charex requires C-contiguous arrays; '
+                                  'call numpy.ascontiguousarray')
+
+        def impl(left, right):
+            if left.size != right.size:
+                raise ValueError('shape mismatch: objects cannot be '
+                                 'broadcast to a single shape')
+            result = np.empty(left.size, np.bool_)
+            left_allocator = stringdtype_acquire_allocator(left)
+            right_allocator = stringdtype_acquire_allocator(right)
+            for i in range(left.size):
+                result[i] = stringdtype_equal(
+                    left, i, left_allocator, right, i, right_allocator)
+            stringdtype_release_allocator(left_allocator)
+            stringdtype_release_allocator(right_allocator)
+            return ~result if invert else result
+
+        return impl
+
     registered = try_register_pair(left, right)
     if registered is None:
         if _has_string_operand(left, right):
