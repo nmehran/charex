@@ -197,6 +197,8 @@ def _overload_search(value, pattern, start, end, op):
                 raise ValueError('shape mismatch: objects cannot be '
                                  'broadcast to a single shape')
             result = np.empty(value.size, np.int64)
+            if value.size == 0:
+                return result
             allocators = stringdtype_acquire_allocators(value, pattern)
             value_allocator = allocators[0]
             pattern_allocator = allocators[1]

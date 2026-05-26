@@ -548,6 +548,17 @@ Numba 0.65.1:
 | long no match | 2.49x | 2.33x | 2.41x |
 | long repeated | 4.10x | 5.31x | 2.95x |
 
+Review-pass findings:
+
+- A randomized search stress pass over ASCII, multibyte Unicode, non-BMP
+  characters, embedded NULs, all-NUL substrings, and positive/negative slices
+  matched NumPy for `find`, `rfind`, and `count`.
+- Empty supported search inputs now return before acquiring StringDType
+  allocators. The broader same-shape limitation is unchanged.
+- No additional search strategy was promoted in this pass. More aggressive
+  forward-position tracking, byte-to-codepoint indexing, or word/SWAR scans
+  belong in the later optimization tranche.
+
 ## Prototype Order
 
 1. Type recognition only:

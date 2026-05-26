@@ -452,6 +452,30 @@ def test_stringdtype_array_search_trailing_nul_patterns_match_numpy(
     ('strings_rfind', STRINGS.rfind),
     ('strings_count', STRINGS.count),
 ])
+@pytest.mark.parametrize('args', [
+    (),
+    (1, -1),
+    (10, None),
+])
+def test_stringdtype_array_search_all_nul_patterns_match_numpy(
+        impl_name, baseline, args):
+    strings = StringsInformation()
+    values = stringdtype_array([
+        'abc', '', '\x00', '\x00\x00', 'a\x00b', '🙂',
+    ])
+    patterns = stringdtype_array([
+        '\x00', '\x00', '\x00', '\x00\x00', '\x00\x00', '\x00',
+    ])
+
+    assert_same(getattr(strings, impl_name), baseline,
+                values, patterns, *args)
+
+
+@pytest.mark.parametrize('impl_name, baseline', [
+    ('strings_find', STRINGS.find),
+    ('strings_rfind', STRINGS.rfind),
+    ('strings_count', STRINGS.count),
+])
 def test_stringdtype_array_search_empty_arrays_match_numpy(
         impl_name, baseline):
     strings = StringsInformation()

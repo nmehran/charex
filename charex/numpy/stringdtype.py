@@ -744,6 +744,9 @@ def _stringdtype_search_data(typingctx, value_data, value_index,
                 builder, pattern_size, pattern_buffer, intp, int8)
             empty_pattern = builder.icmp_unsigned(
                 '==', pattern_effective_size, zero)
+            # NumPy's StringDType search trims the value span, but keeps
+            # trailing NUL bytes in non-empty substrings except for the
+            # one-byte find/rfind case. Count always uses the raw substring.
             if mode == 'count':
                 pattern_match_size = builder.select(
                     empty_pattern, zero, pattern_size,
