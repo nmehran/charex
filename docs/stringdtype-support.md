@@ -559,6 +559,68 @@ Review-pass findings:
   forward-position tracking, byte-to-codepoint indexing, or word/SWAR scans
   belong in the later optimization tranche.
 
+## Tranche 5: Index/Rindex Exceptions
+
+This tranche should complete the substring-search information family before
+moving to predicates or scalar support. `index` and `rindex` should reuse the
+`find`/`rfind` semantics from Tranche 4, but they need exact array-wide
+not-found behavior instead of returning `-1`.
+
+Target operations:
+
+- `np.strings.index`
+- `np.strings.rindex`
+
+Initial runtime scope:
+
+- default `StringDType` only, still rejecting `na_object` variants;
+- one-dimensional C-contiguous arrays;
+- array-array same-shape inputs first;
+- scalar substring support deferred;
+- `start` and `end` with the same accepted forms as `find`/`rfind`.
+
+Correctness questions to answer before implementation:
+
+- Whether NumPy raises `ValueError` if any element is not found, and whether it
+  discards all partial results in that case.
+- Exact exception message text and type for `index` and `rindex`.
+- Whether empty substring and all-NUL substring behavior is identical to
+  `find`/`rfind` before applying the not-found check.
+- Whether unsupported-input errors should continue matching the narrow
+  StringDType search messages from Tranche 4.
+
+Implementation shape to prototype:
+
+- Keep a shared search intrinsic returning `-1` for not found.
+- In the array wrapper, fill the result array while tracking a `not_found`
+  flag. Release paired allocators before raising.
+- Raise once after the loop if any element was not found.
+- Avoid per-element exception paths inside the intrinsic; they complicate
+  allocator lifetime and make the hot loop harder to reason about.
+- Keep this separate from aggressive search optimization. This tranche is about
+  exact exception semantics and clean control flow.
+
+Benchmark and test harness:
+
+- Add success and failure tests for `index` and `rindex` covering ASCII,
+  multibyte Unicode, non-BMP characters, empty substring, all-NUL substring,
+  trailing-NUL patterns, embedded NULs, positive/negative slices, empty arrays,
+  readonly arrays, shape mismatch, non-contiguous arrays, multidimensional
+  arrays, and mixed scalar/array rejection.
+- Add explicit tests that allocator release happens before the not-found
+  exception path by exercising same-array inputs after a failing call.
+- Benchmark only successful calls in the focused search harness; failure timing
+  is less useful and can distort the search-path numbers.
+
+Acceptance bar for this tranche:
+
+- Exact NumPy behavior for all supported `index`/`rindex` success and failure
+  cases.
+- No allocator leaks or deadlocks after failed searches.
+- No mutation of inputs.
+- No new search algorithm gates.
+- No public support expansion beyond the agreed array-array StringDType scope.
+
 ## Prototype Order
 
 1. Type recognition only:
