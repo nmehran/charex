@@ -72,9 +72,10 @@ Exploratory benchmark:
 python docs/exploration/stringdtype_access_bench.py
 ```
 
-This compares allocator access strategies for `np.strings.str_len` on mixed
-short `StringDType` values. The benchmark randomizes measurement order and
-reports per-call median timings.
+This compares active `np.strings.str_len` access candidates. Rejected Tranche 1
+experiments and their rationale are kept in
+`docs/exploration/stringdtype_access_rejected.md`. The benchmark randomizes
+measurement order and reports per-call median timings.
 
 Local result on Python 3.12.8, NumPy 2.4.6, Numba 0.65.1:
 
