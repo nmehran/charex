@@ -100,6 +100,41 @@ Findings:
 - Until sentinel propagation is implemented exactly, charex rejects
   `StringDType(na_object=...)` arrays during Numba typing.
 
+Second pass findings:
+
+- The default-descriptor shortcut is correctness-invalid for longer
+  heap-backed strings. It returns the low-level load failure path because those
+  values require the array's real allocator.
+- Hoisting the array data pointer and using the known 16-byte packed element
+  stride slightly improves the current two-pass kernel and reduces generated
+  LLVM size.
+- One-pass length kernels are faster for short strings, especially ASCII and
+  trailing-NUL-heavy data, but slower for longer strings. They also did not
+  generate LLVM vector loops in the local build.
+- The current/two-pass shape does generate vector loops and is the strongest
+  long-string path.
+- A `size <= 16` hybrid is the best balanced prototype so far. The threshold is
+  tied to the packed element size, not to one benchmark case, but it still adds
+  both loop bodies and a per-element branch.
+- A whole-loop C helper is not attractive. It hides the hot loop from
+  Numba/LLVM and was slower than the generated-loop variants, especially on
+  longer strings.
+
+Representative 100k-row medians from the second pass:
+
+| case | current | one-pass best | two-pass data | hybrid16 | best |
+| ---- | ------- | ------------- | ------------- | -------- | ---- |
+| mixed short | 0.506 ms | 0.380 ms | 0.509 ms | 0.438 ms | one-pass |
+| ASCII short | 0.685 ms | 0.559 ms | 0.684 ms | 0.589 ms | one-pass |
+| NUL heavy | 0.402 ms | 0.326 ms | 0.380 ms | 0.378 ms | one-pass |
+| Unicode short | 0.742 ms | 0.589 ms | 0.754 ms | 0.621 ms | one-pass |
+| long mixed | 2.271 ms | 3.358 ms | 2.188 ms | 2.229 ms | two-pass |
+
+Near-term candidate: replace parent-offset descriptor access with a C helper,
+keep allocator acquisition at operation scope, and choose between a minimal
+two-pass data-pointer kernel or the `size <= 16` hybrid after broader operation
+coverage shows whether the extra surface is justified.
+
 ## Prototype Order
 
 1. Type recognition only:
