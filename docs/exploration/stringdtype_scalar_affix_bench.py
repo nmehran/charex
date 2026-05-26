@@ -31,8 +31,6 @@ from charex.numpy.stringdtype import (
     stringdtype_unicode_parts,
     stringdtype_unicode_utf8_span,
     stringdtype_unicode_valid,
-    unicode_startswith_stringdtype_data,
-    unicode_endswith_stringdtype_data,
 )
 from charex.tests.definitions import StringsInformation
 
@@ -412,40 +410,6 @@ def endswith_hybrid_pattern(values, pattern, start=0,
 
 
 @njit(nogil=True, cache=False)
-def startswith_current_value(value, patterns, start=0, end=9223372036854775807):
-    if not stringdtype_unicode_valid(value):
-        raise TypeError('Invalid unicode code point found')
-    parts = stringdtype_unicode_parts(value)
-    result = np.empty(patterns.size, np.bool_)
-    if patterns.size == 0:
-        return result
-    allocator = stringdtype_acquire_allocator(patterns)
-    data = stringdtype_data_ptr(patterns)
-    for i in range(patterns.size):
-        result[i] = unicode_startswith_stringdtype_data(
-            value, data, parts[0], parts[1], i, allocator, start, end)
-    stringdtype_release_allocator(allocator)
-    return result
-
-
-@njit(nogil=True, cache=False)
-def endswith_current_value(value, patterns, start=0, end=9223372036854775807):
-    if not stringdtype_unicode_valid(value):
-        raise TypeError('Invalid unicode code point found')
-    parts = stringdtype_unicode_parts(value)
-    result = np.empty(patterns.size, np.bool_)
-    if patterns.size == 0:
-        return result
-    allocator = stringdtype_acquire_allocator(patterns)
-    data = stringdtype_data_ptr(patterns)
-    for i in range(patterns.size):
-        result[i] = unicode_endswith_stringdtype_data(
-            value, data, parts[0], parts[1], i, allocator, start, end)
-    stringdtype_release_allocator(allocator)
-    return result
-
-
-@njit(nogil=True, cache=False)
 def startswith_utf8_value(value, patterns, start=0, end=9223372036854775807):
     if not stringdtype_unicode_valid(value):
         raise TypeError('Invalid unicode code point found')
@@ -638,8 +602,6 @@ def main(argv=None):
                     np.strings.startswith(v, p, st, en),
                 'current': lambda v=scalar_value, p=patterns, st=start, en=end:
                     strings.strings_startswith(v, p, st, en),
-                'unicode': lambda v=scalar_value, p=patterns, st=start, en=end:
-                    startswith_current_value(v, p, st, en),
                 'utf8': lambda v=scalar_value, p=patterns, st=start, en=end:
                     startswith_utf8_value(v, p, st, en),
                 'utf8s': lambda v=scalar_value, p=patterns, st=start, en=end:
@@ -655,8 +617,6 @@ def main(argv=None):
                     np.strings.endswith(v, p, st, en),
                 'current': lambda v=scalar_value, p=patterns, st=start, en=end:
                     strings.strings_endswith(v, p, st, en),
-                'unicode': lambda v=scalar_value, p=patterns, st=start, en=end:
-                    endswith_current_value(v, p, st, en),
                 'utf8': lambda v=scalar_value, p=patterns, st=start, en=end:
                     endswith_utf8_value(v, p, st, en),
                 'utf8s': lambda v=scalar_value, p=patterns, st=start, en=end:

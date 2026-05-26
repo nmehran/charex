@@ -2435,79 +2435,6 @@ def _stringdtype_unicode_affix_data(typingctx, value_data, value_index,
     return sig, codegen
 
 
-def _unicode_stringdtype_affix_data(typingctx, value, pattern_data,
-                                    value_length, value_size, pattern_index,
-                                    pattern_allocator, start, end, suffix):
-    if not isinstance(value, types.UnicodeType) \
-            or pattern_data != types.voidptr \
-            or not isinstance(value_length, types.Integer) \
-            or not isinstance(value_size, types.Integer) \
-            or not isinstance(pattern_index, types.Integer) \
-            or pattern_allocator != types.voidptr \
-            or not isinstance(start, types.Integer) \
-            or not isinstance(end, types.Integer):
-        return None
-
-    sig = signature(types.boolean, value, pattern_data, types.intp,
-                    types.intp, types.intp, pattern_allocator,
-                    types.intp, types.intp)
-
-    def codegen(context, builder, signature, args):
-        value, pattern_data, value_length, value_size, pattern_index_value, \
-            pattern_allocator, start, end = args
-
-        int8 = ir.IntType(8)
-        int32 = ir.IntType(32)
-        intp = context.get_value_type(types.intp)
-        byte_ptr = int8.as_pointer()
-        pattern_packed = _packed_string_ptr_from_data(
-            builder, pattern_data, pattern_index_value, intp)
-        pattern_status, pattern_size, pattern_buffer = _load_string(
-            builder, pattern_allocator, pattern_packed, intp, byte_ptr)
-
-        result = cgutils.alloca_once(builder, ir.IntType(1))
-        builder.store(cgutils.false_bit, result)
-        pattern_valid = builder.icmp_signed(
-            '==', pattern_status, ir.Constant(int32, 0))
-
-        with builder.if_then(pattern_valid):
-            unicode_struct, value_length, _ = _unicode_parts(
-                context, builder, value, intp, int32, value_length,
-                value_size)
-            start_index, end_index, slice_valid = _normalise_unicode_slice(
-                builder, value_length, start, end, intp)
-            pattern_effective_size = _trimmed_size(
-                builder, pattern_size, pattern_buffer, intp, int8)
-            pattern_length = _codepoint_count(
-                builder, pattern_effective_size, pattern_buffer, intp, int8)
-            slice_length = builder.sub(end_index, start_index)
-            empty_pattern = builder.icmp_unsigned(
-                '==', pattern_effective_size, ir.Constant(intp, 0))
-            builder.store(builder.and_(slice_valid, empty_pattern), result)
-
-            nonempty_pattern = builder.not_(empty_pattern)
-            fits = builder.icmp_unsigned('<=', pattern_length, slice_length)
-            with builder.if_then(builder.and_(slice_valid,
-                                              builder.and_(nonempty_pattern,
-                                                           fits))):
-                if suffix:
-                    compare_index = builder.sub(end_index, pattern_length)
-                else:
-                    compare_index = start_index
-                builder.store(
-                    _unicode_stringdtype_region_equal(
-                        builder, unicode_struct, compare_index,
-                        pattern_buffer, pattern_effective_size, intp, int8,
-                        int32,
-                    ),
-                    result,
-                )
-
-        return builder.load(result)
-
-    return sig, codegen
-
-
 def _utf8_stringdtype_sliced_affix_data(
         typingctx, value_data, start_offset, end_offset, slice_valid,
         pattern_data, pattern_index, pattern_allocator, suffix):
@@ -2639,28 +2566,6 @@ def stringdtype_endswith_unicode_data(typingctx, value_data, value_index,
     return _stringdtype_unicode_affix_data(
         typingctx, value_data, value_index, value_allocator, pattern,
         pattern_length, pattern_size, start, end, True,
-    )
-
-
-@intrinsic
-def unicode_startswith_stringdtype_data(typingctx, value, pattern_data,
-                                        value_length, value_size,
-                                        pattern_index, pattern_allocator,
-                                        start, end):
-    return _unicode_stringdtype_affix_data(
-        typingctx, value, pattern_data, value_length, value_size,
-        pattern_index, pattern_allocator, start, end, False,
-    )
-
-
-@intrinsic
-def unicode_endswith_stringdtype_data(typingctx, value, pattern_data,
-                                      value_length, value_size,
-                                      pattern_index, pattern_allocator,
-                                      start, end):
-    return _unicode_stringdtype_affix_data(
-        typingctx, value, pattern_data, value_length, value_size,
-        pattern_index, pattern_allocator, start, end, True,
     )
 
 
