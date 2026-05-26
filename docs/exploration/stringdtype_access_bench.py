@@ -226,9 +226,32 @@ def twopass_effective_count(builder, size, buffer, intp, int8):
 
 
 def backward_trim_effective_count(builder, size, buffer, intp, int8):
+    effective_size = backward_trim_size(builder, size, buffer, intp, int8)
+    return byte_prefix_codepoint_count(builder, effective_size, buffer,
+                                       intp, int8)
+
+
+def byte_prefix_codepoint_count(builder, effective_size, buffer, intp, int8):
+
+    count = cgutils.alloca_once(builder, intp)
+    builder.store(ir.Constant(intp, 0), count)
+    with cgutils.for_range(builder, effective_size, intp=intp) as loop:
+        char = builder.load(builder.gep(buffer, [loop.index]))
+        tag = builder.and_(char, ir.Constant(int8, 0xc0))
+        continuation = builder.icmp_unsigned(
+            '==', tag, ir.Constant(int8, 0x80),
+        )
+        increment = builder.select(
+            continuation, ir.Constant(intp, 0), ir.Constant(intp, 1),
+        )
+        builder.store(builder.add(builder.load(count), increment), count)
+
+    return builder.load(count)
+
+
+def backward_trim_size(builder, size, buffer, intp, int8):
     effective_size = cgutils.alloca_once(builder, intp)
     builder.store(size, effective_size)
-
     cond = builder.append_basic_block('trim_back.cond')
     check = builder.append_basic_block('trim_back.check')
     body = builder.append_basic_block('trim_back.body')
@@ -253,21 +276,83 @@ def backward_trim_effective_count(builder, size, buffer, intp, int8):
     builder.branch(cond)
 
     builder.position_at_end(after)
+    return builder.load(effective_size)
+
+
+def continuation_count_word(builder, size, buffer, intp, int8):
+    int64 = ir.IntType(64)
+    int64_ptr = int64.as_pointer()
     count = cgutils.alloca_once(builder, intp)
     builder.store(ir.Constant(intp, 0), count)
-    with cgutils.for_range(builder, builder.load(effective_size),
-                           intp=intp) as loop:
-        char = builder.load(builder.gep(buffer, [loop.index]))
+
+    word_size = ir.Constant(intp, 8)
+    word_count = builder.udiv(size, word_size)
+    byte_count = builder.mul(word_count, word_size)
+    ctpop_type = ir.FunctionType(int64, [int64])
+    ctpop = cgutils.get_or_insert_function(
+        builder.module, ctpop_type, 'llvm.ctpop.i64',
+    )
+    high_mask = ir.Constant(int64, 0x8080808080808080)
+    second_mask = ir.Constant(int64, 0x4040404040404040)
+
+    with cgutils.for_range(builder, word_count, intp=intp) as loop:
+        byte_index = builder.mul(loop.index, word_size)
+        byte_ptr = builder.gep(buffer, [byte_index])
+        word_load = builder.load(builder.bitcast(byte_ptr, int64_ptr))
+        word_load.align = 1
+        high_bits = builder.and_(word_load, high_mask)
+        second_as_high = builder.shl(
+            builder.and_(word_load, second_mask), ir.Constant(int64, 1),
+        )
+        continuation_bits = builder.and_(high_bits,
+                                         builder.not_(second_as_high))
+        pop = builder.call(ctpop, [continuation_bits])
+        if intp.width != 64:
+            pop = builder.trunc(pop, intp)
+        builder.store(builder.add(builder.load(count), pop), count)
+
+    tail_size = builder.sub(size, byte_count)
+    with cgutils.for_range(builder, tail_size, intp=intp) as loop:
+        byte_index = builder.add(byte_count, loop.index)
+        char = builder.load(builder.gep(buffer, [byte_index]))
         tag = builder.and_(char, ir.Constant(int8, 0xc0))
         continuation = builder.icmp_unsigned(
             '==', tag, ir.Constant(int8, 0x80),
         )
         increment = builder.select(
-            continuation, ir.Constant(intp, 0), ir.Constant(intp, 1),
+            continuation, ir.Constant(intp, 1), ir.Constant(intp, 0),
         )
         builder.store(builder.add(builder.load(count), increment), count)
 
     return builder.load(count)
+
+
+def backward_word_effective_count(builder, size, buffer, intp, int8):
+    effective_size = backward_trim_size(builder, size, buffer, intp, int8)
+    continuations = continuation_count_word(builder, effective_size, buffer,
+                                           intp, int8)
+    return builder.sub(effective_size, continuations)
+
+
+def backward_word_threshold_effective_count(builder, size, buffer, intp, int8,
+                                            threshold):
+    effective_size = backward_trim_size(builder, size, buffer, intp, int8)
+    result = cgutils.alloca_once(builder, intp)
+    use_word = builder.icmp_unsigned(
+        '>=', effective_size, ir.Constant(intp, threshold),
+    )
+    with builder.if_else(use_word) as (then, otherwise):
+        with then:
+            continuations = continuation_count_word(builder, effective_size,
+                                                   buffer, intp, int8)
+            builder.store(builder.sub(effective_size, continuations), result)
+        with otherwise:
+            builder.store(
+                byte_prefix_codepoint_count(builder, effective_size, buffer,
+                                            intp, int8),
+                result,
+            )
+    return builder.load(result)
 
 
 def peeled16_effective_count(builder, size, buffer, intp, int8):
@@ -386,6 +471,84 @@ def codepoint_len_backward_data(typingctx, data, index, allocator):
 
 
 @intrinsic
+def codepoint_len_backward_word_data(typingctx, data, index, allocator):
+    if data != types.voidptr \
+            or not isinstance(index, types.Integer) \
+            or allocator != types.voidptr:
+        return None
+
+    sig = signature(types.intp, data, types.intp, allocator)
+
+    def codegen(context, builder, signature, args):
+        data, index_value, allocator = args
+        int8 = ir.IntType(8)
+        int32 = ir.IntType(32)
+        intp = context.get_value_type(types.intp)
+        byte_ptr = int8.as_pointer()
+        offset = builder.mul(index_value,
+                             ir.Constant(intp, _PACKED_STRING_SIZE))
+        packed = builder.gep(builder.bitcast(data, byte_ptr), [offset])
+        status, size, buffer = load_string(builder, allocator, packed, intp,
+                                           byte_ptr)
+
+        result = cgutils.alloca_once(builder, intp)
+        builder.store(ir.Constant(intp, -1), result)
+        valid = builder.icmp_signed('==', status, ir.Constant(int32, 0))
+        with builder.if_then(valid):
+            builder.store(
+                backward_word_effective_count(builder, size, buffer,
+                                              intp, int8),
+                result,
+            )
+        return builder.load(result)
+
+    return sig, codegen
+
+
+def make_backward_word_threshold_intrinsic(threshold):
+    @intrinsic
+    def impl(typingctx, data, index, allocator):
+        if data != types.voidptr \
+                or not isinstance(index, types.Integer) \
+                or allocator != types.voidptr:
+            return None
+
+        sig = signature(types.intp, data, types.intp, allocator)
+
+        def codegen(context, builder, signature, args):
+            data, index_value, allocator = args
+            int8 = ir.IntType(8)
+            int32 = ir.IntType(32)
+            intp = context.get_value_type(types.intp)
+            byte_ptr = int8.as_pointer()
+            offset = builder.mul(index_value,
+                                 ir.Constant(intp, _PACKED_STRING_SIZE))
+            packed = builder.gep(builder.bitcast(data, byte_ptr), [offset])
+            status, size, buffer = load_string(builder, allocator, packed,
+                                               intp, byte_ptr)
+
+            result = cgutils.alloca_once(builder, intp)
+            builder.store(ir.Constant(intp, -1), result)
+            valid = builder.icmp_signed('==', status, ir.Constant(int32, 0))
+            with builder.if_then(valid):
+                builder.store(
+                    backward_word_threshold_effective_count(
+                        builder, size, buffer, intp, int8, threshold,
+                    ),
+                    result,
+                )
+            return builder.load(result)
+
+        return sig, codegen
+
+    return impl
+
+
+codepoint_len_backward_word32_data = make_backward_word_threshold_intrinsic(32)
+codepoint_len_backward_word64_data = make_backward_word_threshold_intrinsic(64)
+
+
+@intrinsic
 def codepoint_len_peeled16_hybrid_data(typingctx, data, index, allocator):
     if data != types.voidptr \
             or not isinstance(index, types.Integer) \
@@ -470,6 +633,53 @@ def codepoint_len_peeled16_backward_hybrid_data(typingctx, data, index,
                 with otherwise:
                     builder.store(
                         backward_trim_effective_count(builder, size, buffer,
+                                                      intp, int8),
+                        result,
+                    )
+        return builder.load(result)
+
+    return sig, codegen
+
+
+@intrinsic
+def codepoint_len_peeled16_backward_word_hybrid_data(typingctx, data, index,
+                                                     allocator):
+    if data != types.voidptr \
+            or not isinstance(index, types.Integer) \
+            or allocator != types.voidptr:
+        return None
+
+    sig = signature(types.intp, data, types.intp, allocator)
+
+    def codegen(context, builder, signature, args):
+        data, index_value, allocator = args
+        int8 = ir.IntType(8)
+        int32 = ir.IntType(32)
+        intp = context.get_value_type(types.intp)
+        byte_ptr = int8.as_pointer()
+        offset = builder.mul(index_value,
+                             ir.Constant(intp, _PACKED_STRING_SIZE))
+        packed = builder.gep(builder.bitcast(data, byte_ptr), [offset])
+        status, size, buffer = load_string(builder, allocator, packed, intp,
+                                           byte_ptr)
+
+        result = cgutils.alloca_once(builder, intp)
+        builder.store(ir.Constant(intp, -1), result)
+        valid = builder.icmp_signed('==', status, ir.Constant(int32, 0))
+        with builder.if_then(valid):
+            is_small = builder.icmp_unsigned(
+                '<=', size, ir.Constant(intp, _PACKED_STRING_SIZE),
+            )
+            with builder.if_else(is_small) as (then, otherwise):
+                with then:
+                    builder.store(
+                        peeled16_effective_count(builder, size, buffer,
+                                                 intp, int8),
+                        result,
+                    )
+                with otherwise:
+                    builder.store(
+                        backward_word_effective_count(builder, size, buffer,
                                                       intp, int8),
                         result,
                     )
@@ -993,6 +1203,39 @@ def backward_data_strlen(values):
 
 
 @njit(nogil=True, cache=False)
+def backward_word_data_strlen(values):
+    result = np.empty(values.size, np.int64)
+    data = stringdtype_data_ptr(values)
+    allocator = stringdtype_acquire_allocator(values)
+    for i in range(values.size):
+        result[i] = codepoint_len_backward_word_data(data, i, allocator)
+    stringdtype_release_allocator(allocator)
+    return result
+
+
+@njit(nogil=True, cache=False)
+def backward_word32_data_strlen(values):
+    result = np.empty(values.size, np.int64)
+    data = stringdtype_data_ptr(values)
+    allocator = stringdtype_acquire_allocator(values)
+    for i in range(values.size):
+        result[i] = codepoint_len_backward_word32_data(data, i, allocator)
+    stringdtype_release_allocator(allocator)
+    return result
+
+
+@njit(nogil=True, cache=False)
+def backward_word64_data_strlen(values):
+    result = np.empty(values.size, np.int64)
+    data = stringdtype_data_ptr(values)
+    allocator = stringdtype_acquire_allocator(values)
+    for i in range(values.size):
+        result[i] = codepoint_len_backward_word64_data(data, i, allocator)
+    stringdtype_release_allocator(allocator)
+    return result
+
+
+@njit(nogil=True, cache=False)
 def peeled16_hybrid_data_strlen(values):
     result = np.empty(values.size, np.int64)
     data = stringdtype_data_ptr(values)
@@ -1010,6 +1253,19 @@ def peeled16_backward_hybrid_data_strlen(values):
     allocator = stringdtype_acquire_allocator(values)
     for i in range(values.size):
         result[i] = codepoint_len_peeled16_backward_hybrid_data(
+            data, i, allocator,
+        )
+    stringdtype_release_allocator(allocator)
+    return result
+
+
+@njit(nogil=True, cache=False)
+def peeled16_backward_word_hybrid_data_strlen(values):
+    result = np.empty(values.size, np.int64)
+    data = stringdtype_data_ptr(values)
+    allocator = stringdtype_acquire_allocator(values)
+    for i in range(values.size):
+        result[i] = codepoint_len_peeled16_backward_word_hybrid_data(
             data, i, allocator,
         )
     stringdtype_release_allocator(allocator)
@@ -1118,6 +1374,30 @@ def c_helper_peeled16_backward_hybrid_data_strlen(values):
 
 
 @njit(nogil=True, cache=False)
+def c_helper_backward_word_data_strlen(values):
+    result = np.empty(values.size, np.int64)
+    data = stringdtype_data_ptr(values)
+    allocator = c_helper_acquire_allocator(values)
+    for i in range(values.size):
+        result[i] = codepoint_len_backward_word_data(data, i, allocator)
+    stringdtype_release_allocator(allocator)
+    return result
+
+
+@njit(nogil=True, cache=False)
+def c_helper_peeled16_backward_word_hybrid_data_strlen(values):
+    result = np.empty(values.size, np.int64)
+    data = stringdtype_data_ptr(values)
+    allocator = c_helper_acquire_allocator(values)
+    for i in range(values.size):
+        result[i] = codepoint_len_peeled16_backward_word_hybrid_data(
+            data, i, allocator,
+        )
+    stringdtype_release_allocator(allocator)
+    return result
+
+
+@njit(nogil=True, cache=False)
 def c_helper_strlen(values):
     result = np.empty(values.size, np.int64)
     allocator = c_helper_acquire_allocator(values)
@@ -1206,9 +1486,14 @@ def main():
                 ('current parent-offset', current_strlen),
                 ('twopass data', twopass_data_strlen),
                 ('backward data', backward_data_strlen),
+                ('backward word', backward_word_data_strlen),
+                ('backward word32', backward_word32_data_strlen),
+                ('backward word64', backward_word64_data_strlen),
                 ('peeled16 hybrid', peeled16_hybrid_data_strlen),
                 ('peeled16 back-hybrid',
                  peeled16_backward_hybrid_data_strlen),
+                ('peeled16 word-hybrid',
+                 peeled16_backward_word_hybrid_data_strlen),
                 ('onepass array', onepass_array_strlen),
                 ('onepass data', onepass_data_strlen),
                 ('onepass size-data', onepass_size_data_strlen),
@@ -1229,6 +1514,12 @@ def main():
                                 c_helper_peeled16_hybrid_data_strlen))
                 methods.append(('C helper peeled16-back',
                                 c_helper_peeled16_backward_hybrid_data_strlen))
+                methods.append(('C helper backward word',
+                                c_helper_backward_word_data_strlen))
+                methods.append(
+                    ('C helper peeled16-word',
+                     c_helper_peeled16_backward_word_hybrid_data_strlen),
+                )
                 if _C_HELPER_STRLEN_TWOPASS_ADDR:
                     methods.append(('C batch twopass',
                                     c_helper_batch_twopass_strlen))

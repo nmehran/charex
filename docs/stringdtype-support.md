@@ -167,6 +167,44 @@ kernel. Continue evaluating whether peeled-16 should be used as the universal
 small-string path or only exposed through specialized fast paths where the code
 layout cost is acceptable.
 
+Fourth pass findings:
+
+- A SWAR-style continuation counter is the strongest long-string idea tested.
+  It trims backward, then counts UTF-8 continuation bytes eight at a time with
+  unaligned `i64` loads and `llvm.ctpop.i64`; length is
+  `effective_size - continuation_count`.
+- The SWAR path is excellent for long and Unicode-heavy strings, but its fixed
+  overhead loses on short ASCII and NUL-heavy inline data.
+- Size-threshold hybrids for the SWAR path did not improve the clean story.
+  The extra branch and larger generated function made results noisier and did
+  not consistently beat the simpler candidates.
+- The SWAR path uses unaligned word loads. That is viable as a prototype on the
+  local x86_64 target, but needs portability review before becoming public
+  production surface.
+
+Candidate-only 100k-row medians from the fourth pass:
+
+| case | current | backward | backward+SWAR | peeled16 | peeled16+SWAR | best |
+| ---- | ------- | -------- | ------------- | -------- | ------------- | ---- |
+| mixed short | 0.506 ms | 0.365 ms | 0.380 ms | 0.328 ms | 0.322 ms | peeled16+SWAR |
+| ASCII short | 0.689 ms | 0.458 ms | 0.466 ms | 0.435 ms | 0.436 ms | peeled16 |
+| NUL heavy | 0.403 ms | 0.339 ms | 0.352 ms | 0.286 ms | 0.309 ms | peeled16 |
+| Unicode short | 0.743 ms | 0.485 ms | 0.457 ms | 0.581 ms | 0.577 ms | backward+SWAR |
+| long mixed | 2.300 ms | 1.288 ms | 0.685 ms | 2.277 ms | 0.704 ms | backward+SWAR |
+
+The durable result is that backward trim remains the clean minimal baseline,
+while SWAR continuation counting is the main max-performance long-string and
+Unicode-heavy candidate.
+
+Final tranche-1 recommendation:
+
+- Minimal production candidate: descriptor C helper, operation-scope allocator,
+  hoisted data pointer, backward trim plus byte-wise continuation counting.
+- Max-performance candidate: add a separately evaluated SWAR continuation path
+  for longer strings after portability and code-layout costs are resolved.
+- Keep peeled-16 as a specialized inline-string candidate, not part of the base
+  kernel until broader operations show it pays for its surface area.
+
 ## Prototype Order
 
 1. Type recognition only:
@@ -222,9 +260,9 @@ layout cost is acceptable.
 
 ## Remaining Questions
 
-- What is the final `str_len` kernel shape: backward trim only, peeled-16 for
-  small strings plus backward fallback, or separate specialized fast paths that
-  avoid slowing the small path with a larger fallback body?
+- Whether the max-performance `str_len` path should add SWAR continuation
+  counting or peeled-16 inline handling after portability, code-layout, and
+  broader operation reuse are understood.
 - What exact propagation rules do missing sentinels require for each
   `np.strings` operation?
 - How much of the access/helper layer should become reusable infrastructure
