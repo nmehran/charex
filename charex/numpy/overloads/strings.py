@@ -12,8 +12,9 @@ from charex.numpy.stringdtype import (
     stringdtype_compare_unicode_data, stringdtype_compare_utf8_data,
     stringdtype_count_data, stringdtype_count_unicode_data,
     stringdtype_data_ptr, stringdtype_endswith_data,
-    stringdtype_endswith_unicode_data, stringdtype_equal_data,
-    stringdtype_equal_unicode_data, stringdtype_equal_utf8_data,
+    stringdtype_endswith_unicode_data, stringdtype_endswith_utf8_data,
+    stringdtype_equal_data, stringdtype_equal_unicode_data,
+    stringdtype_equal_utf8_data,
     stringdtype_find_data, stringdtype_find_unicode_data,
     stringdtype_free_utf8_span,
     stringdtype_isalnum_data, stringdtype_isalpha_data,
@@ -23,11 +24,13 @@ from charex.numpy.stringdtype import (
     stringdtype_isupper_data, stringdtype_release_allocator,
     stringdtype_release_allocators, stringdtype_rfind_data,
     stringdtype_rfind_unicode_data, stringdtype_startswith_data,
-    stringdtype_startswith_unicode_data, stringdtype_unicode_parts,
-    stringdtype_unicode_utf8_span, stringdtype_unicode_valid,
-    unicode_count_stringdtype_data, unicode_endswith_stringdtype_data,
-    unicode_find_stringdtype_data, unicode_rfind_stringdtype_data,
-    unicode_startswith_stringdtype_data,
+    stringdtype_startswith_unicode_data, stringdtype_startswith_utf8_data,
+    stringdtype_unicode_parts, stringdtype_unicode_utf8_span,
+    stringdtype_unicode_valid, stringdtype_utf8_slice,
+    unicode_count_stringdtype_data, unicode_find_stringdtype_data,
+    unicode_rfind_stringdtype_data,
+    utf8_endswith_stringdtype_sliced_data,
+    utf8_startswith_stringdtype_sliced_data,
 )
 from charex.numpy.overloads.definitions import (
     equal, equal_sub32_bytes, equal_sub32_unicode, greater, greater_equal,
@@ -502,14 +505,28 @@ def _overload_affix(value, pattern, start, end, suffix):
                     end = e if end is None else end
                     allocator = stringdtype_acquire_allocator(value)
                     data = stringdtype_data_ptr(value)
-                    if suffix:
-                        result = stringdtype_endswith_unicode_data(
-                            data, 0, allocator, pattern, pattern_parts[0],
-                            pattern_parts[1], start, end)
+                    if pattern_parts[1] > _PACKED_STRING_SIZE:
+                        pattern_span = stringdtype_unicode_utf8_span(
+                            pattern, pattern_parts[0], pattern_parts[1])
+                        if suffix:
+                            result = stringdtype_endswith_utf8_data(
+                                data, 0, allocator, pattern_span[0],
+                                pattern_span[1], start, end)
+                        else:
+                            result = stringdtype_startswith_utf8_data(
+                                data, 0, allocator, pattern_span[0],
+                                pattern_span[1], start, end)
+                        stringdtype_free_utf8_span(pattern_span[0],
+                                                   pattern_span[2])
                     else:
-                        result = stringdtype_startswith_unicode_data(
-                            data, 0, allocator, pattern, pattern_parts[0],
-                            pattern_parts[1], start, end)
+                        if suffix:
+                            result = stringdtype_endswith_unicode_data(
+                                data, 0, allocator, pattern, pattern_parts[0],
+                                pattern_parts[1], start, end)
+                        else:
+                            result = stringdtype_startswith_unicode_data(
+                                data, 0, allocator, pattern, pattern_parts[0],
+                                pattern_parts[1], start, end)
                     stringdtype_release_allocator(allocator)
                     return result
 
@@ -526,15 +543,30 @@ def _overload_affix(value, pattern, start, end, suffix):
                     return result
                 allocator = stringdtype_acquire_allocator(value)
                 data = stringdtype_data_ptr(value)
-                for i in range(value.size):
-                    if suffix:
-                        result[i] = stringdtype_endswith_unicode_data(
-                            data, i, allocator, pattern, pattern_parts[0],
-                            pattern_parts[1], start, end)
-                    else:
-                        result[i] = stringdtype_startswith_unicode_data(
-                            data, i, allocator, pattern, pattern_parts[0],
-                            pattern_parts[1], start, end)
+                if pattern_parts[1] > _PACKED_STRING_SIZE:
+                    pattern_span = stringdtype_unicode_utf8_span(
+                        pattern, pattern_parts[0], pattern_parts[1])
+                    for i in range(value.size):
+                        if suffix:
+                            result[i] = stringdtype_endswith_utf8_data(
+                                data, i, allocator, pattern_span[0],
+                                pattern_span[1], start, end)
+                        else:
+                            result[i] = stringdtype_startswith_utf8_data(
+                                data, i, allocator, pattern_span[0],
+                                pattern_span[1], start, end)
+                    stringdtype_free_utf8_span(pattern_span[0],
+                                               pattern_span[2])
+                else:
+                    for i in range(value.size):
+                        if suffix:
+                            result[i] = stringdtype_endswith_unicode_data(
+                                data, i, allocator, pattern, pattern_parts[0],
+                                pattern_parts[1], start, end)
+                        else:
+                            result[i] = stringdtype_startswith_unicode_data(
+                                data, i, allocator, pattern, pattern_parts[0],
+                                pattern_parts[1], start, end)
                 stringdtype_release_allocator(allocator)
                 return result
 
@@ -549,17 +581,22 @@ def _overload_affix(value, pattern, start, end, suffix):
                     value_parts = stringdtype_unicode_parts(value)
                     start = start or s
                     end = e if end is None else end
+                    value_span = stringdtype_unicode_utf8_span(
+                        value, value_parts[0], value_parts[1])
+                    slice_parts = stringdtype_utf8_slice(
+                        value_span[0], value_span[1], start, end)
                     allocator = stringdtype_acquire_allocator(pattern)
                     data = stringdtype_data_ptr(pattern)
                     if suffix:
-                        result = unicode_endswith_stringdtype_data(
-                            value, data, value_parts[0], value_parts[1], 0,
-                            allocator, start, end)
+                        result = utf8_endswith_stringdtype_sliced_data(
+                            value_span[0], slice_parts[0], slice_parts[1],
+                            slice_parts[2], data, 0, allocator)
                     else:
-                        result = unicode_startswith_stringdtype_data(
-                            value, data, value_parts[0], value_parts[1], 0,
-                            allocator, start, end)
+                        result = utf8_startswith_stringdtype_sliced_data(
+                            value_span[0], slice_parts[0], slice_parts[1],
+                            slice_parts[2], data, 0, allocator)
                     stringdtype_release_allocator(allocator)
+                    stringdtype_free_utf8_span(value_span[0], value_span[2])
                     return result
 
                 return impl
@@ -573,18 +610,23 @@ def _overload_affix(value, pattern, start, end, suffix):
                 result = np.empty(pattern.size, np.bool_)
                 if pattern.size == 0:
                     return result
+                value_span = stringdtype_unicode_utf8_span(
+                    value, value_parts[0], value_parts[1])
+                slice_parts = stringdtype_utf8_slice(
+                    value_span[0], value_span[1], start, end)
                 allocator = stringdtype_acquire_allocator(pattern)
                 data = stringdtype_data_ptr(pattern)
                 for i in range(pattern.size):
                     if suffix:
-                        result[i] = unicode_endswith_stringdtype_data(
-                            value, data, value_parts[0], value_parts[1], i,
-                            allocator, start, end)
+                        result[i] = utf8_endswith_stringdtype_sliced_data(
+                            value_span[0], slice_parts[0], slice_parts[1],
+                            slice_parts[2], data, i, allocator)
                     else:
-                        result[i] = unicode_startswith_stringdtype_data(
-                            value, data, value_parts[0], value_parts[1], i,
-                            allocator, start, end)
+                        result[i] = utf8_startswith_stringdtype_sliced_data(
+                            value_span[0], slice_parts[0], slice_parts[1],
+                            slice_parts[2], data, i, allocator)
                 stringdtype_release_allocator(allocator)
+                stringdtype_free_utf8_span(value_span[0], value_span[2])
                 return result
 
             return impl

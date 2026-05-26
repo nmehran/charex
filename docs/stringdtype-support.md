@@ -427,6 +427,35 @@ Review-pass finding:
   Keep the simpler independent offset scans until a more substantial
   slice-indexing strategy is justified.
 
+Mixed Python `str` scalar checkpoint:
+
+- `StringDType` value array with Python `str` scalar prefix/suffix keeps the
+  existing codepoint bridge for scalar patterns up to the 16-byte packed-record
+  size and uses one pre-encoded UTF-8 scalar span for longer patterns.
+- Python `str` scalar value with `StringDType` pattern array uses one
+  pre-encoded UTF-8 value span and normalizes the scalar slice once per call.
+  The rejected alternative normalized the scalar slice inside every element
+  check and lost badly except on trailing-NUL-heavy cases.
+- The 16-byte boundary is the stable `StringDType` packed-record size, matching
+  the scalar comparison bridge. It is not fitted to one benchmark case.
+
+Exploratory benchmark:
+
+```bash
+python docs/exploration/stringdtype_scalar_affix_bench.py
+```
+
+Representative 100k-row medians on Python 3.12.8, NumPy 2.4.6,
+Numba 0.65.1:
+
+| direction | case | current | NumPy | current speedup | prior unicode bridge |
+| --------- | ---- | ------- | ----- | --------------- | -------------------- |
+| value array / scalar pattern | startswith long prefix | 19.61 ms | 108.34 ms | 5.53x | 22.94 ms |
+| value array / scalar pattern | endswith long NUL | 10.96 ms | 104.81 ms | 9.57x | 19.74 ms |
+| scalar value / pattern array | startswith short slice | 0.27 ms | 1.26 ms | 4.66x | 0.38 ms |
+| scalar value / pattern array | endswith long prefix | 0.29 ms | 59.14 ms | 204.11x | 2.54 ms |
+| scalar value / pattern array | startswith long NUL | 0.60 ms | 104.75 ms | 175.59x | 24.70 ms |
+
 ## Tranche 4: Substring Search
 
 The next tranche should build on the codepoint span-slicing primitive from

@@ -715,6 +715,30 @@ def test_stringdtype_array_affix_mixed_python_str_matches_numpy(
     ('strings_startswith', STRINGS.startswith),
     ('strings_endswith', STRINGS.endswith),
 ])
+@pytest.mark.parametrize('values, scalar, args', [
+    (['a' * 256, 'x' + 'a' * 255, 'a' * 255 + 'x'], 'a' * 128, ()),
+    (['é' * 128, 'ê' + 'é' * 127, 'é' * 127 + 'ê'], 'é' * 64, ()),
+    (['🙂' * 64, '🙃' + '🙂' * 63, '🙂' * 63 + '🙃'], '🙂' * 32, ()),
+    (['a' * 128 + '\x00x', 'a' * 128 + '\x00y'],
+     'a' * 128 + '\x00z', ()),
+    (['x' + 'a' * 128 + 'x', 'x' + 'é' * 64 + 'x'],
+     'a' * 32, (1, -1)),
+])
+def test_stringdtype_array_affix_long_mixed_python_str_matches_numpy(
+        impl_name, baseline, values, scalar, args):
+    strings = StringsInformation()
+    values = stringdtype_array(values)
+
+    assert_same(getattr(strings, impl_name), baseline,
+                values, scalar, *args)
+    assert_same(getattr(strings, impl_name), baseline,
+                scalar, values, *args)
+
+
+@pytest.mark.parametrize('impl_name, baseline', [
+    ('strings_startswith', STRINGS.startswith),
+    ('strings_endswith', STRINGS.endswith),
+])
 @pytest.mark.parametrize('scalar', ['\ud800', 'a\ud800', 'a\x00\ud800'])
 def test_stringdtype_array_affix_mixed_python_str_invalid_unicode_matches_numpy(
         impl_name, baseline, scalar):

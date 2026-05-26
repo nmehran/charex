@@ -35,6 +35,7 @@ class StringDTypePacket(types.Type):
 stringdtype_packet = StringDTypePacket()
 _UNICODE_PARTS_TYPE = types.UniTuple(types.intp, 2)
 _UTF8_SPAN_TYPE = types.Tuple((types.voidptr, types.intp, types.boolean))
+_UTF8_SLICE_TYPE = types.Tuple((types.intp, types.intp, types.boolean))
 
 
 def _numpy_api_slots():
@@ -517,6 +518,41 @@ def _stringdtype_byte_compare(builder, left_size, left_buffer,
             ir.Constant(int32, -1),
         ),
     )
+
+
+def _memcmp_equal(builder, left, right, size, int8, int32):
+    memcmp_type = ir.FunctionType(
+        int32, [int8.as_pointer(), int8.as_pointer(), size.type])
+    memcmp = cgutils.get_or_insert_function(
+        builder.module, memcmp_type, 'memcmp')
+    return builder.icmp_signed(
+        '==', builder.call(memcmp, [left, right, size]),
+        ir.Constant(int32, 0),
+    )
+
+
+def _store_byte_affix_result(builder, result, value_buffer, start_offset,
+                             end_offset, slice_valid, pattern_buffer,
+                             pattern_size, suffix, intp, int8, int32):
+    slice_size = builder.sub(end_offset, start_offset)
+    empty_pattern = builder.icmp_unsigned(
+        '==', pattern_size, ir.Constant(intp, 0))
+    builder.store(builder.and_(slice_valid, empty_pattern), result)
+
+    nonempty_pattern = builder.not_(empty_pattern)
+    fits = builder.icmp_unsigned('<=', pattern_size, slice_size)
+    with builder.if_then(builder.and_(slice_valid,
+                                      builder.and_(nonempty_pattern, fits))):
+        if suffix:
+            compare_offset = builder.sub(end_offset, pattern_size)
+        else:
+            compare_offset = start_offset
+        builder.store(
+            _memcmp_equal(builder, builder.gep(value_buffer,
+                                               [compare_offset]),
+                          pattern_buffer, pattern_size, int8, int32),
+            result,
+        )
 
 
 def _utf8_strncmp_equal(builder, string_size, string_buffer, scalar_data,
@@ -2275,37 +2311,56 @@ def _stringdtype_affix_data(typingctx, value_data, value_index,
                 builder, value_size, value_buffer, start, end, intp, int8)
             pattern_effective_size = _trimmed_size(
                 builder, pattern_size, pattern_buffer, intp, int8)
-            slice_size = builder.sub(end_offset, start_offset)
-            empty_pattern = builder.icmp_unsigned(
-                '==', pattern_effective_size, ir.Constant(intp, 0))
-            builder.store(builder.and_(slice_valid, empty_pattern), result)
+            _store_byte_affix_result(
+                builder, result, value_buffer, start_offset, end_offset,
+                slice_valid, pattern_buffer, pattern_effective_size, suffix,
+                intp, int8, int32)
 
-            nonempty_pattern = builder.not_(empty_pattern)
-            fits = builder.icmp_unsigned('<=', pattern_effective_size,
-                                         slice_size)
-            with builder.if_then(builder.and_(slice_valid,
-                                              builder.and_(nonempty_pattern,
-                                                           fits))):
-                memcmp_type = ir.FunctionType(
-                    int32, [byte_ptr, byte_ptr, intp])
-                memcmp = cgutils.get_or_insert_function(
-                    builder.module, memcmp_type, 'memcmp',
-                )
-                if suffix:
-                    compare_offset = builder.sub(end_offset,
-                                                 pattern_effective_size)
-                else:
-                    compare_offset = start_offset
-                cmp_buffer = builder.gep(value_buffer, [compare_offset])
-                cmp_result = builder.call(
-                    memcmp, [cmp_buffer, pattern_buffer,
-                             pattern_effective_size],
-                )
-                builder.store(
-                    builder.icmp_signed('==', cmp_result,
-                                        ir.Constant(int32, 0)),
-                    result,
-                )
+        return builder.load(result)
+
+    return sig, codegen
+
+
+def _stringdtype_utf8_affix_data(typingctx, value_data, value_index,
+                                 value_allocator, pattern_data, pattern_size,
+                                 start, end, suffix):
+    if value_data != types.voidptr \
+            or not isinstance(value_index, types.Integer) \
+            or value_allocator != types.voidptr \
+            or pattern_data != types.voidptr \
+            or not isinstance(pattern_size, types.Integer) \
+            or not isinstance(start, types.Integer) \
+            or not isinstance(end, types.Integer):
+        return None
+
+    sig = signature(types.boolean, value_data, types.intp, value_allocator,
+                    pattern_data, types.intp, types.intp, types.intp)
+
+    def codegen(context, builder, signature, args):
+        value_data, value_index_value, value_allocator, pattern_data, \
+            pattern_size, start, end = args
+
+        int8 = ir.IntType(8)
+        int32 = ir.IntType(32)
+        intp = context.get_value_type(types.intp)
+        byte_ptr = int8.as_pointer()
+        value_packed = _packed_string_ptr_from_data(
+            builder, value_data, value_index_value, intp)
+        value_status, value_size, value_buffer = _load_string(
+            builder, value_allocator, value_packed, intp, byte_ptr)
+
+        result = cgutils.alloca_once(builder, ir.IntType(1))
+        builder.store(cgutils.false_bit, result)
+        value_valid = builder.icmp_signed(
+            '==', value_status, ir.Constant(int32, 0))
+
+        with builder.if_then(value_valid):
+            _, _, start_offset, end_offset, slice_valid = _normalise_slice(
+                builder, value_size, value_buffer, start, end, intp, int8)
+            _store_byte_affix_result(
+                builder, result, value_buffer, start_offset, end_offset,
+                slice_valid, pattern_data, pattern_size, suffix, intp, int8,
+                int32)
 
         return builder.load(result)
 
@@ -2453,6 +2508,78 @@ def _unicode_stringdtype_affix_data(typingctx, value, pattern_data,
     return sig, codegen
 
 
+def _utf8_stringdtype_sliced_affix_data(
+        typingctx, value_data, start_offset, end_offset, slice_valid,
+        pattern_data, pattern_index, pattern_allocator, suffix):
+    if value_data != types.voidptr \
+            or not isinstance(start_offset, types.Integer) \
+            or not isinstance(end_offset, types.Integer) \
+            or not isinstance(slice_valid, types.Boolean) \
+            or pattern_data != types.voidptr \
+            or not isinstance(pattern_index, types.Integer) \
+            or pattern_allocator != types.voidptr:
+        return None
+
+    sig = signature(types.boolean, value_data, types.intp, types.intp,
+                    types.boolean, pattern_data, types.intp,
+                    pattern_allocator)
+
+    def codegen(context, builder, signature, args):
+        value_data, start_offset, end_offset, slice_valid, pattern_data, \
+            pattern_index_value, pattern_allocator = args
+
+        int8 = ir.IntType(8)
+        int32 = ir.IntType(32)
+        intp = context.get_value_type(types.intp)
+        byte_ptr = int8.as_pointer()
+        pattern_packed = _packed_string_ptr_from_data(
+            builder, pattern_data, pattern_index_value, intp)
+        pattern_status, pattern_size, pattern_buffer = _load_string(
+            builder, pattern_allocator, pattern_packed, intp, byte_ptr)
+
+        result = cgutils.alloca_once(builder, ir.IntType(1))
+        builder.store(cgutils.false_bit, result)
+        pattern_valid = builder.icmp_signed(
+            '==', pattern_status, ir.Constant(int32, 0))
+
+        with builder.if_then(pattern_valid):
+            pattern_effective_size = _trimmed_size(
+                builder, pattern_size, pattern_buffer, intp, int8)
+            _store_byte_affix_result(
+                builder, result, value_data, start_offset, end_offset,
+                slice_valid, pattern_buffer, pattern_effective_size, suffix,
+                intp, int8, int32)
+
+        return builder.load(result)
+
+    return sig, codegen
+
+
+@intrinsic
+def stringdtype_utf8_slice(typingctx, value_data, value_size, start, end):
+    if value_data != types.voidptr \
+            or not isinstance(value_size, types.Integer) \
+            or not isinstance(start, types.Integer) \
+            or not isinstance(end, types.Integer):
+        return None
+
+    sig = signature(_UTF8_SLICE_TYPE, value_data, types.intp, types.intp,
+                    types.intp)
+
+    def codegen(context, builder, signature, args):
+        value_data, value_size, start, end = args
+        int8 = ir.IntType(8)
+        intp = context.get_value_type(types.intp)
+        _, _, start_offset, end_offset, slice_valid = _normalise_slice(
+            builder, value_size, value_data, start, end, intp, int8)
+        return context.make_tuple(
+            builder, signature.return_type,
+            [start_offset, end_offset, slice_valid],
+        )
+
+    return sig, codegen
+
+
 @intrinsic
 def stringdtype_startswith_data(typingctx, value_data, value_index,
                                 value_allocator, pattern_data, pattern_index,
@@ -2470,6 +2597,26 @@ def stringdtype_endswith_data(typingctx, value_data, value_index,
     return _stringdtype_affix_data(
         typingctx, value_data, value_index, value_allocator,
         pattern_data, pattern_index, pattern_allocator, start, end, True,
+    )
+
+
+@intrinsic
+def stringdtype_startswith_utf8_data(typingctx, value_data, value_index,
+                                     value_allocator, pattern_data,
+                                     pattern_size, start, end):
+    return _stringdtype_utf8_affix_data(
+        typingctx, value_data, value_index, value_allocator, pattern_data,
+        pattern_size, start, end, False,
+    )
+
+
+@intrinsic
+def stringdtype_endswith_utf8_data(typingctx, value_data, value_index,
+                                   value_allocator, pattern_data,
+                                   pattern_size, start, end):
+    return _stringdtype_utf8_affix_data(
+        typingctx, value_data, value_index, value_allocator, pattern_data,
+        pattern_size, start, end, True,
     )
 
 
@@ -2514,6 +2661,26 @@ def unicode_endswith_stringdtype_data(typingctx, value, pattern_data,
     return _unicode_stringdtype_affix_data(
         typingctx, value, pattern_data, value_length, value_size,
         pattern_index, pattern_allocator, start, end, True,
+    )
+
+
+@intrinsic
+def utf8_startswith_stringdtype_sliced_data(
+        typingctx, value_data, start_offset, end_offset, slice_valid,
+        pattern_data, pattern_index, pattern_allocator):
+    return _utf8_stringdtype_sliced_affix_data(
+        typingctx, value_data, start_offset, end_offset, slice_valid,
+        pattern_data, pattern_index, pattern_allocator, False,
+    )
+
+
+@intrinsic
+def utf8_endswith_stringdtype_sliced_data(
+        typingctx, value_data, start_offset, end_offset, slice_valid,
+        pattern_data, pattern_index, pattern_allocator):
+    return _utf8_stringdtype_sliced_affix_data(
+        typingctx, value_data, start_offset, end_offset, slice_valid,
+        pattern_data, pattern_index, pattern_allocator, True,
     )
 
 
