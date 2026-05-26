@@ -1019,14 +1019,16 @@ Remaining scalar bridge work:
 
 Fixed-width Unicode array checkpoint:
 
-- Implemented one-dimensional C-contiguous fixed-width Unicode arrays mixed
-  with scalar/0-D/1-D default `StringDType`.
+- Implemented one-dimensional fixed-width Unicode arrays mixed with
+  scalar/0-D/1-D default `StringDType`.
 - The first implementation uses the existing Unicode scalar bridge per element:
   `str(value[i])`, then the same StringDType-vs-Unicode intrinsics already used
   by Python `str` and 0-D fixed-width Unicode operands.
 - This keeps the code path simple and exact, with no new raw fixed-width `U`
   memory intrinsics yet. A future performance branch can revisit direct `U`
   buffer access if broader benchmarking justifies the extra surface.
+- Fixed-width Unicode arrays do not need to be C-contiguous for this path
+  because the kernels only use normal indexed access on the Unicode side.
 
 200k-row sanity medians on Python 3.12.8, NumPy 2.4.6, Numba 0.65.1:
 

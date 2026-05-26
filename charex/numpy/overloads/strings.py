@@ -94,9 +94,6 @@ def _validate_unicode_array(value):
     if value.ndim > 1:
         raise NumbaValueError('charex StringDType support currently '
                               'requires scalar or one-dimensional arrays')
-    if value.ndim == 1 and value.layout != 'C':
-        raise NumbaValueError('charex requires C-contiguous arrays; '
-                              'call numpy.ascontiguousarray')
 
 
 def _unicode_scalar_value(value):

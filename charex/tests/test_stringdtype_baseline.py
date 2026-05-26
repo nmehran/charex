@@ -261,6 +261,31 @@ def test_stringdtype_mixed_unicode_array_nul_matches_numpy(
     ('strings_find', STRINGS.find),
     ('strings_rfind', STRINGS.rfind),
     ('strings_count', STRINGS.count),
+])
+def test_stringdtype_mixed_noncontiguous_unicode_array_matches_numpy(
+        impl_name, baseline):
+    values = stringdtype_array(['a', 'b', 'a\x00x'])
+    patterns = stringdtype_array(['a', 'b', 'a\x00x'])
+    unicode_values = np.array(['a', 'x', 'b', 'y', 'a\x00x', 'z'],
+                              dtype='U8')[::2]
+    unicode_patterns = np.array(['a', 'x', 'b', 'y', 'a\x00x', 'z'],
+                                dtype='U8')[::2]
+
+    assert_same(strings_impl(impl_name), baseline,
+                values, unicode_patterns)
+    assert_same(strings_impl(impl_name), baseline,
+                unicode_values, patterns)
+
+
+@pytest.mark.parametrize('impl_name, baseline', [
+    ('strings_equal', STRINGS.equal),
+    ('strings_not_equal', STRINGS.not_equal),
+    *STRINGDTYPE_ORDER_COMPARISONS,
+    ('strings_startswith', STRINGS.startswith),
+    ('strings_endswith', STRINGS.endswith),
+    ('strings_find', STRINGS.find),
+    ('strings_rfind', STRINGS.rfind),
+    ('strings_count', STRINGS.count),
     ('strings_index', STRINGS.index),
     ('strings_rindex', STRINGS.rindex),
 ])
@@ -316,6 +341,23 @@ def test_stringdtype_mixed_bytes_operands_are_rejected(
         baseline(operand, values)
     with pytest.raises(Exception):
         strings_impl(impl_name)(operand, values)
+
+
+@pytest.mark.parametrize('impl_name, baseline', [
+    ('strings_equal', STRINGS.equal),
+    ('strings_greater', STRINGS.greater),
+    ('strings_startswith', STRINGS.startswith),
+    ('strings_find', STRINGS.find),
+])
+def test_stringdtype_mixed_unicode_array_invalid_unicode_matches_numpy(
+        impl_name, baseline):
+    values = stringdtype_array(['a', 'b'])
+    unicode_values = np.array(['a', '\ud800'], dtype='U8')
+
+    assert_same_exception(strings_impl(impl_name), baseline,
+                          values, unicode_values)
+    assert_same_exception(strings_impl(impl_name), baseline,
+                          unicode_values, values)
 
 
 def test_numpy_stringdtype_strlen_counts_codepoints():
