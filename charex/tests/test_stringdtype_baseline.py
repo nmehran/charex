@@ -902,18 +902,75 @@ def test_stringdtype_array_search_rejects_multidimensional_arrays(impl_name):
     'strings_find',
     'strings_rfind',
     'strings_count',
-    'strings_index',
-    'strings_rindex',
 ])
-@pytest.mark.parametrize('scalar_left', [False, True])
-def test_stringdtype_array_search_rejects_mixed_stringdtype_inputs(
-        impl_name, scalar_left):
+@pytest.mark.parametrize('scalar', [
+    'a', 'a\x00', 'a\x00x', '\x00', '\x00x', '', 'é', '🙂',
+])
+@pytest.mark.parametrize('args', [(), (0, None), (1, None), (0, -1)])
+def test_stringdtype_array_search_mixed_python_str_matches_numpy(
+        impl_name, scalar, args):
+    strings = StringsInformation()
+    baseline = {
+        'strings_find': STRINGS.find,
+        'strings_rfind': STRINGS.rfind,
+        'strings_count': STRINGS.count,
+    }[impl_name]
+    values = stringdtype_array([
+        'abcabc', 'a\x00bc', 'a\x00x', 'a\x00y', '\x00', '\x00x',
+        '', 'éfgé', '🙂a🙂',
+    ])
+
+    assert_same(getattr(strings, impl_name), baseline, values, scalar, *args)
+    assert_same(getattr(strings, impl_name), baseline, scalar, values, *args)
+
+
+@pytest.mark.parametrize('impl_name, baseline', [
+    ('strings_index', STRINGS.index),
+    ('strings_rindex', STRINGS.rindex),
+])
+@pytest.mark.parametrize('args', [(), (0, None)])
+def test_stringdtype_array_index_mixed_python_str_matches_numpy(
+        impl_name, baseline, args):
+    strings = StringsInformation()
+    values = stringdtype_array(['abcabc', 'a', 'ba', 'a🙂', 'éa'])
+    patterns = stringdtype_array(['a', 'bc', 'abc', '', 'é'])
+    value = 'abcabcé🙂'
+    pattern = 'a'
+
+    assert_same(getattr(strings, impl_name), baseline, values, pattern, *args)
+    assert_same(getattr(strings, impl_name), baseline, value, patterns, *args)
+
+
+@pytest.mark.parametrize('impl_name, baseline', [
+    ('strings_index', STRINGS.index),
+    ('strings_rindex', STRINGS.rindex),
+])
+def test_stringdtype_array_index_mixed_python_str_not_found_matches_numpy(
+        impl_name, baseline):
+    strings = StringsInformation()
+    values = stringdtype_array(['abc', 'def'])
+    patterns = stringdtype_array(['a', 'z'])
+
+    assert_same_exception(getattr(strings, impl_name), baseline, values, 'z')
+    assert_same_exception(getattr(strings, impl_name), baseline, 'abc',
+                          patterns)
+
+
+@pytest.mark.parametrize('impl_name, baseline', [
+    ('strings_find', STRINGS.find),
+    ('strings_rfind', STRINGS.rfind),
+    ('strings_count', STRINGS.count),
+    ('strings_index', STRINGS.index),
+    ('strings_rindex', STRINGS.rindex),
+])
+@pytest.mark.parametrize('scalar', ['\ud800', 'a\ud800', 'a\x00\ud800'])
+def test_stringdtype_array_search_mixed_python_str_invalid_unicode_matches_numpy(
+        impl_name, baseline, scalar):
     strings = StringsInformation()
     values = stringdtype_array(['a', 'b'])
-    args = ('a', values) if scalar_left else (values, 'a')
 
-    with pytest.raises(TypingError, match='two StringDType arrays'):
-        getattr(strings, impl_name)(*args)
+    assert_same_exception(getattr(strings, impl_name), baseline, values, scalar)
+    assert_same_exception(getattr(strings, impl_name), baseline, scalar, values)
 
 
 @pytest.mark.parametrize('impl_name, baseline', [

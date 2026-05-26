@@ -891,6 +891,261 @@ def _normalise_unicode_slice(builder, length, start, end, intp):
     return start_index, end_index, valid
 
 
+def _stringdtype_unicode_search(builder, value_size, value_buffer, pattern,
+                                context, start, end, mode, intp, int8, int32):
+    zero = ir.Constant(intp, 0)
+    one = ir.Constant(intp, 1)
+    result = cgutils.alloca_once(builder, intp)
+    if mode == 'count':
+        builder.store(zero, result)
+    else:
+        builder.store(ir.Constant(intp, -1), result)
+
+    unicode_struct, pattern_length, pattern_size = _unicode_parts(
+        context, builder, pattern, intp, int32)
+    start_index, end_index, start_offset, end_offset, slice_valid = \
+        _normalise_slice(builder, value_size, value_buffer, start, end, intp,
+                         int8)
+    empty_pattern = builder.icmp_unsigned('==', pattern_size, zero)
+    with builder.if_then(builder.and_(slice_valid, empty_pattern)):
+        if mode == 'find':
+            builder.store(start_index, result)
+        elif mode == 'rfind':
+            builder.store(end_index, result)
+        else:
+            builder.store(builder.add(builder.sub(end_index, start_index),
+                                      one), result)
+
+    slice_size = builder.sub(end_offset, start_offset)
+    nonempty_pattern = builder.not_(empty_pattern)
+    fits = builder.icmp_unsigned('<=', pattern_size, slice_size)
+    with builder.if_then(builder.and_(slice_valid,
+                                      builder.and_(nonempty_pattern, fits))):
+        found = cgutils.alloca_once(builder, ir.IntType(1))
+        builder.store(cgutils.false_bit, found)
+
+        if mode == 'rfind':
+            pos = cgutils.alloca_once(builder, intp)
+            last = builder.sub(end_offset, pattern_size)
+            builder.store(last, pos)
+            cond = builder.append_basic_block('stringdtype.unicode.rfind.cond')
+            body = builder.append_basic_block('stringdtype.unicode.rfind.body')
+            decrement = builder.append_basic_block(
+                'stringdtype.unicode.rfind.decrement')
+            after = builder.append_basic_block('stringdtype.unicode.rfind.after')
+            builder.branch(cond)
+
+            builder.position_at_end(cond)
+            in_range = builder.icmp_signed('>=', builder.load(pos),
+                                           start_offset)
+            builder.cbranch(builder.and_(in_range,
+                                         builder.not_(builder.load(found))),
+                            body, after)
+
+            builder.position_at_end(body)
+            matched = _stringdtype_unicode_region_equal(
+                builder, value_buffer, builder.load(pos), unicode_struct,
+                zero, pattern_length, intp, int8, int32)
+            with builder.if_then(matched):
+                builder.store(
+                    _codepoint_count(builder, builder.load(pos), value_buffer,
+                                     intp, int8),
+                    result,
+                )
+                builder.store(cgutils.true_bit, found)
+            builder.branch(decrement)
+
+            builder.position_at_end(decrement)
+            builder.store(builder.sub(builder.load(pos), one), pos)
+            builder.branch(cond)
+
+            builder.position_at_end(after)
+        else:
+            pos = cgutils.alloca_once(builder, intp)
+            last = builder.sub(end_offset, pattern_size)
+            builder.store(start_offset, pos)
+            cond = builder.append_basic_block('stringdtype.unicode.find.cond')
+            body = builder.append_basic_block('stringdtype.unicode.find.body')
+            advance = builder.append_basic_block(
+                'stringdtype.unicode.find.advance')
+            after = builder.append_basic_block('stringdtype.unicode.find.after')
+            builder.branch(cond)
+
+            builder.position_at_end(cond)
+            in_range = builder.icmp_signed('<=', builder.load(pos), last)
+            continue_search = in_range
+            if mode == 'find':
+                continue_search = builder.and_(
+                    in_range, builder.not_(builder.load(found)))
+            builder.cbranch(continue_search, body, after)
+
+            builder.position_at_end(body)
+            matched = _stringdtype_unicode_region_equal(
+                builder, value_buffer, builder.load(pos), unicode_struct,
+                zero, pattern_length, intp, int8, int32)
+            with builder.if_then(matched):
+                if mode == 'find':
+                    builder.store(
+                        _codepoint_count(builder, builder.load(pos),
+                                         value_buffer, intp, int8),
+                        result,
+                    )
+                    builder.store(cgutils.true_bit, found)
+                else:
+                    builder.store(builder.add(builder.load(result), one),
+                                  result)
+            builder.branch(advance)
+
+            builder.position_at_end(advance)
+            if mode == 'count':
+                next_match = builder.add(builder.load(pos), pattern_size)
+                next_scan = builder.add(builder.load(pos), one)
+                builder.store(
+                    builder.select(matched, next_match, next_scan),
+                    pos,
+                )
+            else:
+                builder.store(builder.add(builder.load(pos), one), pos)
+            builder.branch(cond)
+
+            builder.position_at_end(after)
+
+    return builder.load(result)
+
+
+def _unicode_stringdtype_search(builder, value, pattern_size, pattern_buffer,
+                                context, start, end, mode, intp, int8, int32):
+    zero = ir.Constant(intp, 0)
+    one = ir.Constant(intp, 1)
+    result = cgutils.alloca_once(builder, intp)
+    if mode == 'count':
+        builder.store(zero, result)
+    else:
+        builder.store(ir.Constant(intp, -1), result)
+
+    unicode_struct, value_length, _ = _unicode_parts(
+        context, builder, value, intp, int32)
+    start_index, end_index, slice_valid = _normalise_unicode_slice(
+        builder, value_length, start, end, intp)
+    pattern_effective_size = _trimmed_size(
+        builder, pattern_size, pattern_buffer, intp, int8)
+    empty_pattern = builder.icmp_unsigned('==', pattern_effective_size, zero)
+    if mode == 'count':
+        pattern_match_size = builder.select(empty_pattern, zero, pattern_size)
+    else:
+        short_pattern = builder.icmp_unsigned('<=', pattern_effective_size,
+                                              one)
+        pattern_match_size = builder.select(short_pattern,
+                                            pattern_effective_size,
+                                            pattern_size)
+    pattern_match_length = _codepoint_count(
+        builder, pattern_match_size, pattern_buffer, intp, int8)
+
+    with builder.if_then(builder.and_(slice_valid, empty_pattern)):
+        if mode == 'find':
+            builder.store(start_index, result)
+        elif mode == 'rfind':
+            builder.store(end_index, result)
+        else:
+            builder.store(builder.add(builder.sub(end_index, start_index),
+                                      one), result)
+
+    slice_length = builder.sub(end_index, start_index)
+    nonempty_pattern = builder.not_(empty_pattern)
+    fits = builder.icmp_unsigned('<=', pattern_match_length, slice_length)
+    with builder.if_then(builder.and_(slice_valid,
+                                      builder.and_(nonempty_pattern, fits))):
+        found = cgutils.alloca_once(builder, ir.IntType(1))
+        builder.store(cgutils.false_bit, found)
+
+        if mode == 'rfind':
+            pos = cgutils.alloca_once(builder, intp)
+            last = builder.sub(end_index, pattern_match_length)
+            builder.store(last, pos)
+            cond = builder.append_basic_block(
+                'stringdtype.unicode.value.rfind.cond')
+            body = builder.append_basic_block(
+                'stringdtype.unicode.value.rfind.body')
+            decrement = builder.append_basic_block(
+                'stringdtype.unicode.value.rfind.decrement')
+            after = builder.append_basic_block(
+                'stringdtype.unicode.value.rfind.after')
+            builder.branch(cond)
+
+            builder.position_at_end(cond)
+            in_range = builder.icmp_signed('>=', builder.load(pos),
+                                           start_index)
+            builder.cbranch(builder.and_(in_range,
+                                         builder.not_(builder.load(found))),
+                            body, after)
+
+            builder.position_at_end(body)
+            matched = _unicode_stringdtype_region_equal(
+                builder, unicode_struct, builder.load(pos), pattern_buffer,
+                pattern_match_size, intp, int8, int32)
+            with builder.if_then(matched):
+                builder.store(builder.load(pos), result)
+                builder.store(cgutils.true_bit, found)
+            builder.branch(decrement)
+
+            builder.position_at_end(decrement)
+            builder.store(builder.sub(builder.load(pos), one), pos)
+            builder.branch(cond)
+
+            builder.position_at_end(after)
+        else:
+            pos = cgutils.alloca_once(builder, intp)
+            last = builder.sub(end_index, pattern_match_length)
+            builder.store(start_index, pos)
+            cond = builder.append_basic_block(
+                'stringdtype.unicode.value.find.cond')
+            body = builder.append_basic_block(
+                'stringdtype.unicode.value.find.body')
+            advance = builder.append_basic_block(
+                'stringdtype.unicode.value.find.advance')
+            after = builder.append_basic_block(
+                'stringdtype.unicode.value.find.after')
+            builder.branch(cond)
+
+            builder.position_at_end(cond)
+            in_range = builder.icmp_signed('<=', builder.load(pos), last)
+            continue_search = in_range
+            if mode == 'find':
+                continue_search = builder.and_(
+                    in_range, builder.not_(builder.load(found)))
+            builder.cbranch(continue_search, body, after)
+
+            builder.position_at_end(body)
+            matched = _unicode_stringdtype_region_equal(
+                builder, unicode_struct, builder.load(pos), pattern_buffer,
+                pattern_match_size, intp, int8, int32)
+            with builder.if_then(matched):
+                if mode == 'find':
+                    builder.store(builder.load(pos), result)
+                    builder.store(cgutils.true_bit, found)
+                else:
+                    builder.store(builder.add(builder.load(result), one),
+                                  result)
+            builder.branch(advance)
+
+            builder.position_at_end(advance)
+            if mode == 'count':
+                next_match = builder.add(builder.load(pos),
+                                         pattern_match_length)
+                next_scan = builder.add(builder.load(pos), one)
+                builder.store(
+                    builder.select(matched, next_match, next_scan),
+                    pos,
+                )
+            else:
+                builder.store(builder.add(builder.load(pos), one), pos)
+            builder.branch(cond)
+
+            builder.position_at_end(after)
+
+    return builder.load(result)
+
+
 def _codepoint_offset(builder, size, buffer, target, intp, int8):
     offset = cgutils.alloca_once(builder, intp)
     count = cgutils.alloca_once(builder, intp)
@@ -2015,6 +2270,158 @@ def stringdtype_count_data(typingctx, value_data, value_index, value_allocator,
     return _stringdtype_search_data(
         typingctx, value_data, value_index, value_allocator,
         pattern_data, pattern_index, pattern_allocator, start, end, 'count',
+    )
+
+
+def _stringdtype_unicode_search_data(typingctx, value_data, value_index,
+                                     value_allocator, pattern, start, end,
+                                     mode):
+    if value_data != types.voidptr \
+            or not isinstance(value_index, types.Integer) \
+            or value_allocator != types.voidptr \
+            or not isinstance(pattern, types.UnicodeType) \
+            or not isinstance(start, types.Integer) \
+            or not isinstance(end, types.Integer):
+        return None
+
+    sig = signature(types.intp, value_data, types.intp, value_allocator,
+                    pattern, types.intp, types.intp)
+
+    def codegen(context, builder, signature, args):
+        value_data, value_index_value, value_allocator, pattern, start, end = \
+            args
+
+        int8 = ir.IntType(8)
+        int32 = ir.IntType(32)
+        intp = context.get_value_type(types.intp)
+        byte_ptr = int8.as_pointer()
+        value_packed = _packed_string_ptr_from_data(
+            builder, value_data, value_index_value, intp)
+        value_status, value_size, value_buffer = _load_string(
+            builder, value_allocator, value_packed, intp, byte_ptr)
+
+        result = cgutils.alloca_once(builder, intp)
+        if mode == 'count':
+            builder.store(ir.Constant(intp, 0), result)
+        else:
+            builder.store(ir.Constant(intp, -1), result)
+        valid = builder.icmp_signed('==', value_status, ir.Constant(int32, 0))
+        with builder.if_then(valid):
+            builder.store(
+                _stringdtype_unicode_search(
+                    builder, value_size, value_buffer, pattern, context,
+                    start, end, mode, intp, int8, int32,
+                ),
+                result,
+            )
+
+        return builder.load(result)
+
+    return sig, codegen
+
+
+def _unicode_stringdtype_search_data(typingctx, value, pattern_data,
+                                     pattern_index, pattern_allocator, start,
+                                     end, mode):
+    if not isinstance(value, types.UnicodeType) \
+            or pattern_data != types.voidptr \
+            or not isinstance(pattern_index, types.Integer) \
+            or pattern_allocator != types.voidptr \
+            or not isinstance(start, types.Integer) \
+            or not isinstance(end, types.Integer):
+        return None
+
+    sig = signature(types.intp, value, pattern_data, types.intp,
+                    pattern_allocator, types.intp, types.intp)
+
+    def codegen(context, builder, signature, args):
+        value, pattern_data, pattern_index_value, pattern_allocator, \
+            start, end = args
+
+        int8 = ir.IntType(8)
+        int32 = ir.IntType(32)
+        intp = context.get_value_type(types.intp)
+        byte_ptr = int8.as_pointer()
+        pattern_packed = _packed_string_ptr_from_data(
+            builder, pattern_data, pattern_index_value, intp)
+        pattern_status, pattern_size, pattern_buffer = _load_string(
+            builder, pattern_allocator, pattern_packed, intp, byte_ptr)
+
+        result = cgutils.alloca_once(builder, intp)
+        if mode == 'count':
+            builder.store(ir.Constant(intp, 0), result)
+        else:
+            builder.store(ir.Constant(intp, -1), result)
+        valid = builder.icmp_signed('==', pattern_status,
+                                    ir.Constant(int32, 0))
+        with builder.if_then(valid):
+            builder.store(
+                _unicode_stringdtype_search(
+                    builder, value, pattern_size, pattern_buffer, context,
+                    start, end, mode, intp, int8, int32,
+                ),
+                result,
+            )
+
+        return builder.load(result)
+
+    return sig, codegen
+
+
+@intrinsic
+def stringdtype_find_unicode_data(typingctx, value_data, value_index,
+                                  value_allocator, pattern, start, end):
+    return _stringdtype_unicode_search_data(
+        typingctx, value_data, value_index, value_allocator, pattern, start,
+        end, 'find',
+    )
+
+
+@intrinsic
+def stringdtype_rfind_unicode_data(typingctx, value_data, value_index,
+                                   value_allocator, pattern, start, end):
+    return _stringdtype_unicode_search_data(
+        typingctx, value_data, value_index, value_allocator, pattern, start,
+        end, 'rfind',
+    )
+
+
+@intrinsic
+def stringdtype_count_unicode_data(typingctx, value_data, value_index,
+                                   value_allocator, pattern, start, end):
+    return _stringdtype_unicode_search_data(
+        typingctx, value_data, value_index, value_allocator, pattern, start,
+        end, 'count',
+    )
+
+
+@intrinsic
+def unicode_find_stringdtype_data(typingctx, value, pattern_data,
+                                  pattern_index, pattern_allocator, start,
+                                  end):
+    return _unicode_stringdtype_search_data(
+        typingctx, value, pattern_data, pattern_index, pattern_allocator,
+        start, end, 'find',
+    )
+
+
+@intrinsic
+def unicode_rfind_stringdtype_data(typingctx, value, pattern_data,
+                                   pattern_index, pattern_allocator, start,
+                                   end):
+    return _unicode_stringdtype_search_data(
+        typingctx, value, pattern_data, pattern_index, pattern_allocator,
+        start, end, 'rfind',
+    )
+
+
+@intrinsic
+def unicode_count_stringdtype_data(typingctx, value, pattern_data,
+                                   pattern_index, pattern_allocator, start,
+                                   end):
+    return _unicode_stringdtype_search_data(
+        typingctx, value, pattern_data, pattern_index, pattern_allocator,
+        start, end, 'count',
     )
 
 

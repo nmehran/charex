@@ -9,17 +9,21 @@ from charex.numpy.stringdtype import (
     is_stringdtype_array_type, stringdtype_acquire_allocator,
     stringdtype_acquire_allocators, stringdtype_codepoint_len_data,
     stringdtype_compare_data, stringdtype_compare_unicode_data,
-    stringdtype_count_data, stringdtype_data_ptr, stringdtype_endswith_data,
+    stringdtype_count_data, stringdtype_count_unicode_data,
+    stringdtype_data_ptr, stringdtype_endswith_data,
     stringdtype_endswith_unicode_data, stringdtype_equal_data,
     stringdtype_equal_unicode_data, stringdtype_find_data,
+    stringdtype_find_unicode_data,
     stringdtype_isalnum_data, stringdtype_isalpha_data,
     stringdtype_isdecimal_data, stringdtype_isdigit_data,
     stringdtype_islower_data, stringdtype_isnumeric_data,
     stringdtype_isspace_data, stringdtype_istitle_data,
     stringdtype_isupper_data, stringdtype_release_allocator,
     stringdtype_release_allocators, stringdtype_rfind_data,
-    stringdtype_startswith_data, stringdtype_startswith_unicode_data,
-    stringdtype_unicode_valid, unicode_endswith_stringdtype_data,
+    stringdtype_rfind_unicode_data, stringdtype_startswith_data,
+    stringdtype_startswith_unicode_data, stringdtype_unicode_valid,
+    unicode_count_stringdtype_data, unicode_endswith_stringdtype_data,
+    unicode_find_stringdtype_data, unicode_rfind_stringdtype_data,
     unicode_startswith_stringdtype_data,
 )
 from charex.numpy.overloads.definitions import (
@@ -541,14 +545,135 @@ def _overload_affix(value, pattern, start, end, suffix):
 
 
 def _overload_search(value, pattern, start, end, op):
-    if is_stringdtype_array_type(value) or is_stringdtype_array_type(pattern):
-        if not is_stringdtype_array_type(value) \
-                or not is_stringdtype_array_type(pattern):
+    value_stringdtype = is_stringdtype_array_type(value)
+    pattern_stringdtype = is_stringdtype_array_type(pattern)
+    if value_stringdtype or pattern_stringdtype:
+        s, e = ensure_slice(start, end)
+        forward = op == 'find' or op == 'index'
+        reverse = op == 'rfind' or op == 'rindex'
+        raise_not_found = op == 'index' or op == 'rindex'
+
+        if value_stringdtype and _is_unicode_scalar(pattern):
+            _validate_stringdtype_array(value)
+            if value.ndim == 0:
+                def impl(value, pattern, start=0, end=None):
+                    if not stringdtype_unicode_valid(pattern):
+                        raise TypeError('Invalid unicode code point found')
+                    start = start or s
+                    end = e if end is None else end
+                    allocator = stringdtype_acquire_allocator(value)
+                    data = stringdtype_data_ptr(value)
+                    if forward:
+                        found = stringdtype_find_unicode_data(
+                            data, 0, allocator, pattern, start, end)
+                    elif reverse:
+                        found = stringdtype_rfind_unicode_data(
+                            data, 0, allocator, pattern, start, end)
+                    else:
+                        found = stringdtype_count_unicode_data(
+                            data, 0, allocator, pattern, start, end)
+                    stringdtype_release_allocator(allocator)
+                    if raise_not_found and found < 0:
+                        raise ValueError('substring not found')
+                    return found
+
+                return impl
+
+            def impl(value, pattern, start=0, end=None):
+                if not stringdtype_unicode_valid(pattern):
+                    raise TypeError('Invalid unicode code point found')
+                start = start or s
+                end = e if end is None else end
+                result = np.empty(value.size, np.int64)
+                if value.size == 0:
+                    return result
+                allocator = stringdtype_acquire_allocator(value)
+                data = stringdtype_data_ptr(value)
+                not_found = False
+                for i in range(value.size):
+                    if forward:
+                        found = stringdtype_find_unicode_data(
+                            data, i, allocator, pattern, start, end)
+                    elif reverse:
+                        found = stringdtype_rfind_unicode_data(
+                            data, i, allocator, pattern, start, end)
+                    else:
+                        found = stringdtype_count_unicode_data(
+                            data, i, allocator, pattern, start, end)
+                    if raise_not_found and found < 0:
+                        not_found = True
+                        break
+                    result[i] = found
+                stringdtype_release_allocator(allocator)
+                if not_found:
+                    raise ValueError('substring not found')
+                return result
+
+            return impl
+
+        if _is_unicode_scalar(value) and pattern_stringdtype:
+            _validate_stringdtype_array(pattern)
+            if pattern.ndim == 0:
+                def impl(value, pattern, start=0, end=None):
+                    if not stringdtype_unicode_valid(value):
+                        raise TypeError('Invalid unicode code point found')
+                    start = start or s
+                    end = e if end is None else end
+                    allocator = stringdtype_acquire_allocator(pattern)
+                    data = stringdtype_data_ptr(pattern)
+                    if forward:
+                        found = unicode_find_stringdtype_data(
+                            value, data, 0, allocator, start, end)
+                    elif reverse:
+                        found = unicode_rfind_stringdtype_data(
+                            value, data, 0, allocator, start, end)
+                    else:
+                        found = unicode_count_stringdtype_data(
+                            value, data, 0, allocator, start, end)
+                    stringdtype_release_allocator(allocator)
+                    if raise_not_found and found < 0:
+                        raise ValueError('substring not found')
+                    return found
+
+                return impl
+
+            def impl(value, pattern, start=0, end=None):
+                if not stringdtype_unicode_valid(value):
+                    raise TypeError('Invalid unicode code point found')
+                start = start or s
+                end = e if end is None else end
+                result = np.empty(pattern.size, np.int64)
+                if pattern.size == 0:
+                    return result
+                allocator = stringdtype_acquire_allocator(pattern)
+                data = stringdtype_data_ptr(pattern)
+                not_found = False
+                for i in range(pattern.size):
+                    if forward:
+                        found = unicode_find_stringdtype_data(
+                            value, data, i, allocator, start, end)
+                    elif reverse:
+                        found = unicode_rfind_stringdtype_data(
+                            value, data, i, allocator, start, end)
+                    else:
+                        found = unicode_count_stringdtype_data(
+                            value, data, i, allocator, start, end)
+                    if raise_not_found and found < 0:
+                        not_found = True
+                        break
+                    result[i] = found
+                stringdtype_release_allocator(allocator)
+                if not_found:
+                    raise ValueError('substring not found')
+                return result
+
+            return impl
+
+        if not value_stringdtype or not pattern_stringdtype:
             raise NumbaValueError('StringDType search operations currently '
                                   'require two StringDType arrays')
         _validate_stringdtype_array(value)
         _validate_stringdtype_array(pattern)
-        s, e = ensure_slice(start, end)
 
         if value.ndim == 0 and pattern.ndim == 0:
             def impl(value, pattern, start=0, end=None):
@@ -601,9 +726,6 @@ def _overload_search(value, pattern, start, end, op):
             pattern_allocator = allocators[1]
             value_data = stringdtype_data_ptr(value)
             pattern_data = stringdtype_data_ptr(pattern)
-            forward = op == 'find' or op == 'index'
-            reverse = op == 'rfind' or op == 'rindex'
-            raise_not_found = op == 'index' or op == 'rindex'
             not_found = False
             for i in range(size):
                 value_index = 0 if value_scalar else i

@@ -896,9 +896,10 @@ Checkpoint:
   comparison behavior, and rejects invalid surrogate code points like NumPy.
 - Python `str` mixed `startswith` and `endswith` now use the same scalar bridge
   with explicit slice normalization for the Unicode-value side.
-- Python `str` mixed search calls remain the next bridge. They need separate
-  substring logic and should not be implemented as blind aliases to the packed
-  `StringDType` array-array path.
+- Python `str` mixed `find`, `rfind`, `count`, `index`, and `rindex` now use
+  explicit scalar-search paths. They preserve the distinct trailing-NUL handling
+  for `count` versus `find`/`rfind`, return codepoint indexes, and release
+  StringDType allocators before `index`/`rindex` not-found failures.
 
 ## Tranche 9: Missing Sentinels And `na_object`
 
