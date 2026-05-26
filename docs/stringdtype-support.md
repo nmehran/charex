@@ -956,6 +956,11 @@ Checkpoint:
   explicit scalar-search paths. They preserve the distinct trailing-NUL handling
   for `count` versus `find`/`rfind`, return codepoint indexes, and release
   StringDType allocators before `index`/`rindex` not-found failures.
+- NumPy `str_` scalars are typed by Numba as normal Unicode scalars and use the
+  same bridge as Python `str`.
+- 0-D fixed-width Unicode arrays mixed with `StringDType` now unbox through
+  `value[()]` and use the same Unicode scalar bridge for comparisons,
+  prefix/suffix checks, search, `index`, and `rindex`.
 
 Scalar bridge distillation:
 
@@ -994,9 +999,10 @@ Numba 0.65.1:
 
 Remaining scalar bridge work:
 
-- Scalar-only return types are covered where NumPy accepts normal Python `str`
-  inputs; NumPy scalar string variants should be audited separately before
-  expanding the public contract.
+- Scalar-only return types are covered where NumPy accepts Python `str`,
+  NumPy `str_`, and 0-D fixed-width Unicode inputs.
+- Non-scalar fixed-width Unicode arrays mixed with `StringDType` are a current
+  implementation gap. NumPy accepts them, so this is not a design rejection.
 - Keep future scalar optimizations operation-specific. The comparison bridge is
   not automatically the right shape for search or transformations.
 

@@ -145,6 +145,54 @@ def test_stringdtype_zero_dimensional_broadcast_matches_numpy(
     assert_same(strings_impl(impl_name), baseline, value, patterns)
 
 
+@pytest.mark.parametrize('impl_name, baseline', [
+    ('strings_equal', STRINGS.equal),
+    ('strings_not_equal', STRINGS.not_equal),
+    *STRINGDTYPE_ORDER_COMPARISONS,
+    ('strings_startswith', STRINGS.startswith),
+    ('strings_endswith', STRINGS.endswith),
+    ('strings_find', STRINGS.find),
+    ('strings_rfind', STRINGS.rfind),
+    ('strings_count', STRINGS.count),
+    ('strings_index', STRINGS.index),
+    ('strings_rindex', STRINGS.rindex),
+])
+@pytest.mark.parametrize('scalar_factory', [
+    pytest.param(np.str_, id='numpy-str-scalar'),
+    pytest.param(lambda value: np.array(value, dtype='U32'),
+                 id='zero-dimensional-unicode-array'),
+])
+def test_stringdtype_mixed_unicode_scalar_variants_match_numpy(
+        impl_name, baseline, scalar_factory):
+    values = stringdtype_array(['abcabc', 'a', 'ba', 'a🙂'])
+    patterns = stringdtype_array(['a', 'bc', 'abc', ''])
+    value = scalar_factory('abcabcé🙂')
+    pattern = scalar_factory('a')
+
+    assert_same(strings_impl(impl_name), baseline, values, pattern)
+    assert_same(strings_impl(impl_name), baseline, value, patterns)
+
+
+@pytest.mark.parametrize('impl_name, baseline', [
+    ('strings_equal', STRINGS.equal),
+    ('strings_not_equal', STRINGS.not_equal),
+    ('strings_startswith', STRINGS.startswith),
+    ('strings_endswith', STRINGS.endswith),
+    ('strings_find', STRINGS.find),
+    ('strings_rfind', STRINGS.rfind),
+    ('strings_count', STRINGS.count),
+])
+def test_stringdtype_mixed_zero_dimensional_unicode_nul_matches_numpy(
+        impl_name, baseline):
+    values = stringdtype_array(['a\x00x', 'a', '\x00x', ''])
+    patterns = stringdtype_array(['a\x00x', 'a', '\x00x', ''])
+    value = np.array('a\x00x', dtype='U8')
+    pattern = np.array('a\x00x', dtype='U8')
+
+    assert_same(strings_impl(impl_name), baseline, values, pattern)
+    assert_same(strings_impl(impl_name), baseline, value, patterns)
+
+
 def test_numpy_stringdtype_strlen_counts_codepoints():
     values = stringdtype_array([
         'a', 'é', '🙂', '', 'a\x00b', 'a\x00', 'a\x00\x00',
