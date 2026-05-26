@@ -296,9 +296,25 @@ def _stringdtype_istitle_ord(chr_ord):
     return bool(_PyUnicode_IsTitlecase(chr_ord))
 
 
+_SIMPLE_PROPERTY_HELPERS = {
+    'isalpha': _stringdtype_isalpha_ord,
+    'isalnum': _stringdtype_isalnum_ord,
+    'isdecimal': _stringdtype_isdecimal_ord,
+    'isdigit': _stringdtype_isdigit_ord,
+    'isnumeric': _stringdtype_isnumeric_ord,
+    'isspace': _stringdtype_isspace_ord,
+}
+
+
 def _call_property(context, builder, helper, codepoint):
     sig = signature(types.boolean, types.int32)
     return context.compile_internal(builder, helper, sig, [codepoint])
+
+
+def _load_utf8_byte(builder, buffer, offset, delta, intp, int32):
+    byte_offset = builder.add(offset, ir.Constant(intp, delta))
+    return builder.zext(builder.load(builder.gep(buffer, [byte_offset])),
+                        int32)
 
 
 def _decode_utf8_codepoint(builder, buffer, offset, intp, int8, int32):
@@ -317,12 +333,8 @@ def _decode_utf8_codepoint(builder, buffer, offset, intp, int8, int32):
                 '<', first, ir.Constant(int32, 0xe0))
             with builder.if_else(two_byte) as (two, longer):
                 with two:
-                    second = builder.zext(
-                        builder.load(builder.gep(
-                            buffer, [builder.add(
-                                offset, ir.Constant(intp, 1))])),
-                        int32,
-                    )
+                    second = _load_utf8_byte(
+                        builder, buffer, offset, 1, intp, int32)
                     value = builder.or_(
                         builder.shl(builder.and_(
                             first, ir.Constant(int32, 0x1f)),
@@ -337,18 +349,10 @@ def _decode_utf8_codepoint(builder, buffer, offset, intp, int8, int32):
                         '<', first, ir.Constant(int32, 0xf0))
                     with builder.if_else(three_byte) as (three, four):
                         with three:
-                            second = builder.zext(
-                                builder.load(builder.gep(
-                                    buffer, [builder.add(
-                                        offset, ir.Constant(intp, 1))])),
-                                int32,
-                            )
-                            third = builder.zext(
-                                builder.load(builder.gep(
-                                    buffer, [builder.add(
-                                        offset, ir.Constant(intp, 2))])),
-                                int32,
-                            )
+                            second = _load_utf8_byte(
+                                builder, buffer, offset, 1, intp, int32)
+                            third = _load_utf8_byte(
+                                builder, buffer, offset, 2, intp, int32)
                             value = builder.or_(
                                 builder.or_(
                                     builder.shl(builder.and_(
@@ -367,24 +371,12 @@ def _decode_utf8_codepoint(builder, buffer, offset, intp, int8, int32):
                                 next_offset,
                             )
                         with four:
-                            second = builder.zext(
-                                builder.load(builder.gep(
-                                    buffer, [builder.add(
-                                        offset, ir.Constant(intp, 1))])),
-                                int32,
-                            )
-                            third = builder.zext(
-                                builder.load(builder.gep(
-                                    buffer, [builder.add(
-                                        offset, ir.Constant(intp, 2))])),
-                                int32,
-                            )
-                            fourth = builder.zext(
-                                builder.load(builder.gep(
-                                    buffer, [builder.add(
-                                        offset, ir.Constant(intp, 3))])),
-                                int32,
-                            )
+                            second = _load_utf8_byte(
+                                builder, buffer, offset, 1, intp, int32)
+                            third = _load_utf8_byte(
+                                builder, buffer, offset, 2, intp, int32)
+                            fourth = _load_utf8_byte(
+                                builder, buffer, offset, 3, intp, int32)
                             value = builder.or_(
                                 builder.or_(
                                     builder.shl(builder.and_(
@@ -411,30 +403,18 @@ def _decode_utf8_codepoint(builder, buffer, offset, intp, int8, int32):
     return builder.load(codepoint), builder.load(next_offset)
 
 
-def _simple_property_helper(mode):
-    if mode == 'isalpha':
-        return _stringdtype_isalpha_ord
-    if mode == 'isalnum':
-        return _stringdtype_isalnum_ord
-    if mode == 'isdecimal':
-        return _stringdtype_isdecimal_ord
-    if mode == 'isdigit':
-        return _stringdtype_isdigit_ord
-    if mode == 'isnumeric':
-        return _stringdtype_isnumeric_ord
-    return _stringdtype_isspace_ord
-
-
 def _emit_stringdtype_predicate(context, builder, mode, size, buffer,
                                 intp, int8, int32):
     pos = cgutils.alloca_once(builder, intp)
     valid = cgutils.alloca_once(builder, ir.IntType(1))
     seen = cgutils.alloca_once(builder, ir.IntType(1))
-    cased_state = cgutils.alloca_once(builder, ir.IntType(1))
+    cased_state = None
     builder.store(ir.Constant(intp, 0), pos)
     builder.store(cgutils.true_bit, valid)
     builder.store(cgutils.false_bit, seen)
-    builder.store(cgutils.false_bit, cased_state)
+    if mode == 'istitle':
+        cased_state = cgutils.alloca_once(builder, ir.IntType(1))
+        builder.store(cgutils.false_bit, cased_state)
 
     cond = builder.append_basic_block(f'stringdtype.{mode}.cond')
     body = builder.append_basic_block(f'stringdtype.{mode}.body')
@@ -453,7 +433,7 @@ def _emit_stringdtype_predicate(context, builder, mode, size, buffer,
     if mode in {'isalpha', 'isalnum', 'isdecimal', 'isdigit',
                 'isnumeric', 'isspace'}:
         property_result = _call_property(
-            context, builder, _simple_property_helper(mode), codepoint)
+            context, builder, _SIMPLE_PROPERTY_HELPERS[mode], codepoint)
         with builder.if_else(property_result) as (passed, failed):
             with passed:
                 builder.store(cgutils.true_bit, seen)

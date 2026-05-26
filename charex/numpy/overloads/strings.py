@@ -257,29 +257,22 @@ def _overload_search(value, pattern, start, end, op):
     return ov_char_count(value, pattern, start, end)
 
 
-def _char_predicate_overload(op):
-    if op == 'isalpha':
-        return ov_char_isalpha
-    if op == 'isalnum':
-        return ov_char_isalnum
-    if op == 'isdecimal':
-        return ov_char_isdecimal
-    if op == 'isdigit':
-        return ov_char_isdigit
-    if op == 'isnumeric':
-        return ov_char_isnumeric
-    if op == 'isspace':
-        return ov_char_isspace
-    if op == 'islower':
-        return ov_char_islower
-    if op == 'isupper':
-        return ov_char_isupper
-    return ov_char_istitle
+_CHAR_PREDICATE_OVERLOADS = {
+    'isalpha': ov_char_isalpha,
+    'isalnum': ov_char_isalnum,
+    'isdecimal': ov_char_isdecimal,
+    'isdigit': ov_char_isdigit,
+    'isnumeric': ov_char_isnumeric,
+    'isspace': ov_char_isspace,
+    'islower': ov_char_islower,
+    'isupper': ov_char_isupper,
+    'istitle': ov_char_istitle,
+}
 
 
 def _overload_predicate(value, op):
     if not is_stringdtype_array_type(value):
-        return _char_predicate_overload(op)(value)
+        return _CHAR_PREDICATE_OVERLOADS[op](value)
 
     if value.ndim != 1:
         raise NumbaValueError('charex StringDType support currently '
