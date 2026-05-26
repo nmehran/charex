@@ -176,6 +176,7 @@ def test_stringdtype_mixed_unicode_scalar_variants_match_numpy(
 @pytest.mark.parametrize('impl_name, baseline', [
     ('strings_equal', STRINGS.equal),
     ('strings_not_equal', STRINGS.not_equal),
+    *STRINGDTYPE_ORDER_COMPARISONS,
     ('strings_startswith', STRINGS.startswith),
     ('strings_endswith', STRINGS.endswith),
     ('strings_find', STRINGS.find),
