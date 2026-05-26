@@ -1060,8 +1060,9 @@ Sentinel variants under test:
 
 - `np.dtypes.StringDType(na_object=None)`
 - `np.dtypes.StringDType(na_object=np.nan)`
-- `np.dtypes.StringDType(na_object="MISSING")`
-- other user-provided sentinel values accepted by NumPy
+- string sentinels, including empty and non-ASCII strings;
+- non-string, non-NaN sentinels such as `0` and `False`;
+- other user-provided sentinel values accepted by NumPy.
 
 Exploratory probe:
 
@@ -1131,10 +1132,11 @@ Prototype checkpoint:
 
 - Numba now recognizes default and sentinel `StringDType` arrays as distinct
   packet types carrying compile-time sentinel metadata.
-- `np.strings.str_len` matches NumPy for `na_object=None`, `np.nan`, and string
-  sentinels.
-- Unicode predicates match NumPy for `na_object=None`, `np.nan`, and string
-  sentinels.
+- `np.strings.str_len` matches NumPy for `na_object=None`, `np.nan`, string
+  sentinels including empty/non-ASCII text, and non-string non-NaN sentinels.
+- Unicode predicates match NumPy for `na_object=None`, `np.nan`, string
+  sentinels including empty/non-ASCII text, and non-string non-NaN sentinels.
+- 0-D sentinel arrays are covered for `str_len` and representative predicates.
 - Binary operations still reject sentinel dtypes explicitly while their exact
   operation-specific tables are built.
 

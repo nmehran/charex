@@ -26,6 +26,22 @@ def stringdtype_array(values):
     return np.array(values, dtype=STRING_DTYPE())
 
 
+NA_OBJECT_VARIANTS = [
+    None, np.nan, 'MISSING', '', 'é', '🙂', 0, False,
+]
+
+
+def na_object_is_nan_like(na_object):
+    try:
+        return bool(np.isnan(na_object))
+    except TypeError:
+        return False
+
+
+def na_object_is_string_like(na_object):
+    return isinstance(na_object, str)
+
+
 STRINGDTYPE_PREDICATES = [
     ('strings_isalpha', STRINGS.isalpha),
     ('strings_isalnum', STRINGS.isalnum),
@@ -526,7 +542,7 @@ def test_stringdtype_str_len_rejects_non_string_nulls():
         strings.strings_str_len(values)
 
 
-@pytest.mark.parametrize('na_object', [None, np.nan, 'MISSING'])
+@pytest.mark.parametrize('na_object', NA_OBJECT_VARIANTS)
 def test_stringdtype_na_object_variants_are_typed(na_object):
     values = np.array(['a', na_object, 'bb'],
                       dtype=STRING_DTYPE(na_object=na_object))
@@ -536,30 +552,60 @@ def test_stringdtype_na_object_variants_are_typed(na_object):
     assert value_type.dtype.name.startswith('StringDTypePacket')
 
 
-def test_stringdtype_string_na_object_type_includes_sentinel_text():
-    missing = typeof(np.array(['a', 'MISSING'],
-                              dtype=STRING_DTYPE(na_object='MISSING')))
-    na = typeof(np.array(['a', 'NA'], dtype=STRING_DTYPE(na_object='NA')))
+@pytest.mark.parametrize('left,right', [
+    ('MISSING', 'NA'),
+    ('é', '🙂'),
+])
+def test_stringdtype_string_na_object_type_includes_sentinel_text(
+        left, right):
+    missing = typeof(np.array(['a', left],
+                              dtype=STRING_DTYPE(na_object=left)))
+    na = typeof(np.array(['a', right], dtype=STRING_DTYPE(na_object=right)))
 
-    assert missing.dtype.na_name == b'MISSING'
-    assert na.dtype.na_name == b'NA'
+    assert missing.dtype.na_name == left.encode('utf-8')
+    assert na.dtype.na_name == right.encode('utf-8')
     assert missing.dtype.name != na.dtype.name
 
 
-@pytest.mark.parametrize('na_object', [None, np.nan, 'MISSING'])
+@pytest.mark.parametrize('na_object', NA_OBJECT_VARIANTS)
 def test_stringdtype_str_len_na_object_variants_match_numpy(na_object):
     values = np.array(['a', na_object, '', 'MISSING', 'aa'],
                       dtype=STRING_DTYPE(na_object=na_object))
     strings = StringsInformation()
 
-    if na_object is None or isinstance(na_object, float):
-        assert_same_exception(strings.strings_str_len, STRINGS.str_len, values)
-    else:
+    if na_object_is_string_like(na_object):
         assert_same(strings.strings_str_len, STRINGS.str_len, values)
+    else:
+        assert_same_exception(strings.strings_str_len, STRINGS.str_len, values)
+
+
+@pytest.mark.parametrize('impl_name, baseline', [
+    ('strings_str_len', STRINGS.str_len),
+    ('strings_isalpha', STRINGS.isalpha),
+    ('strings_isupper', STRINGS.isupper),
+])
+@pytest.mark.parametrize('na_object', NA_OBJECT_VARIANTS)
+def test_stringdtype_zero_dimensional_na_object_variants_match_numpy(
+        impl_name, baseline, na_object):
+    value = np.array(na_object, dtype=STRING_DTYPE(na_object=na_object))
+    strings = StringsInformation()
+    implementation = getattr(strings, impl_name)
+
+    if impl_name == 'strings_str_len':
+        if na_object_is_string_like(na_object):
+            assert_same(implementation, baseline, value)
+        else:
+            assert_same_exception(implementation, baseline, value)
+    elif na_object is None or (
+            not na_object_is_string_like(na_object)
+            and not na_object_is_nan_like(na_object)):
+        assert_same_exception(implementation, baseline, value)
+    else:
+        assert_same(implementation, baseline, value)
 
 
 @pytest.mark.parametrize('impl_name, baseline', STRINGDTYPE_PREDICATES)
-@pytest.mark.parametrize('na_object', [None, np.nan, 'MISSING'])
+@pytest.mark.parametrize('na_object', NA_OBJECT_VARIANTS)
 def test_stringdtype_predicate_na_object_variants_match_numpy(
         impl_name, baseline, na_object):
     values = np.array(['a', na_object, '', 'MISSING', 'aa'],
@@ -567,16 +613,17 @@ def test_stringdtype_predicate_na_object_variants_match_numpy(
     strings = StringsInformation()
     implementation = getattr(strings, impl_name)
 
-    if na_object is None:
-        assert_same_exception(implementation, baseline, values)
-    else:
+    if na_object_is_string_like(na_object) \
+            or na_object_is_nan_like(na_object):
         assert_same(implementation, baseline, values)
+    else:
+        assert_same_exception(implementation, baseline, values)
 
 
 @pytest.mark.parametrize('impl_name', [
     'strings_equal', 'strings_greater', 'strings_startswith', 'strings_find',
 ])
-@pytest.mark.parametrize('na_object', [None, np.nan, 'MISSING'])
+@pytest.mark.parametrize('na_object', NA_OBJECT_VARIANTS)
 def test_stringdtype_na_object_binary_operations_remain_explicitly_rejected(
         impl_name, na_object):
     values = np.array(['a', na_object, 'bb'],

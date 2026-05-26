@@ -14,6 +14,7 @@ import numpy as np
 
 
 StringDType = np.dtypes.StringDType
+NA_OBJECTS = (None, np.nan, "MISSING", "", "é", "🙂", 0, False)
 
 
 UNARY_OPS = [
@@ -79,7 +80,7 @@ def array_for(na_object, values):
 
 
 def print_operation_truth_tables():
-    for na_object in (None, np.nan, "MISSING"):
+    for na_object in NA_OBJECTS:
         dtype = StringDType(na_object=na_object)
         values = array_for(na_object, ["a", na_object, "", "MISSING", "aa"])
         patterns = array_for(na_object, ["a", "a", na_object, "", "z"])
@@ -138,7 +139,7 @@ def print_low_level_load_truth_table():
     )(slots[313])
 
     print("\n## low-level NpyString_load")
-    for na_object in (None, np.nan, "MISSING"):
+    for na_object in NA_OBJECTS:
         arr = array_for(na_object, ["a", na_object, "", "MISSING", "aa"])
         display = format_value(arr)
         base = arr.__array_interface__["data"][0]
