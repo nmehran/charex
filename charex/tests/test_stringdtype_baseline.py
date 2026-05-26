@@ -346,6 +346,49 @@ def test_stringdtype_mixed_bytes_operands_are_rejected(
 @pytest.mark.parametrize('impl_name, baseline', [
     ('strings_equal', STRINGS.equal),
     ('strings_greater', STRINGS.greater),
+])
+@pytest.mark.parametrize('operand', [
+    np.array('a', dtype=object),
+    np.array(['a', 'b'], dtype=object),
+])
+def test_stringdtype_mixed_object_comparison_is_nopython_gap(
+        impl_name, baseline, operand):
+    values = stringdtype_array(['a', 'b'])
+
+    baseline(values, operand)
+    with pytest.raises(TypingError):
+        strings_impl(impl_name)(values, operand)
+
+    baseline(operand, values)
+    with pytest.raises(TypingError):
+        strings_impl(impl_name)(operand, values)
+
+
+@pytest.mark.parametrize('impl_name, baseline', [
+    ('strings_startswith', STRINGS.startswith),
+    ('strings_find', STRINGS.find),
+])
+@pytest.mark.parametrize('operand', [
+    np.array('a', dtype=object),
+    np.array(['a', 'b'], dtype=object),
+])
+def test_stringdtype_mixed_object_information_operands_are_rejected(
+        impl_name, baseline, operand):
+    values = stringdtype_array(['a', 'b'])
+
+    with pytest.raises(Exception):
+        baseline(values, operand)
+    with pytest.raises(TypingError):
+        strings_impl(impl_name)(values, operand)
+    with pytest.raises(Exception):
+        baseline(operand, values)
+    with pytest.raises(TypingError):
+        strings_impl(impl_name)(operand, values)
+
+
+@pytest.mark.parametrize('impl_name, baseline', [
+    ('strings_equal', STRINGS.equal),
+    ('strings_greater', STRINGS.greater),
     ('strings_startswith', STRINGS.startswith),
     ('strings_find', STRINGS.find),
 ])

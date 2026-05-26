@@ -1009,11 +1009,11 @@ Remaining scalar bridge work:
   NumPy does.
 - Fixed-width bytes (`S`) and bytes scalars are intentionally rejected because
   NumPy has no `StringDType` loop for those mixed operands.
-- Object arrays/scalars are still not part of the nopython StringDType bridge.
-  NumPy accepts object operands for comparison through Python object semantics,
-  but prefix/suffix and search reject them. Supporting the accepted comparison
-  subset would require a separate object-mode design, not the current
-  `StringDType` fast path.
+- Object arrays/scalars are not part of the nopython StringDType bridge.
+  The local audit showed that NumPy accepts object operands for comparison
+  through Python object semantics, while prefix/suffix and search reject them.
+  Supporting the accepted comparison subset would require a separate
+  object-mode design, not the current `StringDType` fast path.
 - Keep future scalar optimizations operation-specific. The comparison bridge is
   not automatically the right shape for search or transformations.
 
