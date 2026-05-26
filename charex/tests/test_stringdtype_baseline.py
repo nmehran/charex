@@ -164,6 +164,23 @@ def test_stringdtype_array_equal_matches_numpy():
     assert_same(strings.strings_not_equal, STRINGS.not_equal, left, right)
 
 
+def test_stringdtype_array_equal_embedded_nul_symmetry():
+    strings = StringsComparisonOperators()
+    left = stringdtype_array([
+        'ab\x00', 'a\x00x', 'abc\x00', 'abc\x00x', '\x00ab',
+        'abc', 'abc\x00', 'a\x00bc', 'ab\x00c',
+    ])
+    right = stringdtype_array([
+        'a\x00x', 'ab\x00', 'abc\x00y', 'abc\x00z', '\x00cd',
+        'ab\x00', 'abcx', 'a\x00zz', 'ab\x00z',
+    ])
+
+    assert_same(strings.strings_equal, STRINGS.equal, left, right)
+    assert_same(strings.strings_not_equal, STRINGS.not_equal, left, right)
+    assert_same(strings.strings_equal, STRINGS.equal, right, left)
+    assert_same(strings.strings_not_equal, STRINGS.not_equal, right, left)
+
+
 def test_stringdtype_array_equal_same_array_matches_numpy():
     strings = StringsComparisonOperators()
     values = stringdtype_array(['a', 'é', '🙂', 'a\x00\x00'])

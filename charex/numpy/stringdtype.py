@@ -135,18 +135,6 @@ def is_stringdtype_array_type(value):
         and isinstance(value.dtype, StringDTypePacket)
 
 
-def _packed_string_ptr(context, builder, array_type, array_value, index_value):
-    int8 = ir.IntType(8)
-    byte_ptr = int8.as_pointer()
-    array_struct = context.make_array(array_type)(
-        context, builder, array_value,
-    )
-    data = builder.bitcast(array_struct.data, byte_ptr)
-    stride = builder.extract_value(array_struct.strides, 0)
-    offset = builder.mul(index_value, stride)
-    return builder.gep(data, [offset])
-
-
 def _load_string(builder, allocator, packed, intp, byte_ptr):
     int32 = ir.IntType(32)
     static_type = ir.LiteralStructType([intp, byte_ptr])
@@ -388,44 +376,6 @@ def stringdtype_data_ptr(typingctx, array):
         )
         return builder.bitcast(array_struct.data,
                                ir.IntType(8).as_pointer())
-
-    return sig, codegen
-
-
-@intrinsic
-def stringdtype_codepoint_len(typingctx, array, index, allocator):
-    if not is_stringdtype_array_type(array) \
-            or not isinstance(index, types.Integer) \
-            or allocator != types.voidptr:
-        return None
-
-    sig = signature(types.intp, array, types.intp, allocator)
-
-    def codegen(context, builder, signature, args):
-        array_type = signature.args[0]
-        array_value, index_value, allocator = args
-
-        int8 = ir.IntType(8)
-        int32 = ir.IntType(32)
-        intp = context.get_value_type(types.intp)
-        byte_ptr = int8.as_pointer()
-        packed = _packed_string_ptr(context, builder, array_type, array_value,
-                                    index_value)
-
-        status, size, buffer = _load_string(builder, allocator, packed, intp,
-                                            byte_ptr)
-
-        result = cgutils.alloca_once(builder, intp)
-        builder.store(ir.Constant(intp, -1), result)
-        valid = builder.icmp_signed('==', status, ir.Constant(int32, 0))
-
-        with builder.if_then(valid):
-            builder.store(
-                _string_codepoint_len(builder, size, buffer, intp, int8),
-                result,
-            )
-
-        return builder.load(result)
 
     return sig, codegen
 

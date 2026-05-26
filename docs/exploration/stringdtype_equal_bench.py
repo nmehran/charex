@@ -240,96 +240,6 @@ def stringdtype_equal_hybrid_data(typingctx, left_data, left_index,
     return sig, codegen
 
 
-@intrinsic
-def stringdtype_equal_fullmemcmp_data(typingctx, left_data, left_index,
-                                      left_allocator, right_data, right_index,
-                                      right_allocator):
-    if left_data != types.voidptr \
-            or not isinstance(left_index, types.Integer) \
-            or left_allocator != types.voidptr \
-            or right_data != types.voidptr \
-            or not isinstance(right_index, types.Integer) \
-            or right_allocator != types.voidptr:
-        return None
-
-    sig = signature(types.boolean, left_data, types.intp, left_allocator,
-                    right_data, types.intp, right_allocator)
-
-    def codegen(context, builder, signature, args):
-        left_data, left_index_value, left_allocator, \
-            right_data, right_index_value, right_allocator = args
-
-        int8 = ir.IntType(8)
-        int32 = ir.IntType(32)
-        int1 = ir.IntType(1)
-        intp = context.get_value_type(types.intp)
-        byte_ptr = int8.as_pointer()
-        left_offset = builder.mul(left_index_value,
-                                  ir.Constant(intp, _PACKED_STRING_SIZE))
-        right_offset = builder.mul(right_index_value,
-                                   ir.Constant(intp, _PACKED_STRING_SIZE))
-        left_packed = builder.gep(builder.bitcast(left_data, byte_ptr),
-                                  [left_offset])
-        right_packed = builder.gep(builder.bitcast(right_data, byte_ptr),
-                                   [right_offset])
-        left_status, left_size, left_buffer = load_string(
-            builder, left_allocator, left_packed, intp, byte_ptr)
-        right_status, right_size, right_buffer = load_string(
-            builder, right_allocator, right_packed, intp, byte_ptr)
-
-        result = cgutils.alloca_once(builder, int1)
-        builder.store(cgutils.false_bit, result)
-
-        left_valid = builder.icmp_signed(
-            '==', left_status, ir.Constant(int32, 0))
-        right_valid = builder.icmp_signed(
-            '==', right_status, ir.Constant(int32, 0))
-        both_valid = builder.and_(left_valid, right_valid)
-        same_size = builder.icmp_unsigned('==', left_size, right_size)
-
-        with builder.if_then(builder.and_(both_valid, same_size)):
-            memchr_type = ir.FunctionType(byte_ptr, [byte_ptr, int32, intp])
-            memcmp_type = ir.FunctionType(int32, [byte_ptr, byte_ptr, intp])
-            memchr = cgutils.get_or_insert_function(
-                builder.module, memchr_type, 'memchr',
-            )
-            memcmp = cgutils.get_or_insert_function(
-                builder.module, memcmp_type, 'memcmp',
-            )
-            full_cmp = builder.call(
-                memcmp, [left_buffer, right_buffer, left_size],
-            )
-            full_equal = builder.icmp_signed(
-                '==', full_cmp, ir.Constant(int32, 0))
-            builder.store(full_equal, result)
-            with builder.if_then(builder.not_(full_equal)):
-                nul_ptr = builder.call(
-                    memchr, [left_buffer, ir.Constant(int32, 0), left_size],
-                )
-                found_nul = builder.icmp_unsigned(
-                    '!=', nul_ptr, ir.Constant(byte_ptr, None),
-                )
-                with builder.if_then(found_nul):
-                    left_addr = builder.ptrtoint(left_buffer, intp)
-                    nul_addr = builder.ptrtoint(nul_ptr, intp)
-                    compare_size = builder.add(
-                        builder.sub(nul_addr, left_addr),
-                        ir.Constant(intp, 1),
-                    )
-                    nul_cmp = builder.call(
-                        memcmp, [left_buffer, right_buffer, compare_size],
-                    )
-                    builder.store(
-                        builder.icmp_signed(
-                            '==', nul_cmp, ir.Constant(int32, 0)),
-                        result,
-                    )
-
-        return builder.load(result)
-
-    return sig, codegen
-
-
 @njit(nogil=True, cache=False)
 def current_equal(left, right):
     return np.strings.equal(left, right)
@@ -390,25 +300,6 @@ def hybrid_equal(left, right):
     right_data = stringdtype_data_ptr(right)
     for i in range(left.size):
         result[i] = stringdtype_equal_hybrid_data(
-            left_data, i, left_allocator,
-            right_data, i, right_allocator,
-        )
-    stringdtype_release_allocators(allocators)
-    return result
-
-
-@njit(nogil=True, cache=False)
-def fullmemcmp_equal(left, right):
-    if left.size != right.size:
-        raise ValueError('shape mismatch')
-    result = np.empty(left.size, np.bool_)
-    allocators = stringdtype_acquire_allocators(left, right)
-    left_allocator = allocators[0]
-    right_allocator = allocators[1]
-    left_data = stringdtype_data_ptr(left)
-    right_data = stringdtype_data_ptr(right)
-    for i in range(left.size):
-        result[i] = stringdtype_equal_fullmemcmp_data(
             left_data, i, left_allocator,
             right_data, i, right_allocator,
         )
@@ -497,7 +388,6 @@ def main():
                     ('direct', direct_equal),
                     ('memcmp', memcmp_equal),
                     ('hybrid', hybrid_equal),
-                    ('fullmemcmp', fullmemcmp_equal),
                 ],
                 np.strings.equal(left, right),
                 left,
