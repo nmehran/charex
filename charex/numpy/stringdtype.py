@@ -305,7 +305,7 @@ def _normalise_slice(builder, size, buffer, start, end, intp, int8):
                                      start_index, intp, int8)
     end_offset = _codepoint_offset(builder, effective_size, buffer,
                                    end_index, intp, int8)
-    return effective_size, start_offset, end_offset, valid
+    return start_offset, end_offset, valid
 
 
 def _string_codepoint_len(builder, size, buffer, intp, int8):
@@ -626,7 +626,7 @@ def _stringdtype_affix_data(typingctx, value_data, value_index,
             '==', pattern_status, ir.Constant(int32, 0))
 
         with builder.if_then(builder.and_(value_valid, pattern_valid)):
-            _, start_offset, end_offset, slice_valid = _normalise_slice(
+            start_offset, end_offset, slice_valid = _normalise_slice(
                 builder, value_size, value_buffer, start, end, intp, int8)
             pattern_effective_size = _trimmed_size(
                 builder, pattern_size, pattern_buffer, intp, int8)

@@ -419,6 +419,14 @@ Numba 0.65.1:
 | long equal | 3.35x | 4.80x |
 | long late mismatch | 7.57x | 7.61x |
 
+Review-pass finding:
+
+- A combined `start`/`end` byte-offset scan looked attractive because it would
+  replace two UTF-8 scans with one. In practice it made the loop body branchier
+  and regressed the focused affix benchmark, especially short `endswith`.
+  Keep the simpler independent offset scans until a more substantial
+  slice-indexing strategy is justified.
+
 ## Prototype Order
 
 1. Type recognition only:
