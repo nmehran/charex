@@ -1824,7 +1824,7 @@ def main():
             print(f'\ncase={case_name} n={n}')
             methods = [
                 ('numpy', np.strings.str_len),
-                ('current parent-offset', current_strlen),
+                ('current runtime', current_strlen),
                 ('twopass data', twopass_data_strlen),
                 ('backward data', backward_data_strlen),
                 ('backward word', backward_word_data_strlen),

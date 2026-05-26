@@ -6,7 +6,7 @@ from charex.numpy.overloads._shared import (
 )
 from charex.numpy.stringdtype import (
     is_stringdtype_array_type, stringdtype_acquire_allocator,
-    stringdtype_codepoint_len, stringdtype_equal,
+    stringdtype_codepoint_len_data, stringdtype_data_ptr, stringdtype_equal,
     stringdtype_release_allocator,
 )
 from charex.numpy.overloads.definitions import (
@@ -196,9 +196,10 @@ if _STRINGS is not None:
         def impl(value):
             result = np.empty(value.size, np.int64)
             allocator = stringdtype_acquire_allocator(value)
+            data = stringdtype_data_ptr(value)
             null_string = False
             for i in range(value.size):
-                length = stringdtype_codepoint_len(value, i, allocator)
+                length = stringdtype_codepoint_len_data(data, i, allocator)
                 if length < 0:
                     null_string = True
                     length = 0

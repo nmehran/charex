@@ -233,13 +233,37 @@ Generated-code inspection from this pass:
 Final tranche-1 recommendation:
 
 - Minimal production candidate: descriptor C helper, operation-scope allocator,
-  hoisted data pointer, backward trim plus byte-wise continuation counting.
+  hoisted data pointer, trailing-NUL trim, and byte-wise continuation counting.
+  The first distilled runtime pass uses all-zero word skipping for the trim
+  loop, then falls back to byte trimming for the final partial word. This keeps
+  the no-threshold shape while avoiding the long trailing-NUL pathology of pure
+  byte-wise backward trim.
 - Max-performance candidate: add plain SWAR continuation counting after
   portability and code-layout costs are resolved.
-- Keep word-level trailing-NUL trim as a documented special-case candidate, not
-  as the default kernel.
+- Keep the stronger `ctlz` word-trim variant as a documented special-case
+  candidate, not as the default kernel.
 - Keep peeled-16 as a specialized inline-string candidate, not part of the base
   kernel until broader operations show it pays for its surface area.
+
+Runtime distillation checkpoint:
+
+- `np.strings.str_len` now hoists the packed StringDType data pointer once per
+  call instead of rebuilding the array data pointer inside each element access.
+- The length kernel trims all-zero trailing words, trims the final partial word
+  byte-wise, then counts UTF-8 code points with the byte-wise continuation
+  predicate.
+- A 100k-row exploration-harness run on Python 3.12.8, NumPy 2.4.6,
+  and Numba 0.65.1:
+
+| case | charex | NumPy | speedup |
+| ---- | ------ | ----- | ------- |
+| mixed short | 0.381 ms | 0.586 ms | 1.54x |
+| ASCII short | 0.487 ms | 0.807 ms | 1.66x |
+| NUL heavy | 0.365 ms | 0.518 ms | 1.42x |
+| Unicode short | 0.522 ms | 1.128 ms | 2.16x |
+| long mixed | 1.300 ms | 14.489 ms | 11.15x |
+| long ASCII | 3.098 ms | 40.529 ms | 13.08x |
+| long NUL-tail | 0.901 ms | 6.430 ms | 7.14x |
 
 ## Prototype Order
 
@@ -254,9 +278,9 @@ Final tranche-1 recommendation:
   - The first callback prototype was correct but hundreds of times slower
     than NumPy.
   - Current prototype calls NumPy's `NpyString_*` C API directly from LLVM and
-    acquires the allocator once per array operation. This is the right
-    performance direction, but it currently discovers the ndarray descriptor
-    offset at import time instead of using a compiled C helper.
+    acquires the allocator once per array operation. Built installs use a small
+    compiled helper for descriptor-to-allocator access; unbuilt source-tree
+    runs retain the parent-offset probe as an exploratory fallback.
 3. First operation:
    - `np.strings.str_len` for one-dimensional C-contiguous arrays;
    - count Unicode code points from UTF-8 bytes.
@@ -286,8 +310,9 @@ Final tranche-1 recommendation:
   slower than Numba-generated loops.
 - Acquire each StringDType allocator once per array operation, outside the
   element loop. Per-element acquire is too expensive.
-- Replace the parent-object descriptor offset probe with a compiled helper
-  before any merge-ready implementation. The offset probe is exploratory only.
+- Use a compiled helper for descriptor-to-allocator access. The parent-object
+  descriptor offset probe remains only as a source-tree fallback when the
+  extension has not been built.
 - Reject `StringDType(na_object=...)` arrays until sentinel propagation is
   implemented exactly.
 - Keep this in charex while prototyping. The dtype recognition and helper
@@ -303,5 +328,5 @@ Final tranche-1 recommendation:
   `np.strings` operation?
 - How much of the access/helper layer should become reusable infrastructure
   across comparison, occurrence, predicate, and transformation kernels?
-- What packaging shape cleanly provides the compiled helper while preserving
-  NumPy 1.x compatibility?
+- Whether the parent-offset fallback should remain long term, or whether
+  built-extension availability should become mandatory for StringDType support.

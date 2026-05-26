@@ -65,6 +65,18 @@ def test_stringdtype_str_len_target_behavior():
     assert_same(strings.strings_str_len, STRINGS.str_len, values)
 
 
+def test_stringdtype_str_len_long_trailing_nuls():
+    strings = StringsInformation()
+    values = stringdtype_array([
+        'abc' + '\x00' * 128,
+        'é' * 8 + '\x00' * 64,
+        '🙂' * 4 + '\x00' * 64,
+        '\x00' * 128,
+    ])
+
+    assert_same(strings.strings_str_len, STRINGS.str_len, values)
+
+
 def test_direct_numba_stringdtype_target_behavior():
     values = stringdtype_array(['a', 'é', '🙂'])
 
