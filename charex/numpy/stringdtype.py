@@ -481,6 +481,42 @@ def _emit_stringdtype_predicate(context, builder, mode, size, buffer,
     return builder.and_(builder.load(valid), builder.load(seen))
 
 
+def _stringdtype_size_compare(builder, left_size, right_size, int32):
+    return builder.select(
+        builder.icmp_unsigned('>', left_size, right_size),
+        ir.Constant(int32, 1),
+        builder.select(
+            builder.icmp_unsigned('<', left_size, right_size),
+            ir.Constant(int32, -1),
+            ir.Constant(int32, 0),
+        ),
+    )
+
+
+def _stringdtype_byte_compare(builder, left_size, left_buffer,
+                              right_size, right_buffer, intp, int8, int32):
+    compare_size = builder.select(
+        builder.icmp_unsigned('<', left_size, right_size),
+        left_size,
+        right_size,
+    )
+    strncmp_type = ir.FunctionType(
+        int32, [int8.as_pointer(), int8.as_pointer(), intp])
+    strncmp = cgutils.get_or_insert_function(
+        builder.module, strncmp_type, 'strncmp')
+    text_cmp = builder.call(strncmp, [left_buffer, right_buffer,
+                                      compare_size])
+    return builder.select(
+        builder.icmp_signed('==', text_cmp, ir.Constant(int32, 0)),
+        _stringdtype_size_compare(builder, left_size, right_size, int32),
+        builder.select(
+            builder.icmp_signed('>', text_cmp, ir.Constant(int32, 0)),
+            ir.Constant(int32, 1),
+            ir.Constant(int32, -1),
+        ),
+    )
+
+
 def _codepoint_offset(builder, size, buffer, target, intp, int8):
     offset = cgutils.alloca_once(builder, intp)
     count = cgutils.alloca_once(builder, intp)
@@ -927,6 +963,58 @@ def stringdtype_equal_data(typingctx, left_data, left_index, left_allocator,
                                             ir.Constant(int32, 0)),
                         result,
                     )
+
+        return builder.load(result)
+
+    return sig, codegen
+
+
+@intrinsic
+def stringdtype_compare_data(typingctx, left_data, left_index, left_allocator,
+                             right_data, right_index, right_allocator):
+    if left_data != types.voidptr \
+            or not isinstance(left_index, types.Integer) \
+            or left_allocator != types.voidptr \
+            or right_data != types.voidptr \
+            or not isinstance(right_index, types.Integer) \
+            or right_allocator != types.voidptr:
+        return None
+
+    sig = signature(types.int32, left_data, types.intp, left_allocator,
+                    right_data, types.intp, right_allocator)
+
+    def codegen(context, builder, signature, args):
+        left_data, left_index_value, left_allocator, \
+            right_data, right_index_value, right_allocator = args
+
+        int8 = ir.IntType(8)
+        int32 = ir.IntType(32)
+        intp = context.get_value_type(types.intp)
+        byte_ptr = int8.as_pointer()
+        left_packed = _packed_string_ptr_from_data(
+            builder, left_data, left_index_value, intp)
+        right_packed = _packed_string_ptr_from_data(
+            builder, right_data, right_index_value, intp)
+        left_status, left_size, left_buffer = _load_string(
+            builder, left_allocator, left_packed, intp, byte_ptr)
+        right_status, right_size, right_buffer = _load_string(
+            builder, right_allocator, right_packed, intp, byte_ptr)
+
+        result = cgutils.alloca_once(builder, int32)
+        builder.store(ir.Constant(int32, 0), result)
+        left_valid = builder.icmp_signed(
+            '==', left_status, ir.Constant(int32, 0))
+        right_valid = builder.icmp_signed(
+            '==', right_status, ir.Constant(int32, 0))
+
+        with builder.if_then(builder.and_(left_valid, right_valid)):
+            builder.store(
+                _stringdtype_byte_compare(
+                    builder, left_size, left_buffer, right_size,
+                    right_buffer, intp, int8, int32,
+                ),
+                result,
+            )
 
         return builder.load(result)
 

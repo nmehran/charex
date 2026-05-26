@@ -731,6 +731,67 @@ Review-pass notes to revisit before distillation:
 - The slowest relative case in this benchmark is `isupper` on mixed Unicode
   alpha input, where the current path is near parity rather than a large win.
 
+## Tranche 7: Ordering Comparisons
+
+This tranche completes the StringDType comparison family for array-array inputs.
+
+Target operations:
+
+- `np.strings.greater`
+- `np.strings.greater_equal`
+- `np.strings.less`
+- `np.strings.less_equal`
+
+Initial runtime scope:
+
+- default `StringDType` only, still rejecting `na_object` variants;
+- one-dimensional C-contiguous arrays;
+- array-array same-shape inputs;
+- scalar and multidimensional support deferred.
+
+Observed NumPy semantics:
+
+- Ordering compares stored UTF-8 bytes lexicographically.
+- If the common byte prefix reaches a simultaneous NUL byte, bytes after that
+  NUL are ignored for content comparison.
+- Stored byte length breaks ties, including simultaneous-NUL ties.
+- This means `a\0x` and `a\0y` compare equal, while `a\0` is less than
+  `a\0x`, and `a\0x` is less than `abx`.
+
+Implementation shape:
+
+- Add one shared StringDType comparison intrinsic returning `-1`, `0`, or `1`.
+- Use C `strncmp` for the content comparison because it matches the
+  simultaneous-NUL stop rule directly.
+- Apply the stored byte-length tie-break when `strncmp` returns equality.
+- Drive all four public order operations from the same intrinsic.
+
+Benchmark:
+
+```bash
+python docs/exploration/stringdtype_order_bench.py
+```
+
+Representative 100k-row speedup ranges on Python 3.12.8, NumPy 2.4.6,
+Numba 0.65.1:
+
+| case | speedup range across order ops |
+| ---- | ------------------------------ |
+| ASCII mixed | 1.22x-1.28x |
+| Unicode mixed | 1.16x-1.35x |
+| embedded NUL | 1.11x-1.24x |
+| one-sided NUL | 1.31x-1.33x |
+| long first mismatch | 1.00x-1.02x |
+| long last mismatch | 1.00x-1.04x |
+| long equal | 1.00x-1.02x |
+
+Review-pass notes to revisit before distillation:
+
+- Small 1k-row benchmarks remain dominated by call overhead and are slower than
+  NumPy. The 100k-row path is the meaningful public target for now.
+- A future max-performance branch could evaluate a short-string inline path,
+  but this tranche intentionally avoids a threshold gate.
+
 ## Prototype Order
 
 1. Type recognition only:
@@ -765,7 +826,8 @@ Review-pass notes to revisit before distillation:
    - `startswith`, `endswith` after a shared codepoint span-slicing primitive;
    - `find`, `rfind`, `count`, `index`, `rindex` after substring search
      semantics and codepoint result offsets are exact;
-   - predicates.
+   - predicates;
+   - ordering comparisons.
 
 ## Resolved Decisions
 

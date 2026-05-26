@@ -39,6 +39,14 @@ STRINGDTYPE_PREDICATES = [
 ]
 
 
+STRINGDTYPE_ORDER_COMPARISONS = [
+    ('strings_greater', STRINGS.greater),
+    ('strings_greater_equal', STRINGS.greater_equal),
+    ('strings_less', STRINGS.less),
+    ('strings_less_equal', STRINGS.less_equal),
+]
+
+
 def test_charex_registers_stringdtype_array_type():
     values = stringdtype_array(['a', 'é', '🙂'])
 
@@ -63,6 +71,10 @@ def test_stringdtype_shape_metadata_compiles():
     ('strings_str_len', False),
     ('strings_equal', True),
     ('strings_not_equal', True),
+    ('strings_greater', True),
+    ('strings_greater_equal', True),
+    ('strings_less', True),
+    ('strings_less_equal', True),
     ('strings_startswith', True),
     ('strings_endswith', True),
     ('strings_find', True),
@@ -83,8 +95,11 @@ def test_stringdtype_shape_metadata_compiles():
 def test_stringdtype_zero_dimensional_arrays_are_rejected(impl_name, binary):
     info = StringsInformation()
     comparisons = StringsComparisonOperators()
-    owner = comparisons if impl_name in {'strings_equal',
-                                         'strings_not_equal'} else info
+    comparison_methods = {
+        'strings_equal', 'strings_not_equal', 'strings_greater',
+        'strings_greater_equal', 'strings_less', 'strings_less_equal',
+    }
+    owner = comparisons if impl_name in comparison_methods else info
     values = np.array('abc', dtype=STRING_DTYPE())
     call_args = (values, values) if binary else (values,)
 
@@ -323,6 +338,57 @@ def test_stringdtype_array_equal_readonly_arrays_match_numpy():
     assert_same(strings.strings_not_equal, STRINGS.not_equal, left, right)
 
 
+@pytest.mark.parametrize('impl_name, baseline', STRINGDTYPE_ORDER_COMPARISONS)
+def test_stringdtype_array_order_matches_numpy(impl_name, baseline):
+    strings = StringsComparisonOperators()
+    left = stringdtype_array([
+        'a', 'b', 'a', 'aa', '', 'é', 'α', '🙂', '一',
+        'a\x00', 'a\x00x', 'a\x00y', 'a\x00x', 'ab\x00',
+        'ab\x00x', '\x00a', '\x00', '\x00x', 'é\x00x',
+        'a\x01x',
+    ])
+    right = stringdtype_array([
+        'a', 'a', 'aa', 'a', 'a', 'e', 'β', '🙃', '二',
+        'a', 'a\x00y', 'a\x00x', 'a\x00', 'ab\x00x',
+        'ab\x00y', '\x00b', '', '\x01x', 'é',
+        'a\x00x',
+    ])
+
+    assert_same(getattr(strings, impl_name), baseline, left, right)
+    assert_same(getattr(strings, impl_name), baseline, right, left)
+
+
+@pytest.mark.parametrize('impl_name, baseline', STRINGDTYPE_ORDER_COMPARISONS)
+def test_stringdtype_array_order_same_array_matches_numpy(
+        impl_name, baseline):
+    strings = StringsComparisonOperators()
+    values = stringdtype_array(['a', 'é', '🙂', 'a\x00x', '\x00abc'])
+
+    assert_same(getattr(strings, impl_name), baseline, values, values)
+
+
+@pytest.mark.parametrize('impl_name, baseline', STRINGDTYPE_ORDER_COMPARISONS)
+def test_stringdtype_array_order_empty_arrays_match_numpy(
+        impl_name, baseline):
+    strings = StringsComparisonOperators()
+    left = stringdtype_array([])
+    right = stringdtype_array([])
+
+    assert_same(getattr(strings, impl_name), baseline, left, right)
+
+
+@pytest.mark.parametrize('impl_name, baseline', STRINGDTYPE_ORDER_COMPARISONS)
+def test_stringdtype_array_order_readonly_arrays_match_numpy(
+        impl_name, baseline):
+    strings = StringsComparisonOperators()
+    left = stringdtype_array(['a', 'é', '🙂', 'a\x00'])
+    right = stringdtype_array(['b', 'e', '🙃', 'a'])
+    left.flags.writeable = False
+    right.flags.writeable = False
+
+    assert_same(getattr(strings, impl_name), baseline, left, right)
+
+
 def test_stringdtype_array_equal_shape_mismatch():
     strings = StringsComparisonOperators()
     left = stringdtype_array(['a', 'b', 'c'])
@@ -334,12 +400,35 @@ def test_stringdtype_array_equal_shape_mismatch():
         strings.strings_not_equal(left, right)
 
 
+@pytest.mark.parametrize('impl_name', [
+    name for name, _ in STRINGDTYPE_ORDER_COMPARISONS
+])
+def test_stringdtype_array_order_shape_mismatch(impl_name):
+    strings = StringsComparisonOperators()
+    left = stringdtype_array(['a', 'b', 'c'])
+    right = stringdtype_array(['a', 'b'])
+
+    with pytest.raises(ValueError, match='shape mismatch'):
+        getattr(strings, impl_name)(left, right)
+
+
 def test_stringdtype_array_equal_rejects_noncontiguous_arrays():
     strings = StringsComparisonOperators()
     values = stringdtype_array(['a', 'b', 'c', 'd'])
 
     with pytest.raises(TypingError, match='C-contiguous'):
         strings.strings_equal(values[::2], values[::2])
+
+
+@pytest.mark.parametrize('impl_name', [
+    name for name, _ in STRINGDTYPE_ORDER_COMPARISONS
+])
+def test_stringdtype_array_order_rejects_noncontiguous_arrays(impl_name):
+    strings = StringsComparisonOperators()
+    values = stringdtype_array(['a', 'b', 'c', 'd'])
+
+    with pytest.raises(TypingError, match='C-contiguous'):
+        getattr(strings, impl_name)(values[::2], values[::2])
 
 
 def test_stringdtype_array_equal_rejects_multidimensional_arrays():
@@ -350,6 +439,17 @@ def test_stringdtype_array_equal_rejects_multidimensional_arrays():
         strings.strings_equal(values, values)
 
 
+@pytest.mark.parametrize('impl_name', [
+    name for name, _ in STRINGDTYPE_ORDER_COMPARISONS
+])
+def test_stringdtype_array_order_rejects_multidimensional_arrays(impl_name):
+    strings = StringsComparisonOperators()
+    values = stringdtype_array(['a', 'b', 'c', 'd']).reshape(2, 2)
+
+    with pytest.raises(TypingError, match='one-dimensional arrays'):
+        getattr(strings, impl_name)(values, values)
+
+
 @pytest.mark.parametrize('scalar_left', [False, True])
 def test_stringdtype_array_equal_rejects_mixed_stringdtype_inputs(scalar_left):
     strings = StringsComparisonOperators()
@@ -358,6 +458,20 @@ def test_stringdtype_array_equal_rejects_mixed_stringdtype_inputs(scalar_left):
 
     with pytest.raises(TypingError, match='two StringDType arrays'):
         strings.strings_equal(*args)
+
+
+@pytest.mark.parametrize('impl_name', [
+    name for name, _ in STRINGDTYPE_ORDER_COMPARISONS
+])
+@pytest.mark.parametrize('scalar_left', [False, True])
+def test_stringdtype_array_order_rejects_mixed_stringdtype_inputs(
+        impl_name, scalar_left):
+    strings = StringsComparisonOperators()
+    values = stringdtype_array(['a', 'b'])
+    args = ('a', values) if scalar_left else (values, 'a')
+
+    with pytest.raises(TypingError, match='two StringDType arrays'):
+        getattr(strings, impl_name)(*args)
 
 
 @pytest.mark.parametrize('impl_name, baseline', [

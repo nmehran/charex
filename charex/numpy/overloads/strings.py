@@ -8,8 +8,8 @@ from charex.numpy.overloads._shared import (
 from charex.numpy.stringdtype import (
     is_stringdtype_array_type, stringdtype_acquire_allocator,
     stringdtype_acquire_allocators, stringdtype_codepoint_len_data,
-    stringdtype_count_data, stringdtype_data_ptr, stringdtype_endswith_data,
-    stringdtype_equal_data, stringdtype_find_data,
+    stringdtype_compare_data, stringdtype_count_data, stringdtype_data_ptr,
+    stringdtype_endswith_data, stringdtype_equal_data, stringdtype_find_data,
     stringdtype_isalnum_data, stringdtype_isalpha_data,
     stringdtype_isdecimal_data, stringdtype_isdigit_data,
     stringdtype_islower_data, stringdtype_isnumeric_data,
@@ -124,6 +124,48 @@ def _overload_equal(left, right, invert):
 
 
 def _overload_order(left, right, op):
+    if is_stringdtype_array_type(left) or is_stringdtype_array_type(right):
+        if not is_stringdtype_array_type(left) \
+                or not is_stringdtype_array_type(right):
+            raise NumbaValueError('StringDType comparisons currently require '
+                                  'two StringDType arrays')
+        if left.ndim != 1 or right.ndim != 1:
+            raise NumbaValueError('charex StringDType support currently '
+                                  'requires one-dimensional arrays')
+        if left.layout != 'C' or right.layout != 'C':
+            raise NumbaValueError('charex requires C-contiguous arrays; '
+                                  'call numpy.ascontiguousarray')
+
+        def impl(left, right):
+            if left.size != right.size:
+                raise ValueError('shape mismatch: objects cannot be '
+                                 'broadcast to a single shape')
+            result = np.empty(left.size, np.bool_)
+            if left.size == 0:
+                return result
+            allocators = stringdtype_acquire_allocators(left, right)
+            left_allocator = allocators[0]
+            right_allocator = allocators[1]
+            left_data = stringdtype_data_ptr(left)
+            right_data = stringdtype_data_ptr(right)
+            for i in range(left.size):
+                cmp_result = stringdtype_compare_data(
+                    left_data, i, left_allocator,
+                    right_data, i, right_allocator,
+                )
+                if op == 'greater':
+                    result[i] = cmp_result > 0
+                elif op == 'greater_equal':
+                    result[i] = cmp_result >= 0
+                elif op == 'less':
+                    result[i] = cmp_result < 0
+                else:
+                    result[i] = cmp_result <= 0
+            stringdtype_release_allocators(allocators)
+            return result
+
+        return impl
+
     registered = try_register_pair(left, right)
     if registered is None:
         if _has_string_operand(left, right):
