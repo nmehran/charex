@@ -305,7 +305,7 @@ def _normalise_slice(builder, size, buffer, start, end, intp, int8):
                                      start_index, intp, int8)
     end_offset = _codepoint_offset(builder, effective_size, buffer,
                                    end_index, intp, int8)
-    return start_offset, end_offset, valid
+    return start_index, end_index, start_offset, end_offset, valid
 
 
 def _string_codepoint_len(builder, size, buffer, intp, int8):
@@ -626,7 +626,7 @@ def _stringdtype_affix_data(typingctx, value_data, value_index,
             '==', pattern_status, ir.Constant(int32, 0))
 
         with builder.if_then(builder.and_(value_valid, pattern_valid)):
-            start_offset, end_offset, slice_valid = _normalise_slice(
+            _, _, start_offset, end_offset, slice_valid = _normalise_slice(
                 builder, value_size, value_buffer, start, end, intp, int8)
             pattern_effective_size = _trimmed_size(
                 builder, pattern_size, pattern_buffer, intp, int8)
@@ -684,6 +684,256 @@ def stringdtype_endswith_data(typingctx, value_data, value_index,
     return _stringdtype_affix_data(
         typingctx, value_data, value_index, value_allocator,
         pattern_data, pattern_index, pattern_allocator, start, end, True,
+    )
+
+
+def _stringdtype_search_data(typingctx, value_data, value_index,
+                             value_allocator, pattern_data, pattern_index,
+                             pattern_allocator, start, end, mode):
+    if value_data != types.voidptr \
+            or not isinstance(value_index, types.Integer) \
+            or value_allocator != types.voidptr \
+            or pattern_data != types.voidptr \
+            or not isinstance(pattern_index, types.Integer) \
+            or pattern_allocator != types.voidptr \
+            or not isinstance(start, types.Integer) \
+            or not isinstance(end, types.Integer):
+        return None
+
+    sig = signature(types.intp, value_data, types.intp, value_allocator,
+                    pattern_data, types.intp, pattern_allocator,
+                    types.intp, types.intp)
+
+    def codegen(context, builder, signature, args):
+        value_data, value_index_value, value_allocator, \
+            pattern_data, pattern_index_value, pattern_allocator, \
+            start, end = args
+
+        int8 = ir.IntType(8)
+        int32 = ir.IntType(32)
+        intp = context.get_value_type(types.intp)
+        byte_ptr = int8.as_pointer()
+        zero = ir.Constant(intp, 0)
+        one = ir.Constant(intp, 1)
+
+        value_packed = _packed_string_ptr_from_data(
+            builder, value_data, value_index_value, intp)
+        pattern_packed = _packed_string_ptr_from_data(
+            builder, pattern_data, pattern_index_value, intp)
+        value_status, value_size, value_buffer = _load_string(
+            builder, value_allocator, value_packed, intp, byte_ptr)
+        pattern_status, pattern_size, pattern_buffer = _load_string(
+            builder, pattern_allocator, pattern_packed, intp, byte_ptr)
+
+        result = cgutils.alloca_once(builder, intp)
+        if mode == 'count':
+            builder.store(zero, result)
+        else:
+            builder.store(ir.Constant(intp, -1), result)
+
+        value_valid = builder.icmp_signed(
+            '==', value_status, ir.Constant(int32, 0))
+        pattern_valid = builder.icmp_signed(
+            '==', pattern_status, ir.Constant(int32, 0))
+
+        with builder.if_then(builder.and_(value_valid, pattern_valid)):
+            start_index, end_index, start_offset, end_offset, slice_valid = \
+                _normalise_slice(
+                    builder, value_size, value_buffer, start, end, intp, int8)
+            pattern_effective_size = _trimmed_size(
+                builder, pattern_size, pattern_buffer, intp, int8)
+            empty_pattern = builder.icmp_unsigned(
+                '==', pattern_effective_size, zero)
+            if mode == 'count':
+                pattern_match_size = builder.select(
+                    empty_pattern, zero, pattern_size,
+                )
+            else:
+                short_pattern = builder.icmp_unsigned(
+                    '<=', pattern_effective_size, one,
+                )
+                pattern_match_size = builder.select(
+                    short_pattern, pattern_effective_size, pattern_size,
+                )
+
+            with builder.if_then(builder.and_(slice_valid, empty_pattern)):
+                if mode == 'find':
+                    builder.store(start_index, result)
+                elif mode == 'rfind':
+                    builder.store(end_index, result)
+                else:
+                    builder.store(builder.add(
+                        builder.sub(end_index, start_index), one), result)
+
+            slice_size = builder.sub(end_offset, start_offset)
+            nonempty_pattern = builder.not_(empty_pattern)
+            fits = builder.icmp_unsigned('<=', pattern_match_size,
+                                         slice_size)
+            with builder.if_then(builder.and_(slice_valid,
+                                              builder.and_(nonempty_pattern,
+                                                           fits))):
+                memcmp_type = ir.FunctionType(
+                    int32, [byte_ptr, byte_ptr, intp])
+                memcmp = cgutils.get_or_insert_function(
+                    builder.module, memcmp_type, 'memcmp',
+                )
+                first_pattern = builder.load(pattern_buffer)
+                found = cgutils.alloca_once(builder, ir.IntType(1))
+                builder.store(cgutils.false_bit, found)
+
+                if mode == 'rfind':
+                    pos = cgutils.alloca_once(builder, intp)
+                    last = builder.sub(end_offset, pattern_match_size)
+                    builder.store(last, pos)
+                    cond = builder.append_basic_block(
+                        'stringdtype.rfind.cond')
+                    body = builder.append_basic_block(
+                        'stringdtype.rfind.body')
+                    decrement = builder.append_basic_block(
+                        'stringdtype.rfind.decrement')
+                    after = builder.append_basic_block(
+                        'stringdtype.rfind.after')
+                    builder.branch(cond)
+
+                    builder.position_at_end(cond)
+                    in_range = builder.icmp_signed(
+                        '>=', builder.load(pos), start_offset)
+                    builder.cbranch(builder.and_(
+                        in_range, builder.not_(builder.load(found))),
+                        body, after)
+
+                    builder.position_at_end(body)
+                    value_byte = builder.load(
+                        builder.gep(value_buffer, [builder.load(pos)]))
+                    first_matches = builder.icmp_unsigned(
+                        '==', value_byte, first_pattern)
+                    with builder.if_then(first_matches):
+                        cmp_buffer = builder.gep(value_buffer,
+                                                 [builder.load(pos)])
+                        cmp_result = builder.call(
+                            memcmp, [cmp_buffer, pattern_buffer,
+                                     pattern_match_size],
+                        )
+                        matched = builder.icmp_signed(
+                            '==', cmp_result, ir.Constant(int32, 0))
+                        with builder.if_then(matched):
+                            builder.store(
+                                _codepoint_count(builder, builder.load(pos),
+                                                 value_buffer, intp, int8),
+                                result,
+                            )
+                            builder.store(cgutils.true_bit, found)
+                    builder.branch(decrement)
+
+                    builder.position_at_end(decrement)
+                    builder.store(builder.sub(builder.load(pos), one), pos)
+                    builder.branch(cond)
+
+                    builder.position_at_end(after)
+                else:
+                    pos = cgutils.alloca_once(builder, intp)
+                    last = builder.sub(end_offset, pattern_match_size)
+                    builder.store(start_offset, pos)
+                    cond = builder.append_basic_block(
+                        'stringdtype.find.cond')
+                    body = builder.append_basic_block(
+                        'stringdtype.find.body')
+                    advance = builder.append_basic_block(
+                        'stringdtype.find.advance')
+                    after = builder.append_basic_block(
+                        'stringdtype.find.after')
+                    builder.branch(cond)
+
+                    builder.position_at_end(cond)
+                    in_range = builder.icmp_signed(
+                        '<=', builder.load(pos), last)
+                    continue_search = in_range
+                    if mode == 'find':
+                        continue_search = builder.and_(
+                            in_range, builder.not_(builder.load(found)))
+                    builder.cbranch(continue_search, body, after)
+
+                    builder.position_at_end(body)
+                    value_byte = builder.load(
+                        builder.gep(value_buffer, [builder.load(pos)]))
+                    first_matches = builder.icmp_unsigned(
+                        '==', value_byte, first_pattern)
+                    matched = cgutils.alloca_once(builder, ir.IntType(1))
+                    builder.store(cgutils.false_bit, matched)
+                    with builder.if_then(first_matches):
+                        cmp_buffer = builder.gep(value_buffer,
+                                                 [builder.load(pos)])
+                        cmp_result = builder.call(
+                            memcmp, [cmp_buffer, pattern_buffer,
+                                     pattern_match_size],
+                        )
+                        builder.store(
+                            builder.icmp_signed(
+                                '==', cmp_result, ir.Constant(int32, 0)),
+                            matched,
+                        )
+                    with builder.if_then(builder.load(matched)):
+                        if mode == 'find':
+                            builder.store(
+                                _codepoint_count(builder, builder.load(pos),
+                                                 value_buffer, intp, int8),
+                                result,
+                            )
+                            builder.store(cgutils.true_bit, found)
+                        else:
+                            builder.store(builder.add(builder.load(result),
+                                                      one), result)
+                    builder.branch(advance)
+
+                    builder.position_at_end(advance)
+                    if mode == 'count':
+                        next_match = builder.add(builder.load(pos),
+                                                 pattern_match_size)
+                        next_scan = builder.add(builder.load(pos), one)
+                        builder.store(
+                            builder.select(builder.load(matched), next_match,
+                                           next_scan),
+                            pos,
+                        )
+                    else:
+                        builder.store(builder.add(builder.load(pos), one),
+                                      pos)
+                    builder.branch(cond)
+
+                    builder.position_at_end(after)
+
+        return builder.load(result)
+
+    return sig, codegen
+
+
+@intrinsic
+def stringdtype_find_data(typingctx, value_data, value_index, value_allocator,
+                          pattern_data, pattern_index, pattern_allocator,
+                          start, end):
+    return _stringdtype_search_data(
+        typingctx, value_data, value_index, value_allocator,
+        pattern_data, pattern_index, pattern_allocator, start, end, 'find',
+    )
+
+
+@intrinsic
+def stringdtype_rfind_data(typingctx, value_data, value_index, value_allocator,
+                           pattern_data, pattern_index, pattern_allocator,
+                           start, end):
+    return _stringdtype_search_data(
+        typingctx, value_data, value_index, value_allocator,
+        pattern_data, pattern_index, pattern_allocator, start, end, 'rfind',
+    )
+
+
+@intrinsic
+def stringdtype_count_data(typingctx, value_data, value_index, value_allocator,
+                           pattern_data, pattern_index, pattern_allocator,
+                           start, end):
+    return _stringdtype_search_data(
+        typingctx, value_data, value_index, value_allocator,
+        pattern_data, pattern_index, pattern_allocator, start, end, 'count',
     )
 
 

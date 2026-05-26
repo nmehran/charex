@@ -505,6 +505,49 @@ Acceptance bar for this tranche:
 - Clear documentation of rejected search strategies so later optimization work
   does not repeat failed experiments.
 
+Runtime checkpoint:
+
+- `np.strings.find`, `np.strings.rfind`, and `np.strings.count` support
+  same-shape, one-dimensional C-contiguous default `StringDType` arrays.
+- 0-D arrays, multidimensional arrays, non-contiguous arrays, mixed
+  scalar/array inputs, and `na_object` variants are rejected for now.
+- Results are public codepoint offsets. The internal scan works over UTF-8 byte
+  spans and converts match byte positions back to codepoint positions.
+- Empty substring behavior follows NumPy: `find` returns the normalized start,
+  `rfind` returns the normalized end, and `count` returns the number of
+  insertion positions in the normalized slice.
+- Search uses a byte-wise scan with a first-byte guard and `memcmp`
+  verification. `count` advances by the matched byte span and therefore uses
+  non-overlapping matches.
+- Trailing-NUL substring behavior is intentionally operation-specific to match
+  NumPy. All-NUL substrings are empty. For non-empty substrings, `count` uses
+  the raw substring bytes, while `find`/`rfind` use the raw bytes except for a
+  single-byte effective substring, which NumPy treats as that one byte.
+- `index` and `rindex` are still deferred until the not-found aggregation path
+  can raise exactly once for any failing element.
+
+Exploratory benchmark:
+
+```bash
+python docs/exploration/stringdtype_search_bench.py
+```
+
+Representative 100k-row speedups on Python 3.12.8, NumPy 2.4.6,
+Numba 0.65.1:
+
+| case | find | rfind | count |
+| ---- | ---- | ----- | ----- |
+| short default | 1.88x | 1.76x | 1.82x |
+| short slice | 1.67x | 1.67x | 1.62x |
+| empty pattern | 1.37x | 1.26x | 1.36x |
+| embedded NUL | 2.00x | 1.84x | 1.79x |
+| trailing-NUL pattern | 1.74x | 1.83x | 1.73x |
+| Unicode | 2.00x | 2.11x | 1.95x |
+| long first | 5.35x | 4.01x | 4.33x |
+| long last | 6.47x | 7.60x | 4.37x |
+| long no match | 2.49x | 2.33x | 2.41x |
+| long repeated | 4.10x | 5.31x | 2.95x |
+
 ## Prototype Order
 
 1. Type recognition only:

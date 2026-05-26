@@ -52,6 +52,9 @@ def test_stringdtype_shape_metadata_compiles():
     ('strings_not_equal', True),
     ('strings_startswith', True),
     ('strings_endswith', True),
+    ('strings_find', True),
+    ('strings_rfind', True),
+    ('strings_count', True),
 ])
 def test_stringdtype_zero_dimensional_arrays_are_rejected(impl_name, binary):
     info = StringsInformation()
@@ -379,6 +382,163 @@ def test_stringdtype_array_affix_rejects_mixed_stringdtype_inputs(
     ('strings_endswith', STRINGS.endswith),
 ])
 def test_stringdtype_array_affix_none_start_rejected_by_numpy(
+        impl_name, baseline):
+    strings = StringsInformation()
+    values = stringdtype_array(['abc'])
+    patterns = stringdtype_array(['a'])
+
+    with pytest.raises(Exception):
+        baseline(values, patterns, None, None)
+    with pytest.raises(Exception):
+        getattr(strings, impl_name)(values, patterns, None, None)
+
+
+@pytest.mark.parametrize('impl_name, baseline', [
+    ('strings_find', STRINGS.find),
+    ('strings_rfind', STRINGS.rfind),
+    ('strings_count', STRINGS.count),
+])
+@pytest.mark.parametrize('args', [
+    (),
+    (0, None),
+    (0, 0),
+    (1, None),
+    (-4, None),
+    (0, -1),
+    (-5, -1),
+    (10, None),
+])
+def test_stringdtype_array_search_matches_numpy(impl_name, baseline, args):
+    strings = StringsInformation()
+    values = stringdtype_array([
+        'abcabc', 'éfgé', '🙂a🙂', 'a\x00bc\x00bc', '\x00abc',
+        '', 'aaaa', 'a🙂a🙂',
+    ])
+    patterns = stringdtype_array([
+        'bc', 'é', '🙂', '\x00bc', '\x00a',
+        '', 'aa', '🙂a',
+    ])
+
+    assert_same(getattr(strings, impl_name), baseline,
+                values, patterns, *args)
+
+
+@pytest.mark.parametrize('impl_name, baseline', [
+    ('strings_find', STRINGS.find),
+    ('strings_rfind', STRINGS.rfind),
+    ('strings_count', STRINGS.count),
+])
+def test_stringdtype_array_search_trailing_nul_patterns_match_numpy(
+        impl_name, baseline):
+    strings = StringsInformation()
+    values = stringdtype_array([
+        'a', 'ab', 'ab\x00x', 'abc', 'abc\x00x',
+        'é', 'é\x00x', 'xé\x00y',
+        '🙂', '🙂\x00x', 'x🙂\x00y',
+        'a\x00b', 'a\x00bc', 'x\x00b\x00y', '\x00b',
+    ])
+    patterns = stringdtype_array([
+        'a\x00', 'ab\x00', 'ab\x00', 'c\x00', 'bc\x00',
+        'é\x00', 'é\x00', 'é\x00',
+        '🙂\x00', '🙂\x00', '🙂\x00',
+        'a\x00b\x00', 'a\x00b\x00', '\x00b\x00', '\x00b\x00',
+    ])
+
+    assert_same(getattr(strings, impl_name), baseline, values, patterns)
+
+
+@pytest.mark.parametrize('impl_name, baseline', [
+    ('strings_find', STRINGS.find),
+    ('strings_rfind', STRINGS.rfind),
+    ('strings_count', STRINGS.count),
+])
+def test_stringdtype_array_search_empty_arrays_match_numpy(
+        impl_name, baseline):
+    strings = StringsInformation()
+    values = stringdtype_array([])
+    patterns = stringdtype_array([])
+
+    assert_same(getattr(strings, impl_name), baseline, values, patterns)
+
+
+@pytest.mark.parametrize('impl_name, baseline', [
+    ('strings_find', STRINGS.find),
+    ('strings_rfind', STRINGS.rfind),
+    ('strings_count', STRINGS.count),
+])
+def test_stringdtype_array_search_readonly_arrays_match_numpy(
+        impl_name, baseline):
+    strings = StringsInformation()
+    values = stringdtype_array(['abcabc', 'éfgé', '🙂a🙂'])
+    patterns = stringdtype_array(['bc', 'é', '🙂'])
+    values.flags.writeable = False
+    patterns.flags.writeable = False
+
+    assert_same(getattr(strings, impl_name), baseline, values, patterns)
+
+
+@pytest.mark.parametrize('impl_name', [
+    'strings_find',
+    'strings_rfind',
+    'strings_count',
+])
+def test_stringdtype_array_search_shape_mismatch(impl_name):
+    strings = StringsInformation()
+    values = stringdtype_array(['abc', 'def', 'ghi'])
+    patterns = stringdtype_array(['a', 'd'])
+
+    with pytest.raises(ValueError, match='shape mismatch'):
+        getattr(strings, impl_name)(values, patterns)
+
+
+@pytest.mark.parametrize('impl_name', [
+    'strings_find',
+    'strings_rfind',
+    'strings_count',
+])
+def test_stringdtype_array_search_rejects_noncontiguous_arrays(impl_name):
+    strings = StringsInformation()
+    values = stringdtype_array(['a', 'b', 'c', 'd'])
+
+    with pytest.raises(TypingError, match='C-contiguous'):
+        getattr(strings, impl_name)(values[::2], values[::2])
+
+
+@pytest.mark.parametrize('impl_name', [
+    'strings_find',
+    'strings_rfind',
+    'strings_count',
+])
+def test_stringdtype_array_search_rejects_multidimensional_arrays(impl_name):
+    strings = StringsInformation()
+    values = stringdtype_array(['a', 'b', 'c', 'd']).reshape(2, 2)
+
+    with pytest.raises(TypingError, match='one-dimensional arrays'):
+        getattr(strings, impl_name)(values, values)
+
+
+@pytest.mark.parametrize('impl_name', [
+    'strings_find',
+    'strings_rfind',
+    'strings_count',
+])
+@pytest.mark.parametrize('scalar_left', [False, True])
+def test_stringdtype_array_search_rejects_mixed_stringdtype_inputs(
+        impl_name, scalar_left):
+    strings = StringsInformation()
+    values = stringdtype_array(['a', 'b'])
+    args = ('a', values) if scalar_left else (values, 'a')
+
+    with pytest.raises(TypingError, match='two StringDType arrays'):
+        getattr(strings, impl_name)(*args)
+
+
+@pytest.mark.parametrize('impl_name, baseline', [
+    ('strings_find', STRINGS.find),
+    ('strings_rfind', STRINGS.rfind),
+    ('strings_count', STRINGS.count),
+])
+def test_stringdtype_array_search_none_start_rejected_by_numpy(
         impl_name, baseline):
     strings = StringsInformation()
     values = stringdtype_array(['abc'])
