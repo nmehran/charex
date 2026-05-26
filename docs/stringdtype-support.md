@@ -1053,24 +1053,37 @@ Numba 0.65.1:
 
 ## Tranche 9: Missing Sentinels And `na_object`
 
-This tranche should replace the current blanket rejection of
-`StringDType(na_object=...)` with exact NumPy behavior. It should not begin
-until the supported default-`StringDType` operation surface is stable enough
-that sentinel propagation can be audited operation by operation.
+This tranche replaces the blanket rejection of `StringDType(na_object=...)`
+incrementally, only where exact NumPy behavior has been audited.
 
-Currently unsupported variants:
+Sentinel variants under test:
 
 - `np.dtypes.StringDType(na_object=None)`
 - `np.dtypes.StringDType(na_object=np.nan)`
 - `np.dtypes.StringDType(na_object="MISSING")`
 - other user-provided sentinel values accepted by NumPy
 
-Known risk:
+Exploratory probe:
+
+```bash
+python docs/exploration/stringdtype_na_object_probe.py
+```
+
+First findings:
 
 - `NpyString_load` can report a null-string status for sentinel values, while
   NumPy operation semantics are not uniformly "return missing" or "raise".
-  For example, a string sentinel can behave like a normal string in operations
-  such as `np.strings.str_len`.
+- String sentinels also load as null status with no returned sentinel bytes.
+  Exact support needs descriptor metadata, not just a changed null branch.
+- `na_object=None` raises for `str_len`, predicates, ordering, affix, and
+  search when a null participates, but equality treats null equal to null.
+- `na_object=np.nan` raises for `str_len` and search. Predicates and
+  comparison/affix operations return `False` where null participates.
+- A string `na_object` behaves like its sentinel text for the audited unary
+  operations and search/affix/comparison examples.
+- Mixed default-`StringDType` and sentinel-`StringDType` operands are
+  operation- and operand-order-sensitive. These need separate binary truth
+  tables before implementation.
 
 Correctness questions to answer before implementation:
 
@@ -1113,6 +1126,17 @@ Acceptance bar for this tranche:
   the same operation-level result.
 - No mutation of inputs.
 - No allocator leaks or deadlocks.
+
+Prototype checkpoint:
+
+- Numba now recognizes default and sentinel `StringDType` arrays as distinct
+  packet types carrying compile-time sentinel metadata.
+- `np.strings.str_len` matches NumPy for `na_object=None`, `np.nan`, and string
+  sentinels.
+- Unicode predicates match NumPy for `na_object=None`, `np.nan`, and string
+  sentinels.
+- Binary operations still reject sentinel dtypes explicitly while their exact
+  operation-specific tables are built.
 
 ## Prototype Order
 

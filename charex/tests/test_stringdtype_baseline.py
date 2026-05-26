@@ -6,7 +6,7 @@ import subprocess
 import sys
 import textwrap
 from numba import njit, typeof
-from numba.core.errors import NumbaValueError, TypingError
+from numba.core.errors import TypingError
 
 from charex.tests.definitions import (
     StringsComparisonOperators, StringsInformation,
@@ -515,24 +515,76 @@ def test_direct_numba_stringdtype_target_behavior():
     np.testing.assert_array_equal(strlen(values), STRINGS.str_len(values))
 
 
-def test_stringdtype_str_len_rejects_null_strings():
+def test_stringdtype_str_len_rejects_non_string_nulls():
     dtype = STRING_DTYPE(na_object=None)
     values = np.array(['a', None, 'bb'], dtype=dtype)
     strings = StringsInformation()
 
     with pytest.raises(ValueError, match='length of a null string'):
         STRINGS.str_len(values)
-    with pytest.raises(TypingError, match='without na_object'):
+    with pytest.raises(ValueError, match='length of a null string'):
         strings.strings_str_len(values)
 
 
 @pytest.mark.parametrize('na_object', [None, np.nan, 'MISSING'])
-def test_stringdtype_na_object_variants_are_rejected(na_object):
+def test_stringdtype_na_object_variants_are_typed(na_object):
     values = np.array(['a', na_object, 'bb'],
                       dtype=STRING_DTYPE(na_object=na_object))
 
-    with pytest.raises(NumbaValueError, match='without na_object'):
-        typeof(values)
+    value_type = typeof(values)
+
+    assert value_type.dtype.name.startswith('StringDTypePacket')
+
+
+def test_stringdtype_string_na_object_type_includes_sentinel_text():
+    missing = typeof(np.array(['a', 'MISSING'],
+                              dtype=STRING_DTYPE(na_object='MISSING')))
+    na = typeof(np.array(['a', 'NA'], dtype=STRING_DTYPE(na_object='NA')))
+
+    assert missing.dtype.na_name == b'MISSING'
+    assert na.dtype.na_name == b'NA'
+    assert missing.dtype.name != na.dtype.name
+
+
+@pytest.mark.parametrize('na_object', [None, np.nan, 'MISSING'])
+def test_stringdtype_str_len_na_object_variants_match_numpy(na_object):
+    values = np.array(['a', na_object, '', 'MISSING', 'aa'],
+                      dtype=STRING_DTYPE(na_object=na_object))
+    strings = StringsInformation()
+
+    if na_object is None or isinstance(na_object, float):
+        assert_same_exception(strings.strings_str_len, STRINGS.str_len, values)
+    else:
+        assert_same(strings.strings_str_len, STRINGS.str_len, values)
+
+
+@pytest.mark.parametrize('impl_name, baseline', STRINGDTYPE_PREDICATES)
+@pytest.mark.parametrize('na_object', [None, np.nan, 'MISSING'])
+def test_stringdtype_predicate_na_object_variants_match_numpy(
+        impl_name, baseline, na_object):
+    values = np.array(['a', na_object, '', 'MISSING', 'aa'],
+                      dtype=STRING_DTYPE(na_object=na_object))
+    strings = StringsInformation()
+    implementation = getattr(strings, impl_name)
+
+    if na_object is None:
+        assert_same_exception(implementation, baseline, values)
+    else:
+        assert_same(implementation, baseline, values)
+
+
+@pytest.mark.parametrize('impl_name', [
+    'strings_equal', 'strings_greater', 'strings_startswith', 'strings_find',
+])
+@pytest.mark.parametrize('na_object', [None, np.nan, 'MISSING'])
+def test_stringdtype_na_object_binary_operations_remain_explicitly_rejected(
+        impl_name, na_object):
+    values = np.array(['a', na_object, 'bb'],
+                      dtype=STRING_DTYPE(na_object=na_object))
+    implementation = strings_impl(impl_name)
+
+    with pytest.raises(TypingError, match='na_object support'):
+        implementation(values, values)
 
 
 def test_stringdtype_requires_native_helper():

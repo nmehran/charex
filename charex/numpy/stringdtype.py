@@ -23,18 +23,30 @@ import numpy as np
 
 _STRING_DTYPE = getattr(getattr(np, 'dtypes', None), 'StringDType', None)
 _PACKED_STRING_SIZE = 16
+_NA_NONE = 1
+_NA_NAN = 2
+_NA_STRING = 3
 
 
 class StringDTypePacket(types.Type):
     """Numba type for StringDType's 16-byte packed element record."""
 
-    def __init__(self):
-        super().__init__('StringDTypePacket')
+    def __init__(self, na_kind=0, na_name=b''):
+        self.na_kind = na_kind
+        self.na_name = na_name
+        if na_kind == 0:
+            name = 'StringDTypePacket'
+        elif na_kind == _NA_STRING:
+            name = f'StringDTypePacket(na_kind={na_kind}, na_name={na_name!r})'
+        else:
+            name = f'StringDTypePacket(na_kind={na_kind})'
+        super().__init__(name)
 
 
 stringdtype_packet = StringDTypePacket()
 _UNICODE_PARTS_TYPE = types.UniTuple(types.intp, 2)
 _UTF8_SPAN_TYPE = types.Tuple((types.voidptr, types.intp, types.boolean))
+_NA_NAME_TYPE = types.Tuple((types.intp, types.voidptr))
 _UTF8_SLICE_TYPE = types.Tuple((types.intp, types.intp, types.boolean))
 _UTF8_SEARCH_SLICE_TYPE = types.Tuple((
     types.intp, types.intp, types.intp, types.intp, types.boolean))
@@ -141,6 +153,24 @@ def has_stringdtype_na_object(dtype):
     return True
 
 
+def _stringdtype_packet_type(dtype):
+    if not has_stringdtype_na_object(dtype):
+        return stringdtype_packet
+
+    na_object = dtype.na_object
+    if isinstance(na_object, str):
+        return StringDTypePacket(
+            _NA_STRING,
+            na_object.encode('utf-8', 'surrogatepass'),
+        )
+    try:
+        if np.isnan(na_object):
+            return StringDTypePacket(_NA_NAN)
+    except TypeError:
+        pass
+    return StringDTypePacket(_NA_NONE)
+
+
 def is_stringdtype_array_type(value):
     return isinstance(value, types.Array) \
         and isinstance(value.dtype, StringDTypePacket)
@@ -160,6 +190,18 @@ def _load_string(builder, allocator, packed, intp, byte_ptr):
     unpacked = builder.load(static)
     return status, builder.extract_value(unpacked, 0), \
         builder.extract_value(unpacked, 1)
+
+
+def _resolve_string_na(builder, status, size, buffer, na_kind, na_size,
+                       na_buffer, int32):
+    kind_string = builder.icmp_signed('==', na_kind,
+                                      ir.Constant(int32, _NA_STRING))
+    is_null = builder.icmp_signed('==', status, ir.Constant(int32, 1))
+    use_name = builder.and_(is_null, kind_string)
+    status = builder.select(use_name, ir.Constant(int32, 0), status)
+    size = builder.select(use_name, na_size, size)
+    buffer = builder.select(use_name, na_buffer, buffer)
+    return status, size, buffer
 
 
 def _trimmed_size(builder, size, buffer, intp, int8):
@@ -1399,6 +1441,40 @@ def _packed_string_ptr_from_data(builder, data, index_value, intp):
 
 
 @intrinsic
+def stringdtype_na_name(typingctx, array):
+    if not is_stringdtype_array_type(array):
+        return None
+
+    sig = signature(_NA_NAME_TYPE, array)
+
+    def codegen(context, builder, signature, args):
+        int8 = ir.IntType(8)
+        intp = context.get_value_type(types.intp)
+        byte_ptr = int8.as_pointer()
+        na_name = signature.args[0].dtype.na_name
+        if na_name:
+            name_type = ir.ArrayType(int8, len(na_name))
+            name_value = ir.Constant(
+                name_type,
+                [ir.Constant(int8, value) for value in na_name],
+            )
+            global_name = cgutils.global_constant(
+                builder, '.charex.stringdtype.na_name', name_value,
+            )
+            name_ptr = builder.bitcast(global_name, byte_ptr)
+        else:
+            name_ptr = ir.Constant(byte_ptr, None)
+
+        return context.make_tuple(
+            builder,
+            signature.return_type,
+            [ir.Constant(intp, len(na_name)), name_ptr],
+        )
+
+    return sig, codegen
+
+
+@intrinsic
 def stringdtype_acquire_allocator(typingctx, array):
     if not is_stringdtype_array_type(array):
         return None
@@ -1575,6 +1651,48 @@ def stringdtype_codepoint_len_data(typingctx, data, index, allocator):
     return sig, codegen
 
 
+@intrinsic
+def stringdtype_codepoint_len_na_data(
+        typingctx, data, index, allocator, na_kind, na_size, na_buffer):
+    if data != types.voidptr \
+            or not isinstance(index, types.Integer) \
+            or allocator != types.voidptr \
+            or not isinstance(na_kind, types.Integer) \
+            or not isinstance(na_size, types.Integer) \
+            or na_buffer != types.voidptr:
+        return None
+
+    sig = signature(types.intp, data, types.intp, allocator, types.int32,
+                    types.intp, na_buffer)
+
+    def codegen(context, builder, signature, args):
+        data, index_value, allocator, na_kind, na_size, na_buffer = args
+
+        int8 = ir.IntType(8)
+        int32 = ir.IntType(32)
+        intp = context.get_value_type(types.intp)
+        byte_ptr = int8.as_pointer()
+        packed = _packed_string_ptr_from_data(builder, data, index_value, intp)
+        status, size, buffer = _load_string(builder, allocator, packed, intp,
+                                            byte_ptr)
+        status, size, buffer = _resolve_string_na(
+            builder, status, size, buffer, na_kind, na_size, na_buffer, int32)
+
+        result = cgutils.alloca_once(builder, intp)
+        builder.store(ir.Constant(intp, -1), result)
+        valid = builder.icmp_signed('==', status, ir.Constant(int32, 0))
+
+        with builder.if_then(valid):
+            builder.store(
+                _string_codepoint_len(builder, size, buffer, intp, int8),
+                result,
+            )
+
+        return builder.load(result)
+
+    return sig, codegen
+
+
 def _stringdtype_predicate_data(typingctx, data, index, allocator, mode):
     if data != types.voidptr \
             or not isinstance(index, types.Integer) \
@@ -1610,6 +1728,68 @@ def _stringdtype_predicate_data(typingctx, data, index, allocator, mode):
                     ),
                     result,
                 )
+
+        return builder.load(result)
+
+    return sig, codegen
+
+
+def _stringdtype_predicate_na_data(
+        typingctx, data, index, allocator, na_kind, na_size, na_buffer, mode):
+    if data != types.voidptr \
+            or not isinstance(index, types.Integer) \
+            or allocator != types.voidptr \
+            or not isinstance(na_kind, types.Integer) \
+            or not isinstance(na_size, types.Integer) \
+            or na_buffer != types.voidptr:
+        return None
+
+    sig = signature(types.int8, data, types.intp, allocator, types.int32,
+                    types.intp, na_buffer)
+
+    def codegen(context, builder, signature, args):
+        data, index_value, allocator, na_kind, na_size, na_buffer = args
+
+        int8 = ir.IntType(8)
+        int32 = ir.IntType(32)
+        intp = context.get_value_type(types.intp)
+        byte_ptr = int8.as_pointer()
+        packed = _packed_string_ptr_from_data(builder, data, index_value, intp)
+        status, size, buffer = _load_string(builder, allocator, packed, intp,
+                                            byte_ptr)
+        status, size, buffer = _resolve_string_na(
+            builder, status, size, buffer, na_kind, na_size, na_buffer, int32)
+
+        result = cgutils.alloca_once(builder, int8)
+        builder.store(ir.Constant(int8, -1), result)
+        valid = builder.icmp_signed('==', status, ir.Constant(int32, 0))
+        null = builder.icmp_signed('==', status, ir.Constant(int32, 1))
+        nan_na = builder.icmp_signed('==', na_kind,
+                                     ir.Constant(int32, _NA_NAN))
+
+        with builder.if_then(builder.and_(null, nan_na)):
+            builder.store(ir.Constant(int8, 0), result)
+
+        with builder.if_then(valid):
+            predicate_result = cgutils.alloca_once(builder, ir.IntType(1))
+            builder.store(cgutils.false_bit, predicate_result)
+            effective_size = _trimmed_size(builder, size, buffer, intp, int8)
+            nonempty = builder.icmp_unsigned(
+                '>', effective_size, ir.Constant(intp, 0))
+            with builder.if_then(nonempty):
+                builder.store(
+                    _emit_stringdtype_predicate(
+                        context, builder, mode, effective_size, buffer,
+                        intp, int8, int32,
+                    ),
+                    predicate_result,
+                )
+            builder.store(
+                builder.select(builder.load(predicate_result),
+                               ir.Constant(int8, 1),
+                               ir.Constant(int8, 0)),
+                result,
+            )
 
         return builder.load(result)
 
@@ -1668,6 +1848,78 @@ def stringdtype_isupper_data(typingctx, data, index, allocator):
 def stringdtype_istitle_data(typingctx, data, index, allocator):
     return _stringdtype_predicate_data(
         typingctx, data, index, allocator, 'istitle')
+
+
+@intrinsic
+def stringdtype_isalpha_na_data(
+        typingctx, data, index, allocator, na_kind, na_size, na_buffer):
+    return _stringdtype_predicate_na_data(
+        typingctx, data, index, allocator, na_kind, na_size, na_buffer,
+        'isalpha')
+
+
+@intrinsic
+def stringdtype_isalnum_na_data(
+        typingctx, data, index, allocator, na_kind, na_size, na_buffer):
+    return _stringdtype_predicate_na_data(
+        typingctx, data, index, allocator, na_kind, na_size, na_buffer,
+        'isalnum')
+
+
+@intrinsic
+def stringdtype_isdecimal_na_data(
+        typingctx, data, index, allocator, na_kind, na_size, na_buffer):
+    return _stringdtype_predicate_na_data(
+        typingctx, data, index, allocator, na_kind, na_size, na_buffer,
+        'isdecimal')
+
+
+@intrinsic
+def stringdtype_isdigit_na_data(
+        typingctx, data, index, allocator, na_kind, na_size, na_buffer):
+    return _stringdtype_predicate_na_data(
+        typingctx, data, index, allocator, na_kind, na_size, na_buffer,
+        'isdigit')
+
+
+@intrinsic
+def stringdtype_isnumeric_na_data(
+        typingctx, data, index, allocator, na_kind, na_size, na_buffer):
+    return _stringdtype_predicate_na_data(
+        typingctx, data, index, allocator, na_kind, na_size, na_buffer,
+        'isnumeric')
+
+
+@intrinsic
+def stringdtype_isspace_na_data(
+        typingctx, data, index, allocator, na_kind, na_size, na_buffer):
+    return _stringdtype_predicate_na_data(
+        typingctx, data, index, allocator, na_kind, na_size, na_buffer,
+        'isspace')
+
+
+@intrinsic
+def stringdtype_islower_na_data(
+        typingctx, data, index, allocator, na_kind, na_size, na_buffer):
+    return _stringdtype_predicate_na_data(
+        typingctx, data, index, allocator, na_kind, na_size, na_buffer,
+        'islower')
+
+
+@intrinsic
+def stringdtype_isupper_na_data(
+        typingctx, data, index, allocator, na_kind, na_size, na_buffer):
+    return _stringdtype_predicate_na_data(
+        typingctx, data, index, allocator, na_kind, na_size, na_buffer,
+        'isupper')
+
+
+@intrinsic
+def stringdtype_istitle_na_data(
+        typingctx, data, index, allocator, na_kind, na_size, na_buffer):
+    return _stringdtype_predicate_na_data(
+        typingctx, data, index, allocator, na_kind, na_size, na_buffer,
+        'istitle')
 
 
 @intrinsic
@@ -2983,15 +3235,10 @@ def _install_typeof():
                     'charex._stringdtype helper; reinstall charex or run '
                     'build_ext --inplace',
                 )
-            if has_stringdtype_na_object(value.dtype):
-                raise NumbaValueError(
-                    'charex StringDType support currently requires default '
-                    'StringDType without na_object',
-                )
             layout = numpy_support.map_layout(value)
             readonly = not value.flags.writeable
             return types.Array(
-                stringdtype_packet,
+                _stringdtype_packet_type(value.dtype),
                 value.ndim,
                 layout,
                 readonly=readonly,

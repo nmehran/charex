@@ -19,18 +19,23 @@ from charex.numpy.stringdtype import (
     stringdtype_find_data, stringdtype_find_unicode_data,
     stringdtype_find_utf8_data,
     stringdtype_free_utf8_span,
-    stringdtype_isalnum_data, stringdtype_isalpha_data,
-    stringdtype_isdecimal_data, stringdtype_isdigit_data,
-    stringdtype_islower_data, stringdtype_isnumeric_data,
-    stringdtype_isspace_data, stringdtype_istitle_data,
-    stringdtype_isupper_data, stringdtype_release_allocator,
+    stringdtype_isalnum_data, stringdtype_isalnum_na_data,
+    stringdtype_isalpha_data, stringdtype_isalpha_na_data,
+    stringdtype_isdecimal_data, stringdtype_isdecimal_na_data,
+    stringdtype_isdigit_data, stringdtype_isdigit_na_data,
+    stringdtype_islower_data, stringdtype_islower_na_data,
+    stringdtype_isnumeric_data, stringdtype_isnumeric_na_data,
+    stringdtype_isspace_data, stringdtype_isspace_na_data,
+    stringdtype_istitle_data, stringdtype_istitle_na_data,
+    stringdtype_isupper_data, stringdtype_isupper_na_data,
+    stringdtype_na_name, stringdtype_release_allocator,
     stringdtype_release_allocators, stringdtype_rfind_data,
     stringdtype_rfind_unicode_data, stringdtype_rfind_utf8_data,
     stringdtype_startswith_data,
     stringdtype_startswith_unicode_data, stringdtype_startswith_utf8_data,
-    stringdtype_unicode_parts, stringdtype_unicode_utf8_span,
-    stringdtype_unicode_valid, stringdtype_utf8_search_slice,
-    stringdtype_utf8_slice,
+    stringdtype_codepoint_len_na_data, stringdtype_unicode_parts,
+    stringdtype_unicode_utf8_span, stringdtype_unicode_valid,
+    stringdtype_utf8_search_slice, stringdtype_utf8_slice,
     utf8_count_stringdtype_sliced_data,
     utf8_endswith_stringdtype_sliced_data,
     utf8_find_stringdtype_sliced_data,
@@ -94,6 +99,26 @@ def _validate_unicode_array(value):
     if value.ndim > 1:
         raise NumbaValueError('charex StringDType support currently '
                               'requires scalar or one-dimensional arrays')
+
+
+def _stringdtype_na_kind(value):
+    if is_stringdtype_array_type(value):
+        return value.dtype.na_kind
+    return 0
+
+
+def _has_stringdtype_na(*values):
+    for value in values:
+        if _stringdtype_na_kind(value) != 0:
+            return True
+    return False
+
+
+def _reject_stringdtype_na(operation):
+    raise NumbaValueError(
+        f'StringDType na_object support for {operation} is still '
+        'being prototyped',
+    )
 
 
 def _unicode_scalar_value(value):
@@ -252,6 +277,9 @@ def _overload_equal(left, right, invert):
     left_stringdtype = is_stringdtype_array_type(left)
     right_stringdtype = is_stringdtype_array_type(right)
     if left_stringdtype or right_stringdtype:
+        if _has_stringdtype_na(left, right):
+            _reject_stringdtype_na('comparisons')
+
         if left_stringdtype and _is_unicode_scalar_like(right):
             _validate_stringdtype_array(left)
             if left.ndim == 0:
@@ -510,6 +538,9 @@ def _overload_order(left, right, op):
     left_stringdtype = is_stringdtype_array_type(left)
     right_stringdtype = is_stringdtype_array_type(right)
     if left_stringdtype or right_stringdtype:
+        if _has_stringdtype_na(left, right):
+            _reject_stringdtype_na('comparisons')
+
         if op == 'greater':
             op_code = 0
         elif op == 'greater_equal':
@@ -750,6 +781,9 @@ def _overload_affix(value, pattern, start, end, suffix):
     value_stringdtype = is_stringdtype_array_type(value)
     pattern_stringdtype = is_stringdtype_array_type(pattern)
     if value_stringdtype or pattern_stringdtype:
+        if _has_stringdtype_na(value, pattern):
+            _reject_stringdtype_na('prefix/suffix operations')
+
         s, e = ensure_slice(start, end)
 
         if value_stringdtype and _is_unicode_scalar_like(pattern):
@@ -1013,6 +1047,9 @@ def _overload_search(value, pattern, start, end, op):
     value_stringdtype = is_stringdtype_array_type(value)
     pattern_stringdtype = is_stringdtype_array_type(pattern)
     if value_stringdtype or pattern_stringdtype:
+        if _has_stringdtype_na(value, pattern):
+            _reject_stringdtype_na('search operations')
+
         s, e = ensure_slice(start, end)
         forward = op == 'find' or op == 'index'
         reverse = op == 'rfind' or op == 'rindex'
@@ -1362,30 +1399,122 @@ def _overload_predicate(value, op):
         return _CHAR_PREDICATE_OVERLOADS[op](value)
 
     _validate_stringdtype_array(value)
+    na_kind = value.dtype.na_kind
 
     if value.ndim == 0:
+        if na_kind == 0:
+            def impl(value):
+                allocator = stringdtype_acquire_allocator(value)
+                data = stringdtype_data_ptr(value)
+                if op == 'isalpha':
+                    result = stringdtype_isalpha_data(data, 0, allocator)
+                elif op == 'isalnum':
+                    result = stringdtype_isalnum_data(data, 0, allocator)
+                elif op == 'isdecimal':
+                    result = stringdtype_isdecimal_data(data, 0, allocator)
+                elif op == 'isdigit':
+                    result = stringdtype_isdigit_data(data, 0, allocator)
+                elif op == 'isnumeric':
+                    result = stringdtype_isnumeric_data(data, 0, allocator)
+                elif op == 'isspace':
+                    result = stringdtype_isspace_data(data, 0, allocator)
+                elif op == 'islower':
+                    result = stringdtype_islower_data(data, 0, allocator)
+                elif op == 'isupper':
+                    result = stringdtype_isupper_data(data, 0, allocator)
+                else:
+                    result = stringdtype_istitle_data(data, 0, allocator)
+                stringdtype_release_allocator(allocator)
+                return result
+
+            return impl
+
         def impl(value):
             allocator = stringdtype_acquire_allocator(value)
             data = stringdtype_data_ptr(value)
+            na_name = stringdtype_na_name(value)
             if op == 'isalpha':
-                result = stringdtype_isalpha_data(data, 0, allocator)
+                result = stringdtype_isalpha_na_data(
+                    data, 0, allocator, na_kind, na_name[0], na_name[1])
             elif op == 'isalnum':
-                result = stringdtype_isalnum_data(data, 0, allocator)
+                result = stringdtype_isalnum_na_data(
+                    data, 0, allocator, na_kind, na_name[0], na_name[1])
             elif op == 'isdecimal':
-                result = stringdtype_isdecimal_data(data, 0, allocator)
+                result = stringdtype_isdecimal_na_data(
+                    data, 0, allocator, na_kind, na_name[0], na_name[1])
             elif op == 'isdigit':
-                result = stringdtype_isdigit_data(data, 0, allocator)
+                result = stringdtype_isdigit_na_data(
+                    data, 0, allocator, na_kind, na_name[0], na_name[1])
             elif op == 'isnumeric':
-                result = stringdtype_isnumeric_data(data, 0, allocator)
+                result = stringdtype_isnumeric_na_data(
+                    data, 0, allocator, na_kind, na_name[0], na_name[1])
             elif op == 'isspace':
-                result = stringdtype_isspace_data(data, 0, allocator)
+                result = stringdtype_isspace_na_data(
+                    data, 0, allocator, na_kind, na_name[0], na_name[1])
             elif op == 'islower':
-                result = stringdtype_islower_data(data, 0, allocator)
+                result = stringdtype_islower_na_data(
+                    data, 0, allocator, na_kind, na_name[0], na_name[1])
             elif op == 'isupper':
-                result = stringdtype_isupper_data(data, 0, allocator)
+                result = stringdtype_isupper_na_data(
+                    data, 0, allocator, na_kind, na_name[0], na_name[1])
             else:
-                result = stringdtype_istitle_data(data, 0, allocator)
+                result = stringdtype_istitle_na_data(
+                    data, 0, allocator, na_kind, na_name[0], na_name[1])
             stringdtype_release_allocator(allocator)
+            if result < 0:
+                raise ValueError(
+                    f'Cannot use the {op} function with a null that is '
+                    'not a nan-like value')
+            return bool(result)
+
+        return impl
+
+    if na_kind != 0:
+        def impl(value):
+            result = np.empty(value.size, np.bool_)
+            if value.size == 0:
+                return result
+            allocator = stringdtype_acquire_allocator(value)
+            data = stringdtype_data_ptr(value)
+            na_name = stringdtype_na_name(value)
+            null_string = False
+            for i in range(value.size):
+                if op == 'isalpha':
+                    predicate = stringdtype_isalpha_na_data(
+                        data, i, allocator, na_kind, na_name[0], na_name[1])
+                elif op == 'isalnum':
+                    predicate = stringdtype_isalnum_na_data(
+                        data, i, allocator, na_kind, na_name[0], na_name[1])
+                elif op == 'isdecimal':
+                    predicate = stringdtype_isdecimal_na_data(
+                        data, i, allocator, na_kind, na_name[0], na_name[1])
+                elif op == 'isdigit':
+                    predicate = stringdtype_isdigit_na_data(
+                        data, i, allocator, na_kind, na_name[0], na_name[1])
+                elif op == 'isnumeric':
+                    predicate = stringdtype_isnumeric_na_data(
+                        data, i, allocator, na_kind, na_name[0], na_name[1])
+                elif op == 'isspace':
+                    predicate = stringdtype_isspace_na_data(
+                        data, i, allocator, na_kind, na_name[0], na_name[1])
+                elif op == 'islower':
+                    predicate = stringdtype_islower_na_data(
+                        data, i, allocator, na_kind, na_name[0], na_name[1])
+                elif op == 'isupper':
+                    predicate = stringdtype_isupper_na_data(
+                        data, i, allocator, na_kind, na_name[0], na_name[1])
+                else:
+                    predicate = stringdtype_istitle_na_data(
+                        data, i, allocator, na_kind, na_name[0], na_name[1])
+                if predicate < 0:
+                    null_string = True
+                    predicate = 0
+                result[i] = bool(predicate)
+            stringdtype_release_allocator(allocator)
+            if null_string:
+                raise ValueError(
+                    f'Cannot use the {op} function with a null that is '
+                    'not a nan-like value')
             return result
 
         return impl
@@ -1585,16 +1714,54 @@ if _STRINGS is not None:
             return ov_char_str_len(value)
 
         _validate_stringdtype_array(value)
+        na_kind = value.dtype.na_kind
 
         if value.ndim == 0:
+            if na_kind == 0:
+                def impl(value):
+                    allocator = stringdtype_acquire_allocator(value)
+                    length = stringdtype_codepoint_len_data(
+                        stringdtype_data_ptr(value), 0, allocator)
+                    stringdtype_release_allocator(allocator)
+                    if length < 0:
+                        raise ValueError(
+                            'The length of a null string is undefined')
+                    return length
+
+                return impl
+
             def impl(value):
                 allocator = stringdtype_acquire_allocator(value)
-                length = stringdtype_codepoint_len_data(
-                    stringdtype_data_ptr(value), 0, allocator)
+                na_name = stringdtype_na_name(value)
+                length = stringdtype_codepoint_len_na_data(
+                    stringdtype_data_ptr(value), 0, allocator, na_kind,
+                    na_name[0], na_name[1])
                 stringdtype_release_allocator(allocator)
                 if length < 0:
                     raise ValueError('The length of a null string is undefined')
                 return length
+
+            return impl
+
+        if na_kind != 0:
+            def impl(value):
+                result = np.empty(value.size, np.int64)
+                allocator = stringdtype_acquire_allocator(value)
+                data = stringdtype_data_ptr(value)
+                na_name = stringdtype_na_name(value)
+                null_string = False
+                for i in range(value.size):
+                    length = stringdtype_codepoint_len_na_data(
+                        data, i, allocator, na_kind, na_name[0], na_name[1])
+                    if length < 0:
+                        null_string = True
+                        length = 0
+                    result[i] = length
+                stringdtype_release_allocator(allocator)
+                if null_string:
+                    raise ValueError(
+                        'The length of a null string is undefined')
+                return result
 
             return impl
 
