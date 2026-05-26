@@ -16,6 +16,7 @@ from charex.numpy.stringdtype import (
     stringdtype_equal_data, stringdtype_equal_unicode_data,
     stringdtype_equal_utf8_data,
     stringdtype_find_data, stringdtype_find_unicode_data,
+    stringdtype_find_utf8_data,
     stringdtype_free_utf8_span,
     stringdtype_isalnum_data, stringdtype_isalpha_data,
     stringdtype_isdecimal_data, stringdtype_isdigit_data,
@@ -23,13 +24,17 @@ from charex.numpy.stringdtype import (
     stringdtype_isspace_data, stringdtype_istitle_data,
     stringdtype_isupper_data, stringdtype_release_allocator,
     stringdtype_release_allocators, stringdtype_rfind_data,
-    stringdtype_rfind_unicode_data, stringdtype_startswith_data,
+    stringdtype_rfind_unicode_data, stringdtype_rfind_utf8_data,
+    stringdtype_startswith_data,
     stringdtype_startswith_unicode_data, stringdtype_startswith_utf8_data,
     stringdtype_unicode_parts, stringdtype_unicode_utf8_span,
-    stringdtype_unicode_valid, stringdtype_utf8_slice,
-    unicode_count_stringdtype_data, unicode_find_stringdtype_data,
-    unicode_rfind_stringdtype_data,
+    stringdtype_unicode_valid, stringdtype_utf8_search_slice,
+    stringdtype_utf8_slice,
+    stringdtype_count_utf8_data,
+    utf8_count_stringdtype_sliced_data,
     utf8_endswith_stringdtype_sliced_data,
+    utf8_find_stringdtype_sliced_data,
+    utf8_rfind_stringdtype_sliced_data,
     utf8_startswith_stringdtype_sliced_data,
 )
 from charex.numpy.overloads.definitions import (
@@ -723,18 +728,36 @@ def _overload_search(value, pattern, start, end, op):
                     end = e if end is None else end
                     allocator = stringdtype_acquire_allocator(value)
                     data = stringdtype_data_ptr(value)
-                    if forward:
-                        found = stringdtype_find_unicode_data(
-                            data, 0, allocator, pattern, pattern_parts[0],
-                            pattern_parts[1], start, end)
-                    elif reverse:
-                        found = stringdtype_rfind_unicode_data(
-                            data, 0, allocator, pattern, pattern_parts[0],
-                            pattern_parts[1], start, end)
+                    if pattern_parts[1] > _PACKED_STRING_SIZE:
+                        pattern_span = stringdtype_unicode_utf8_span(
+                            pattern, pattern_parts[0], pattern_parts[1])
+                        if forward:
+                            found = stringdtype_find_utf8_data(
+                                data, 0, allocator, pattern_span[0],
+                                pattern_span[1], start, end)
+                        elif reverse:
+                            found = stringdtype_rfind_utf8_data(
+                                data, 0, allocator, pattern_span[0],
+                                pattern_span[1], start, end)
+                        else:
+                            found = stringdtype_count_utf8_data(
+                                data, 0, allocator, pattern_span[0],
+                                pattern_span[1], start, end)
+                        stringdtype_free_utf8_span(pattern_span[0],
+                                                   pattern_span[2])
                     else:
-                        found = stringdtype_count_unicode_data(
-                            data, 0, allocator, pattern, pattern_parts[0],
-                            pattern_parts[1], start, end)
+                        if forward:
+                            found = stringdtype_find_unicode_data(
+                                data, 0, allocator, pattern, pattern_parts[0],
+                                pattern_parts[1], start, end)
+                        elif reverse:
+                            found = stringdtype_rfind_unicode_data(
+                                data, 0, allocator, pattern, pattern_parts[0],
+                                pattern_parts[1], start, end)
+                        else:
+                            found = stringdtype_count_unicode_data(
+                                data, 0, allocator, pattern, pattern_parts[0],
+                                pattern_parts[1], start, end)
                     stringdtype_release_allocator(allocator)
                     if raise_not_found and found < 0:
                         raise ValueError('substring not found')
@@ -754,23 +777,46 @@ def _overload_search(value, pattern, start, end, op):
                 allocator = stringdtype_acquire_allocator(value)
                 data = stringdtype_data_ptr(value)
                 not_found = False
-                for i in range(value.size):
-                    if forward:
-                        found = stringdtype_find_unicode_data(
-                            data, i, allocator, pattern, pattern_parts[0],
-                            pattern_parts[1], start, end)
-                    elif reverse:
-                        found = stringdtype_rfind_unicode_data(
-                            data, i, allocator, pattern, pattern_parts[0],
-                            pattern_parts[1], start, end)
-                    else:
-                        found = stringdtype_count_unicode_data(
-                            data, i, allocator, pattern, pattern_parts[0],
-                            pattern_parts[1], start, end)
-                    if raise_not_found and found < 0:
-                        not_found = True
-                        break
-                    result[i] = found
+                if pattern_parts[1] > _PACKED_STRING_SIZE:
+                    pattern_span = stringdtype_unicode_utf8_span(
+                        pattern, pattern_parts[0], pattern_parts[1])
+                    for i in range(value.size):
+                        if forward:
+                            found = stringdtype_find_utf8_data(
+                                data, i, allocator, pattern_span[0],
+                                pattern_span[1], start, end)
+                        elif reverse:
+                            found = stringdtype_rfind_utf8_data(
+                                data, i, allocator, pattern_span[0],
+                                pattern_span[1], start, end)
+                        else:
+                            found = stringdtype_count_utf8_data(
+                                data, i, allocator, pattern_span[0],
+                                pattern_span[1], start, end)
+                        if raise_not_found and found < 0:
+                            not_found = True
+                            break
+                        result[i] = found
+                    stringdtype_free_utf8_span(pattern_span[0],
+                                               pattern_span[2])
+                else:
+                    for i in range(value.size):
+                        if forward:
+                            found = stringdtype_find_unicode_data(
+                                data, i, allocator, pattern, pattern_parts[0],
+                                pattern_parts[1], start, end)
+                        elif reverse:
+                            found = stringdtype_rfind_unicode_data(
+                                data, i, allocator, pattern, pattern_parts[0],
+                                pattern_parts[1], start, end)
+                        else:
+                            found = stringdtype_count_unicode_data(
+                                data, i, allocator, pattern, pattern_parts[0],
+                                pattern_parts[1], start, end)
+                        if raise_not_found and found < 0:
+                            not_found = True
+                            break
+                        result[i] = found
                 stringdtype_release_allocator(allocator)
                 if not_found:
                     raise ValueError('substring not found')
@@ -787,21 +833,29 @@ def _overload_search(value, pattern, start, end, op):
                     value_parts = stringdtype_unicode_parts(value)
                     start = start or s
                     end = e if end is None else end
+                    value_span = stringdtype_unicode_utf8_span(
+                        value, value_parts[0], value_parts[1])
+                    slice_parts = stringdtype_utf8_search_slice(
+                        value_span[0], value_span[1], start, end)
                     allocator = stringdtype_acquire_allocator(pattern)
                     data = stringdtype_data_ptr(pattern)
                     if forward:
-                        found = unicode_find_stringdtype_data(
-                            value, data, value_parts[0], value_parts[1], 0,
-                            allocator, start, end)
+                        found = utf8_find_stringdtype_sliced_data(
+                            value_span[0], slice_parts[0], slice_parts[1],
+                            slice_parts[2], slice_parts[3], slice_parts[4],
+                            data, 0, allocator)
                     elif reverse:
-                        found = unicode_rfind_stringdtype_data(
-                            value, data, value_parts[0], value_parts[1], 0,
-                            allocator, start, end)
+                        found = utf8_rfind_stringdtype_sliced_data(
+                            value_span[0], slice_parts[0], slice_parts[1],
+                            slice_parts[2], slice_parts[3], slice_parts[4],
+                            data, 0, allocator)
                     else:
-                        found = unicode_count_stringdtype_data(
-                            value, data, value_parts[0], value_parts[1], 0,
-                            allocator, start, end)
+                        found = utf8_count_stringdtype_sliced_data(
+                            value_span[0], slice_parts[0], slice_parts[1],
+                            slice_parts[2], slice_parts[3], slice_parts[4],
+                            data, 0, allocator)
                     stringdtype_release_allocator(allocator)
+                    stringdtype_free_utf8_span(value_span[0], value_span[2])
                     if raise_not_found and found < 0:
                         raise ValueError('substring not found')
                     return found
@@ -817,27 +871,35 @@ def _overload_search(value, pattern, start, end, op):
                 result = np.empty(pattern.size, np.int64)
                 if pattern.size == 0:
                     return result
+                value_span = stringdtype_unicode_utf8_span(
+                    value, value_parts[0], value_parts[1])
+                slice_parts = stringdtype_utf8_search_slice(
+                    value_span[0], value_span[1], start, end)
                 allocator = stringdtype_acquire_allocator(pattern)
                 data = stringdtype_data_ptr(pattern)
                 not_found = False
                 for i in range(pattern.size):
                     if forward:
-                        found = unicode_find_stringdtype_data(
-                            value, data, value_parts[0], value_parts[1], i,
-                            allocator, start, end)
+                        found = utf8_find_stringdtype_sliced_data(
+                            value_span[0], slice_parts[0], slice_parts[1],
+                            slice_parts[2], slice_parts[3], slice_parts[4],
+                            data, i, allocator)
                     elif reverse:
-                        found = unicode_rfind_stringdtype_data(
-                            value, data, value_parts[0], value_parts[1], i,
-                            allocator, start, end)
+                        found = utf8_rfind_stringdtype_sliced_data(
+                            value_span[0], slice_parts[0], slice_parts[1],
+                            slice_parts[2], slice_parts[3], slice_parts[4],
+                            data, i, allocator)
                     else:
-                        found = unicode_count_stringdtype_data(
-                            value, data, value_parts[0], value_parts[1], i,
-                            allocator, start, end)
+                        found = utf8_count_stringdtype_sliced_data(
+                            value_span[0], slice_parts[0], slice_parts[1],
+                            slice_parts[2], slice_parts[3], slice_parts[4],
+                            data, i, allocator)
                     if raise_not_found and found < 0:
                         not_found = True
                         break
                     result[i] = found
                 stringdtype_release_allocator(allocator)
+                stringdtype_free_utf8_span(value_span[0], value_span[2])
                 if not_found:
                     raise ValueError('substring not found')
                 return result

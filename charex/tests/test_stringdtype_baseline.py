@@ -721,6 +721,8 @@ def test_stringdtype_array_affix_mixed_python_str_matches_numpy(
     (['🙂' * 64, '🙃' + '🙂' * 63, '🙂' * 63 + '🙃'], '🙂' * 32, ()),
     (['a' * 128 + '\x00x', 'a' * 128 + '\x00y'],
      'a' * 128 + '\x00z', ()),
+    (['a' * 64 + '\x00', 'a' * 64, 'a' * 64 + '\x00x'],
+     'a' * 64 + '\x00\x00', ()),
     (['x' + 'a' * 128 + 'x', 'x' + 'é' * 64 + 'x'],
      'a' * 32, (1, -1)),
 ])
@@ -1015,6 +1017,34 @@ def test_stringdtype_array_search_mixed_python_str_matches_numpy(
 
 
 @pytest.mark.parametrize('impl_name, baseline', [
+    ('strings_find', STRINGS.find),
+    ('strings_rfind', STRINGS.rfind),
+    ('strings_count', STRINGS.count),
+])
+@pytest.mark.parametrize('values, scalar, args', [
+    (['a' * 128 + 'z' * 128, 'x' + 'a' * 127 + 'z' * 128],
+     'a' * 64, ()),
+    (['z' * 128 + 'a' * 128, 'z' * 128 + 'a' * 127 + 'x'],
+     'a' * 64, ()),
+    (['z' * 256, 'y' * 256], 'a' * 64, ()),
+    (['é' * 128, 'ê' + 'é' * 127], 'é' * 32, ()),
+    (['a' * 128 + '\x00x', 'a' * 128 + '\x00y'],
+     'a' * 128 + '\x00z', ()),
+    (['x' + 'a' * 128 + 'x', 'x' + 'é' * 64 + 'x'],
+     'a' * 32, (1, -1)),
+])
+def test_stringdtype_array_search_long_mixed_python_str_matches_numpy(
+        impl_name, baseline, values, scalar, args):
+    strings = StringsInformation()
+    values = stringdtype_array(values)
+
+    assert_same(getattr(strings, impl_name), baseline,
+                values, scalar, *args)
+    assert_same(getattr(strings, impl_name), baseline,
+                scalar, values, *args)
+
+
+@pytest.mark.parametrize('impl_name, baseline', [
     ('strings_index', STRINGS.index),
     ('strings_rindex', STRINGS.rindex),
 ])
@@ -1035,6 +1065,23 @@ def test_stringdtype_array_index_mixed_python_str_matches_numpy(
     ('strings_index', STRINGS.index),
     ('strings_rindex', STRINGS.rindex),
 ])
+def test_stringdtype_array_index_long_mixed_python_str_matches_numpy(
+        impl_name, baseline):
+    strings = StringsInformation()
+    values = stringdtype_array([
+        'a' * 128 + 'z', 'z' + 'a' * 128, 'x' + 'a' * 64 + 'y',
+    ])
+    patterns = stringdtype_array(['a' * 64, 'é' * 32, '🙂' * 16, ''])
+    value = 'x' + 'a' * 128 + 'é' * 64 + '🙂' * 32
+
+    assert_same(getattr(strings, impl_name), baseline, values, 'a' * 32)
+    assert_same(getattr(strings, impl_name), baseline, value, patterns)
+
+
+@pytest.mark.parametrize('impl_name, baseline', [
+    ('strings_index', STRINGS.index),
+    ('strings_rindex', STRINGS.rindex),
+])
 def test_stringdtype_array_index_mixed_python_str_not_found_matches_numpy(
         impl_name, baseline):
     strings = StringsInformation()
@@ -1044,6 +1091,22 @@ def test_stringdtype_array_index_mixed_python_str_not_found_matches_numpy(
     assert_same_exception(getattr(strings, impl_name), baseline, values, 'z')
     assert_same_exception(getattr(strings, impl_name), baseline, 'abc',
                           patterns)
+
+
+@pytest.mark.parametrize('impl_name, baseline', [
+    ('strings_index', STRINGS.index),
+    ('strings_rindex', STRINGS.rindex),
+])
+def test_stringdtype_array_index_long_mixed_python_str_not_found_matches_numpy(
+        impl_name, baseline):
+    strings = StringsInformation()
+    values = stringdtype_array(['a' * 128, 'b' * 128])
+    patterns = stringdtype_array(['a' * 64, 'z' * 64])
+
+    assert_same_exception(getattr(strings, impl_name), baseline,
+                          values, 'z' * 64)
+    assert_same_exception(getattr(strings, impl_name), baseline,
+                          'a' * 128, patterns)
 
 
 @pytest.mark.parametrize('impl_name, baseline', [

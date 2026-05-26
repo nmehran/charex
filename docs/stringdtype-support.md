@@ -588,6 +588,33 @@ Review-pass findings:
   forward-position tracking, byte-to-codepoint indexing, or word/SWAR scans
   belong in the later optimization tranche.
 
+Mixed Python `str` scalar checkpoint:
+
+- `StringDType` value array with Python `str` scalar substring keeps the
+  existing codepoint bridge for scalar patterns up to the 16-byte packed-record
+  size and uses one pre-encoded UTF-8 scalar span for longer patterns.
+- Python `str` scalar value with `StringDType` pattern array uses one
+  pre-encoded UTF-8 value span and normalizes the scalar slice once per call.
+- `index` and `rindex` use the same optimized `find`/`rfind` paths, but still
+  release allocators and UTF-8 spans before raising on not-found results.
+
+Exploratory benchmark:
+
+```bash
+python docs/exploration/stringdtype_scalar_search_bench.py
+```
+
+Representative 100k-row medians on Python 3.12.8, NumPy 2.4.6,
+Numba 0.65.1:
+
+| direction | case | operation | current | NumPy | current speedup | prior unicode bridge |
+| --------- | ---- | --------- | ------- | ----- | --------------- | -------------------- |
+| value array / scalar pattern | long first | find | 20.02 ms | 125.42 ms | 6.27x | 23.82 ms |
+| value array / scalar pattern | long first | rfind | 37.58 ms | 146.49 ms | 3.90x | 147.02 ms |
+| value array / scalar pattern | long first | count | 28.69 ms | 126.62 ms | 4.41x | 92.61 ms |
+| scalar value / pattern array | long NUL | find | 0.71 ms | 79.98 ms | 113.49x | 24.43 ms |
+| scalar value / pattern array | long NUL | count | 0.71 ms | 78.73 ms | 111.68x | 21.86 ms |
+
 ## Tranche 5: Index/Rindex Exceptions
 
 This tranche should complete the substring-search information family before
@@ -967,8 +994,6 @@ Numba 0.65.1:
 
 Remaining scalar bridge work:
 
-- Affix and search currently use the correct scalar bridge, but they have not
-  had the same UTF-8-span optimization pass as comparisons.
 - Scalar-only return types are covered where NumPy accepts normal Python `str`
   inputs; NumPy scalar string variants should be audited separately before
   expanding the public contract.
