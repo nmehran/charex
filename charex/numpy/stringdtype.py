@@ -44,11 +44,11 @@ class _StaticString(ctypes.Structure):
 
 def _native_stringdtype_helper():
     if _STRING_DTYPE is None:
-        return None, None, 0
+        return None, 0
     try:
         native = importlib.import_module('charex._stringdtype')
         if not native.has_stringdtype_api():
-            return None, None, 0
+            return None, 0
         library = ctypes.CDLL(native.__file__)
         acquire = library.charex_stringdtype_acquire_allocator
         acquire.argtypes = [ctypes.py_object]
