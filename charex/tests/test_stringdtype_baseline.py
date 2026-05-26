@@ -2,6 +2,9 @@
 
 import numpy as np
 import pytest
+import subprocess
+import sys
+import textwrap
 from numba import njit, typeof
 from numba.core.errors import NumbaValueError, TypingError
 
@@ -105,6 +108,45 @@ def test_stringdtype_na_object_variants_are_rejected(na_object):
 
     with pytest.raises(NumbaValueError, match='without na_object'):
         typeof(values)
+
+
+def test_stringdtype_requires_native_helper():
+    script = r'''
+import sys
+
+
+class BlockStringDTypeHelper:
+    def find_spec(self, fullname, path=None, target=None):
+        if fullname == 'charex._stringdtype':
+            raise ImportError('blocked native helper')
+        return None
+
+
+sys.meta_path.insert(0, BlockStringDTypeHelper())
+
+import numpy as np
+from numba import typeof
+import charex
+
+values = np.array(['a'], dtype=np.dtypes.StringDType())
+try:
+    typeof(values)
+except Exception as exc:
+    message = str(exc)
+    if 'compiled charex._stringdtype helper' in message:
+        raise SystemExit(0)
+    print(type(exc).__name__, message)
+    raise SystemExit(2)
+raise SystemExit(1)
+'''
+    result = subprocess.run(
+        [sys.executable, '-c', textwrap.dedent(script)],
+        check=False,
+        text=True,
+        capture_output=True,
+    )
+
+    assert result.returncode == 0, result.stdout + result.stderr
 
 
 def test_stringdtype_array_equal_matches_numpy():

@@ -53,38 +53,21 @@ def _native_stringdtype_helper():
         acquire = library.charex_stringdtype_acquire_allocator
         acquire.argtypes = [ctypes.py_object]
         acquire.restype = ctypes.c_void_p
-        return library, acquire, ctypes.cast(acquire, ctypes.c_void_p).value
+        return library, ctypes.cast(acquire, ctypes.c_void_p).value
     except (AttributeError, ImportError, OSError):
-        return None, None, 0
+        return None, 0
 
 
-_NATIVE_LIBRARY, _NATIVE_ACQUIRE, _NATIVE_ACQUIRE_ADDR = \
-    _native_stringdtype_helper()
+# Keep the CDLL object alive for the function address embedded in generated IR.
+_NATIVE_LIBRARY, _NATIVE_ACQUIRE_ADDR = _native_stringdtype_helper()
 
 
 if _STRING_DTYPE is not None:
     _API_SLOTS = _numpy_api_slots()
     llvm.add_symbol('charex_NpyString_load', _API_SLOTS[313])
-    llvm.add_symbol('charex_NpyString_acquire_allocator', _API_SLOTS[316])
     llvm.add_symbol('charex_NpyString_release_allocator', _API_SLOTS[318])
 else:
     _API_SLOTS = None
-
-
-def _array_descr_offset():
-    if _STRING_DTYPE is None:
-        return 0
-    array = np.array([''], dtype=_STRING_DTYPE())
-    target = id(array.dtype)
-    pointer_size = ctypes.sizeof(ctypes.c_void_p)
-    for offset in range(0, 256, pointer_size):
-        value = ctypes.c_void_p.from_address(id(array) + offset).value
-        if value == target:
-            return offset
-    raise RuntimeError('could not locate NumPy array descriptor offset')
-
-
-_ARRAY_DESCR_OFFSET = _array_descr_offset()
 
 
 @register_default(StringDTypePacket)
@@ -135,19 +118,6 @@ def has_stringdtype_na_object(dtype):
 def is_stringdtype_array_type(value):
     return isinstance(value, types.Array) \
         and isinstance(value.dtype, StringDTypePacket)
-
-
-def _array_descriptor(context, builder, array_type, array_value):
-    intp = context.get_value_type(types.intp)
-    byte_ptr = ir.IntType(8).as_pointer()
-    array_struct = context.make_array(array_type)(
-        context, builder, array_value,
-    )
-    parent = builder.bitcast(array_struct.parent, byte_ptr)
-    descr_addr = builder.gep(
-        parent, [ir.Constant(intp, _ARRAY_DESCR_OFFSET)],
-    )
-    return builder.load(builder.bitcast(descr_addr, byte_ptr.as_pointer()))
 
 
 def _packed_string_ptr(context, builder, array_type, array_value, index_value):
@@ -274,26 +244,17 @@ def stringdtype_acquire_allocator(typingctx, array):
 
     def codegen(context, builder, signature, args):
         byte_ptr = ir.IntType(8).as_pointer()
-        if _NATIVE_ACQUIRE_ADDR:
-            array_struct = context.make_array(signature.args[0])(
-                context, builder, args[0],
-            )
-            acquire_type = ir.FunctionType(byte_ptr, [byte_ptr])
-            acquire_addr = context.get_constant(types.uintp,
-                                                _NATIVE_ACQUIRE_ADDR)
-            acquire = builder.inttoptr(acquire_addr,
-                                       acquire_type.as_pointer())
-            return builder.call(
-                acquire, [builder.bitcast(array_struct.parent, byte_ptr)],
-            )
-
-        descriptor = _array_descriptor(context, builder, signature.args[0],
-                                       args[0])
-        acquire_type = ir.FunctionType(byte_ptr, [byte_ptr])
-        acquire = cgutils.get_or_insert_function(
-            builder.module, acquire_type, 'charex_NpyString_acquire_allocator',
+        array_struct = context.make_array(signature.args[0])(
+            context, builder, args[0],
         )
-        return builder.call(acquire, [descriptor])
+        acquire_type = ir.FunctionType(byte_ptr, [byte_ptr])
+        acquire_addr = context.get_constant(types.uintp, _NATIVE_ACQUIRE_ADDR)
+        acquire = builder.inttoptr(
+            acquire_addr, acquire_type.as_pointer(),
+        )
+        return builder.call(
+            acquire, [builder.bitcast(array_struct.parent, byte_ptr)],
+        )
 
     return sig, codegen
 
@@ -492,6 +453,12 @@ def _install_typeof():
     @typeof_impl.register(np.ndarray)
     def _stringdtype_ndarray_typeof(value, context):
         if is_stringdtype(value.dtype):
+            if not _NATIVE_ACQUIRE_ADDR:
+                raise NumbaValueError(
+                    'StringDType support requires the compiled '
+                    'charex._stringdtype helper; reinstall charex or run '
+                    'build_ext --inplace',
+                )
             if has_stringdtype_na_object(value.dtype):
                 raise NumbaValueError(
                     'charex StringDType support currently requires default '

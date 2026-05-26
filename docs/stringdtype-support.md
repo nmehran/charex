@@ -278,9 +278,8 @@ Runtime distillation checkpoint:
   - The first callback prototype was correct but hundreds of times slower
     than NumPy.
   - Current prototype calls NumPy's `NpyString_*` C API directly from LLVM and
-    acquires the allocator once per array operation. Built installs use a small
-    compiled helper for descriptor-to-allocator access; unbuilt source-tree
-    runs retain the parent-offset probe as an exploratory fallback.
+    acquires the allocator once per array operation. StringDType support now
+    requires the small compiled helper for descriptor-to-allocator access.
 3. First operation:
    - `np.strings.str_len` for one-dimensional C-contiguous arrays;
    - count Unicode code points from UTF-8 bytes.
@@ -310,9 +309,9 @@ Runtime distillation checkpoint:
   slower than Numba-generated loops.
 - Acquire each StringDType allocator once per array operation, outside the
   element loop. Per-element acquire is too expensive.
-- Use a compiled helper for descriptor-to-allocator access. The parent-object
-  descriptor offset probe remains only as a source-tree fallback when the
-  extension has not been built.
+- Require the compiled helper for descriptor-to-allocator access. If the helper
+  is unavailable, fail during StringDType typing instead of reading private
+  NumPy object layout.
 - Reject `StringDType(na_object=...)` arrays until sentinel propagation is
   implemented exactly.
 - Keep this in charex while prototyping. The dtype recognition and helper
@@ -328,5 +327,3 @@ Runtime distillation checkpoint:
   `np.strings` operation?
 - How much of the access/helper layer should become reusable infrastructure
   across comparison, occurrence, predicate, and transformation kernels?
-- Whether the parent-offset fallback should remain long term, or whether
-  built-extension availability should become mandatory for StringDType support.
