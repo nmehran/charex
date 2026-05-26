@@ -803,6 +803,89 @@ Review-pass findings:
   StringDType allocators, matching the empty-array fast paths used by the newer
   comparison, search, and predicate overloads.
 
+## Tranche 8: Scalar And Mixed Inputs
+
+This tranche should make the existing StringDType information and comparison
+surface useful in the scalar-broadcast cases NumPy accepts, without taking on
+general multidimensional broadcasting yet.
+
+Observed NumPy 2.4.6 behavior:
+
+- StringDType array with Python `str` scalar broadcasts over the array.
+- Python `str` scalar with StringDType array also broadcasts over the array.
+- 0-D `StringDType` arrays behave like scalar operands in binary operations.
+- Unary operations accept Python `str` scalars and 0-D `StringDType` arrays and
+  return scalar NumPy values.
+- `index` and `rindex` still raise `ValueError('substring not found')` if any
+  broadcasted element is not found.
+
+Target operations:
+
+- comparisons: `equal`, `not_equal`, `greater`, `greater_equal`, `less`,
+  `less_equal`;
+- affix/search: `startswith`, `endswith`, `find`, `rfind`, `count`, `index`,
+  `rindex`;
+- unary information: `str_len` and the nine predicate functions.
+
+Initial runtime scope:
+
+- default `StringDType` arrays only, still rejecting `na_object` variants;
+- one-dimensional C-contiguous arrays plus scalar/0-D operands;
+- scalar broadcasting only: array-scalar, scalar-array, 0-D-array, and
+  scalar-only cases where NumPy accepts them;
+- no N-D broadcasting, no non-contiguous layout support, and no missing
+  sentinel propagation in this tranche.
+
+Correctness questions to answer before implementation:
+
+- Whether Python `str`, NumPy scalar strings, and 0-D `StringDType` arrays share
+  the same trailing-NUL, embedded-NUL, ordering, and search semantics in every
+  operation.
+- Whether scalar Python strings need a dedicated UTF-8 bridge, or whether a
+  small temporary/default `StringDType` pack path is cleaner.
+- Exact return types for scalar-only and 0-D-only calls: NumPy scalar vs 0-D
+  ndarray vs 1-D ndarray after broadcasting.
+- Whether scalar `None`, bytes, fixed-width `S/U`, and non-string scalars should
+  route to existing fixed-width overloads, NumPy fallback, or explicit
+  rejection.
+- How to guarantee allocator release on `index`/`rindex` failure when only one
+  side requires a StringDType allocator.
+
+Implementation shape to prototype:
+
+- Keep the current array-array kernels intact.
+- Add a narrow scalar span abstraction that can feed the same equality,
+  ordering, affix, and search intrinsics without duplicating operation logic.
+- Prefer one explicit broadcast loop per operation family over generalized
+  broadcasting machinery.
+- Handle 0-D `StringDType` arrays by loading the single packed element with the
+  normal allocator path.
+- For Python `str` scalars, prototype the smallest safe UTF-8 access path first;
+  do not depend on private CPython layout unless there is no public or Numba
+  helper path.
+- Keep scalar-only calls separate until return-type semantics are proven.
+
+Benchmark and test harness:
+
+- Add a focused scalar/mixed benchmark covering array-scalar and scalar-array
+  calls for comparisons, affix/search, and predicates.
+- Validate every benchmark case against NumPy before timing.
+- Cover ASCII, multibyte Unicode, non-BMP characters, empty strings,
+  embedded/trailing NULs, all-NUL patterns, positive/negative slices,
+  not-found `index`/`rindex`, readonly arrays, empty arrays, and 0-D
+  `StringDType` arrays.
+- Add direct `@njit` tests for `np.strings.*` calls, not only calls through the
+  existing wrapper classes.
+
+Acceptance bar for this tranche:
+
+- Exact NumPy behavior for supported scalar-broadcast cases.
+- No regression in existing array-array behavior or performance shape.
+- No mutation of inputs.
+- No allocator leaks or deadlocks after scalar-mixed failures.
+- No generalized N-D broadcasting code.
+- No benchmark-fitted thresholds.
+
 ## Prototype Order
 
 1. Type recognition only:
@@ -839,6 +922,10 @@ Review-pass findings:
      semantics and codepoint result offsets are exact;
    - predicates;
    - ordering comparisons.
+6. Scalar and mixed inputs:
+   - scalar broadcast for the existing StringDType operation families;
+   - direct 0-D StringDType behavior;
+   - scalar-only return types after semantics are proven.
 
 ## Resolved Decisions
 
@@ -867,9 +954,9 @@ Review-pass findings:
   `np.strings` operation?
 - How much of the access/helper layer should become reusable infrastructure
   across comparison, occurrence, predicate, and transformation kernels?
-- Whether scalar prefix/suffix support should be implemented by a dedicated
-  UTF-8 scalar bridge or deferred until a broader scalar StringDType strategy is
-  designed.
+- Whether Python string scalars should use a dedicated UTF-8 scalar bridge, a
+  small temporary StringDType pack path, or a Numba-provided unicode access
+  helper.
 - Whether substring search should keep a reusable byte-to-codepoint mapping per
   element, or whether repeated linear scans are cleaner until broader operation
   coverage justifies the extra surface.
