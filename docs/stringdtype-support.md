@@ -901,6 +901,51 @@ Checkpoint:
   for `count` versus `find`/`rfind`, return codepoint indexes, and release
   StringDType allocators before `index`/`rindex` not-found failures.
 
+Scalar bridge distillation:
+
+- Mixed Python `str` comparisons now keep the direct Unicode/codepoint bridge
+  for scalars whose trimmed UTF-8 size fits in StringDType's 16-byte packed
+  record boundary.
+- Longer mixed comparison scalars use a UTF-8 span built once per operation,
+  outside the StringDType element loop. ASCII scalars use the existing Unicode
+  one-byte buffer directly; non-ASCII scalars use a stack span when small and
+  heap storage only when needed.
+- Long mixed equality uses a first-word decision path with a `strncmp`
+  fallback. This keeps the strong mid-mismatch result without taking the larger
+  hybrid candidate.
+- Long mixed ordering uses a first-byte prefilter and `strncmp` with stored
+  byte-length tie-breaks. Word-wide ordering was rejected for this checkpoint:
+  it added surface without a clear enough broad win.
+- Rejected cleanup: moving the scalar bridge choice into a per-element helper.
+  It made the overload code smaller but would allocate/free the UTF-8 span
+  inside the hot loop for long scalars.
+
+500k-row sanity medians after distillation on Python 3.12.8, NumPy 2.4.6,
+Numba 0.65.1:
+
+| case | charex | NumPy | speedup |
+| ---- | ------ | ----- | ------- |
+| equal short ASCII | 1.503 ms | 3.118 ms | 2.07x |
+| equal long ASCII | 5.453 ms | 6.397 ms | 1.17x |
+| equal long mid mismatch | 2.756 ms | 9.003 ms | 3.27x |
+| equal long NUL | 3.950 ms | 5.461 ms | 1.38x |
+| equal long Unicode | 4.989 ms | 6.671 ms | 1.34x |
+| equal long emoji | 5.277 ms | 7.160 ms | 1.36x |
+| greater long first mismatch | 4.488 ms | 12.915 ms | 2.88x |
+| greater long mid mismatch | 6.200 ms | 6.862 ms | 1.11x |
+| greater long late mismatch | 5.975 ms | 6.880 ms | 1.15x |
+| greater long NUL | 3.754 ms | 5.443 ms | 1.45x |
+
+Remaining scalar bridge work:
+
+- Affix and search currently use the correct scalar bridge, but they have not
+  had the same UTF-8-span optimization pass as comparisons.
+- Scalar-only return types are covered where NumPy accepts normal Python `str`
+  inputs; NumPy scalar string variants should be audited separately before
+  expanding the public contract.
+- Keep future scalar optimizations operation-specific. The comparison bridge is
+  not automatically the right shape for search or transformations.
+
 ## Tranche 9: Missing Sentinels And `na_object`
 
 This tranche should replace the current blanket rejection of
@@ -1008,6 +1053,14 @@ Acceptance bar for this tranche:
    - exact `na_object` propagation per operation;
    - preserve the default-`StringDType()` fast path;
    - support only after operation-specific NumPy behavior is fully mapped.
+8. Layout and dimensionality:
+   - non-contiguous arrays through strides;
+   - multidimensional arrays and NumPy-compatible broadcasting;
+   - keep the one-dimensional contiguous fast path intact.
+9. Full catalog:
+   - transformation methods such as replace/case conversion/padding;
+   - exact output allocation, dtype sizing, and error behavior;
+   - only after read-only information methods and broadcasting are stable.
 
 ## Resolved Decisions
 
@@ -1021,10 +1074,10 @@ Acceptance bar for this tranche:
 - Require the compiled helper for descriptor-to-allocator access. If the helper
   is unavailable, fail during StringDType typing instead of reading private
   NumPy object layout.
-- In the current mixed Python `str` paths, validate the scalar once and hoist
-  its trimmed codepoint length plus UTF-8 byte size once per operation before
-  entering the StringDType element loop. This is a cleanup of the prototype
-  bridge, not the final scalar bridge decision.
+- In mixed Python `str` comparisons, validate the scalar once and hoist its
+  trimmed codepoint length plus UTF-8 byte size once per operation. Short
+  scalars stay on the Unicode/codepoint bridge; longer scalars use a UTF-8
+  span outside the element loop.
 - Reject `StringDType(na_object=...)` arrays until Tranche 9 implements
   sentinel propagation exactly.
 - Keep this in charex while prototyping. The dtype recognition and helper
