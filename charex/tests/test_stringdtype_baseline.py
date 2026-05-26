@@ -46,6 +46,25 @@ def test_stringdtype_shape_metadata_compiles():
     assert shape_info(values) == (3, 16, 16)
 
 
+@pytest.mark.parametrize('impl_name, binary', [
+    ('strings_str_len', False),
+    ('strings_equal', True),
+    ('strings_not_equal', True),
+    ('strings_startswith', True),
+    ('strings_endswith', True),
+])
+def test_stringdtype_zero_dimensional_arrays_are_rejected(impl_name, binary):
+    info = StringsInformation()
+    comparisons = StringsComparisonOperators()
+    owner = comparisons if impl_name in {'strings_equal',
+                                         'strings_not_equal'} else info
+    values = np.array('abc', dtype=STRING_DTYPE())
+    call_args = (values, values) if binary else (values,)
+
+    with pytest.raises(TypingError, match='one-dimensional arrays'):
+        getattr(owner, impl_name)(*call_args)
+
+
 def test_numpy_stringdtype_strlen_counts_codepoints():
     values = stringdtype_array([
         'a', 'é', '🙂', '', 'a\x00b', 'a\x00', 'a\x00\x00',
@@ -244,3 +263,128 @@ def test_stringdtype_array_equal_rejects_mixed_stringdtype_inputs(scalar_left):
 
     with pytest.raises(TypingError, match='two StringDType arrays'):
         strings.strings_equal(*args)
+
+
+@pytest.mark.parametrize('impl_name, baseline', [
+    ('strings_startswith', STRINGS.startswith),
+    ('strings_endswith', STRINGS.endswith),
+])
+@pytest.mark.parametrize('args', [
+    (),
+    (0, None),
+    (0, 0),
+    (1, None),
+    (-3, None),
+    (0, -1),
+    (-4, -1),
+    (10, None),
+])
+def test_stringdtype_array_affix_matches_numpy(impl_name, baseline, args):
+    strings = StringsInformation()
+    values = stringdtype_array([
+        'abc', 'abc\x00', 'abc\x00x', 'a\x00bc', '\x00abc',
+        '', '🙂abc', 'a🙂c',
+    ])
+    patterns = stringdtype_array([
+        'abc', 'abc', 'abc\x00', 'a\x00', '\x00a',
+        '', '🙂', '🙂c',
+    ])
+
+    assert_same(getattr(strings, impl_name), baseline,
+                values, patterns, *args)
+
+
+@pytest.mark.parametrize('impl_name, baseline', [
+    ('strings_startswith', STRINGS.startswith),
+    ('strings_endswith', STRINGS.endswith),
+])
+def test_stringdtype_array_affix_empty_arrays_match_numpy(
+        impl_name, baseline):
+    strings = StringsInformation()
+    values = stringdtype_array([])
+    patterns = stringdtype_array([])
+
+    assert_same(getattr(strings, impl_name), baseline, values, patterns)
+
+
+@pytest.mark.parametrize('impl_name, baseline', [
+    ('strings_startswith', STRINGS.startswith),
+    ('strings_endswith', STRINGS.endswith),
+])
+def test_stringdtype_array_affix_readonly_arrays_match_numpy(
+        impl_name, baseline):
+    strings = StringsInformation()
+    values = stringdtype_array(['abc', 'éfg', '🙂abc'])
+    patterns = stringdtype_array(['ab', 'éf', '🙂'])
+    values.flags.writeable = False
+    patterns.flags.writeable = False
+
+    assert_same(getattr(strings, impl_name), baseline, values, patterns)
+
+
+@pytest.mark.parametrize('impl_name', [
+    'strings_startswith',
+    'strings_endswith',
+])
+def test_stringdtype_array_affix_shape_mismatch(impl_name):
+    strings = StringsInformation()
+    values = stringdtype_array(['abc', 'def', 'ghi'])
+    patterns = stringdtype_array(['a', 'd'])
+
+    with pytest.raises(ValueError, match='shape mismatch'):
+        getattr(strings, impl_name)(values, patterns)
+
+
+@pytest.mark.parametrize('impl_name', [
+    'strings_startswith',
+    'strings_endswith',
+])
+def test_stringdtype_array_affix_rejects_noncontiguous_arrays(impl_name):
+    strings = StringsInformation()
+    values = stringdtype_array(['a', 'b', 'c', 'd'])
+
+    with pytest.raises(TypingError, match='C-contiguous'):
+        getattr(strings, impl_name)(values[::2], values[::2])
+
+
+@pytest.mark.parametrize('impl_name', [
+    'strings_startswith',
+    'strings_endswith',
+])
+def test_stringdtype_array_affix_rejects_multidimensional_arrays(impl_name):
+    strings = StringsInformation()
+    values = stringdtype_array(['a', 'b', 'c', 'd']).reshape(2, 2)
+
+    with pytest.raises(TypingError, match='one-dimensional arrays'):
+        getattr(strings, impl_name)(values, values)
+
+
+@pytest.mark.parametrize('impl_name', [
+    'strings_startswith',
+    'strings_endswith',
+])
+@pytest.mark.parametrize('scalar_left', [False, True])
+def test_stringdtype_array_affix_rejects_mixed_stringdtype_inputs(
+        impl_name, scalar_left):
+    strings = StringsInformation()
+    values = stringdtype_array(['a', 'b'])
+    args = ('a', values) if scalar_left else (values, 'a')
+
+    with pytest.raises(TypingError, match='two StringDType arrays'):
+        getattr(strings, impl_name)(*args)
+
+
+@pytest.mark.parametrize('impl_name, baseline', [
+    ('strings_startswith', STRINGS.startswith),
+    ('strings_endswith', STRINGS.endswith),
+])
+def test_stringdtype_array_affix_none_start_rejected_by_numpy(
+        impl_name, baseline):
+    strings = StringsInformation()
+    values = stringdtype_array(['abc'])
+    patterns = stringdtype_array(['a'])
+
+    with pytest.raises(Exception):
+        baseline(values, patterns, None, None)
+    with pytest.raises(Exception):
+        getattr(strings, impl_name)(values, patterns, None, None)

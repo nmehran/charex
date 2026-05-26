@@ -2,18 +2,23 @@
 
 from charex.core import OPTIONS
 from charex.numpy.overloads._shared import (
-    equal_dispatch, equal_kernel, order_dispatch, try_register_pair,
+    ensure_slice, equal_dispatch, equal_kernel, order_dispatch,
+    try_register_pair,
 )
 from charex.numpy.stringdtype import (
     is_stringdtype_array_type, stringdtype_acquire_allocator,
     stringdtype_acquire_allocators, stringdtype_codepoint_len_data,
-    stringdtype_data_ptr, stringdtype_equal_data,
+    stringdtype_data_ptr, stringdtype_endswith_data, stringdtype_equal_data,
     stringdtype_release_allocator, stringdtype_release_allocators,
+    stringdtype_startswith_data,
 )
 from charex.numpy.overloads.definitions import (
     equal, equal_sub32_bytes, equal_sub32_unicode, greater, greater_equal,
 )
-from charex.numpy.overloads.char import _CHAR_INFO_FUNCTIONS, ov_char_str_len
+from charex.numpy.overloads.char import (
+    _CHAR_INFO_FUNCTIONS, ov_char_endswith, ov_char_startswith,
+    ov_char_str_len,
+)
 from numba.core import types
 from numba.core.errors import NumbaValueError
 from numba.core.typing.templates import AttributeTemplate
@@ -69,9 +74,9 @@ def _overload_equal(left, right, invert):
                 or not is_stringdtype_array_type(right):
             raise NumbaValueError('StringDType comparisons currently require '
                                   'two StringDType arrays')
-        if left.ndim > 1 or right.ndim > 1:
-            raise NumbaValueError('charex supports only scalars and '
-                                  'one-dimensional arrays')
+        if left.ndim != 1 or right.ndim != 1:
+            raise NumbaValueError('charex StringDType support currently '
+                                  'requires one-dimensional arrays')
         if left.layout != 'C' or right.layout != 'C':
             raise NumbaValueError('charex requires C-contiguous arrays; '
                                   'call numpy.ascontiguousarray')
@@ -121,6 +126,55 @@ def _overload_order(left, right, op):
                           greater, greater_equal, op, False)
 
 
+def _overload_affix(value, pattern, start, end, suffix):
+    if is_stringdtype_array_type(value) or is_stringdtype_array_type(pattern):
+        if not is_stringdtype_array_type(value) \
+                or not is_stringdtype_array_type(pattern):
+            raise NumbaValueError('StringDType prefix/suffix operations '
+                                  'currently require two StringDType arrays')
+        if value.ndim != 1 or pattern.ndim != 1:
+            raise NumbaValueError('charex StringDType support currently '
+                                  'requires one-dimensional arrays')
+        if value.layout != 'C' or pattern.layout != 'C':
+            raise NumbaValueError('charex requires C-contiguous arrays; '
+                                  'call numpy.ascontiguousarray')
+        s, e = ensure_slice(start, end)
+
+        def impl(value, pattern, start=0, end=None):
+            start = start or s
+            end = e if end is None else end
+            if value.size != pattern.size:
+                raise ValueError('shape mismatch: objects cannot be '
+                                 'broadcast to a single shape')
+            result = np.empty(value.size, np.bool_)
+            allocators = stringdtype_acquire_allocators(value, pattern)
+            value_allocator = allocators[0]
+            pattern_allocator = allocators[1]
+            value_data = stringdtype_data_ptr(value)
+            pattern_data = stringdtype_data_ptr(pattern)
+            for i in range(value.size):
+                if suffix:
+                    result[i] = stringdtype_endswith_data(
+                        value_data, i, value_allocator,
+                        pattern_data, i, pattern_allocator,
+                        start, end,
+                    )
+                else:
+                    result[i] = stringdtype_startswith_data(
+                        value_data, i, value_allocator,
+                        pattern_data, i, pattern_allocator,
+                        start, end,
+                    )
+            stringdtype_release_allocators(allocators)
+            return result
+
+        return impl
+
+    if suffix:
+        return ov_char_endswith(value, pattern, start, end)
+    return ov_char_startswith(value, pattern, start, end)
+
+
 if _STRINGS is not None:
     def _strings_equal(left, right):
         return _STRINGS.equal(left, right)
@@ -140,17 +194,25 @@ if _STRINGS is not None:
     def _strings_less_equal(left, right):
         return _STRINGS.less_equal(left, right)
 
+    def _strings_endswith(value, suffix, start=0, end=None):
+        return _STRINGS.endswith(value, suffix, start, end)
+
+    def _strings_startswith(value, prefix, start=0, end=None):
+        return _STRINGS.startswith(value, prefix, start, end)
+
     def _strings_str_len(value):
         return _STRINGS.str_len(value)
 
     _STRINGS_FUNCTIONS = {
         **_CHAR_INFO_FUNCTIONS,
+        'endswith': _strings_endswith,
         'equal': _strings_equal,
         'not_equal': _strings_not_equal,
         'greater_equal': _strings_greater_equal,
         'greater': _strings_greater,
         'less': _strings_less,
         'less_equal': _strings_less_equal,
+        'startswith': _strings_startswith,
         'str_len': _strings_str_len,
     }
 
@@ -187,14 +249,22 @@ if _STRINGS is not None:
     def ov_strings_less_equal(left, right):
         return _overload_order(left, right, 'less_equal')
 
+    @overload(_strings_endswith, **OPTIONS)
+    def ov_strings_endswith(value, suffix, start=0, end=None):
+        return _overload_affix(value, suffix, start, end, True)
+
+    @overload(_strings_startswith, **OPTIONS)
+    def ov_strings_startswith(value, prefix, start=0, end=None):
+        return _overload_affix(value, prefix, start, end, False)
+
     @overload(_strings_str_len, **OPTIONS)
     def ov_strings_str_len(value):
         if not is_stringdtype_array_type(value):
             return ov_char_str_len(value)
 
-        if value.ndim > 1:
-            raise NumbaValueError('charex supports only scalars and '
-                                  'one-dimensional arrays')
+        if value.ndim != 1:
+            raise NumbaValueError('charex StringDType support currently '
+                                  'requires one-dimensional arrays')
         if value.layout != 'C':
             raise NumbaValueError('charex requires C-contiguous arrays; '
                                   'call numpy.ascontiguousarray')

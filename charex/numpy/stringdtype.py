@@ -225,6 +225,89 @@ def _codepoint_count(builder, size, buffer, intp, int8):
     return builder.load(count)
 
 
+def _codepoint_offset(builder, size, buffer, target, intp, int8):
+    offset = cgutils.alloca_once(builder, intp)
+    count = cgutils.alloca_once(builder, intp)
+    builder.store(ir.Constant(intp, 0), offset)
+    builder.store(ir.Constant(intp, 0), count)
+
+    cond = builder.append_basic_block('stringdtype.offset.cond')
+    check = builder.append_basic_block('stringdtype.offset.check')
+    body = builder.append_basic_block('stringdtype.offset.body')
+    after = builder.append_basic_block('stringdtype.offset.after')
+
+    builder.branch(cond)
+
+    builder.position_at_end(cond)
+    within_size = builder.icmp_unsigned('<', builder.load(offset), size)
+    builder.cbranch(within_size, check, after)
+
+    builder.position_at_end(check)
+    char = builder.load(builder.gep(buffer, [builder.load(offset)]))
+    tag = builder.and_(char, ir.Constant(int8, 0xc0))
+    continuation = builder.icmp_unsigned(
+        '==', tag, ir.Constant(int8, 0x80),
+    )
+    at_target = builder.icmp_signed('==', builder.load(count), target)
+    builder.cbranch(builder.and_(at_target, builder.not_(continuation)),
+                    after, body)
+
+    builder.position_at_end(body)
+    increment = builder.select(
+        continuation, ir.Constant(intp, 0), ir.Constant(intp, 1),
+    )
+    builder.store(builder.add(builder.load(count), increment), count)
+    builder.store(builder.add(builder.load(offset), ir.Constant(intp, 1)),
+                  offset)
+    builder.branch(cond)
+
+    builder.position_at_end(after)
+    return builder.load(offset)
+
+
+def _normalise_slice(builder, size, buffer, start, end, intp, int8):
+    zero = ir.Constant(intp, 0)
+    effective_size = _trimmed_size(builder, size, buffer, intp, int8)
+    codepoints = _codepoint_count(builder, effective_size, buffer, intp, int8)
+
+    start_from_end = builder.add(codepoints, start)
+    start_negative = builder.icmp_signed('<', start, zero)
+    start_from_end = builder.select(
+        builder.icmp_signed('<', start_from_end, zero),
+        zero,
+        start_from_end,
+    )
+    start_index = builder.select(start_negative, start_from_end, start)
+    start_valid = builder.icmp_signed('<=', start_index, codepoints)
+    start_index = builder.select(
+        builder.icmp_signed('>', start_index, codepoints),
+        codepoints,
+        start_index,
+    )
+
+    end_from_end = builder.add(codepoints, end)
+    end_negative = builder.icmp_signed('<', end, zero)
+    end_from_end = builder.select(
+        builder.icmp_signed('<', end_from_end, zero),
+        zero,
+        end_from_end,
+    )
+    end_index = builder.select(end_negative, end_from_end, end)
+    end_index = builder.select(
+        builder.icmp_signed('>', end_index, codepoints),
+        codepoints,
+        end_index,
+    )
+
+    ordered = builder.icmp_signed('<=', start_index, end_index)
+    valid = builder.and_(start_valid, ordered)
+    start_offset = _codepoint_offset(builder, effective_size, buffer,
+                                     start_index, intp, int8)
+    end_offset = _codepoint_offset(builder, effective_size, buffer,
+                                   end_index, intp, int8)
+    return effective_size, start_offset, end_offset, valid
+
+
 def _string_codepoint_len(builder, size, buffer, intp, int8):
     effective_size = _trimmed_size(builder, size, buffer, intp, int8)
     return _codepoint_count(builder, effective_size, buffer, intp, int8)
@@ -497,6 +580,111 @@ def stringdtype_equal_data(typingctx, left_data, left_index, left_allocator,
         return builder.load(result)
 
     return sig, codegen
+
+
+def _stringdtype_affix_data(typingctx, value_data, value_index,
+                            value_allocator, pattern_data, pattern_index,
+                            pattern_allocator, start, end, suffix):
+    if value_data != types.voidptr \
+            or not isinstance(value_index, types.Integer) \
+            or value_allocator != types.voidptr \
+            or pattern_data != types.voidptr \
+            or not isinstance(pattern_index, types.Integer) \
+            or pattern_allocator != types.voidptr \
+            or not isinstance(start, types.Integer) \
+            or not isinstance(end, types.Integer):
+        return None
+
+    sig = signature(types.boolean, value_data, types.intp, value_allocator,
+                    pattern_data, types.intp, pattern_allocator,
+                    types.intp, types.intp)
+
+    def codegen(context, builder, signature, args):
+        value_data, value_index_value, value_allocator, \
+            pattern_data, pattern_index_value, pattern_allocator, \
+            start, end = args
+
+        int8 = ir.IntType(8)
+        int32 = ir.IntType(32)
+        intp = context.get_value_type(types.intp)
+        byte_ptr = int8.as_pointer()
+        value_packed = _packed_string_ptr_from_data(
+            builder, value_data, value_index_value, intp)
+        pattern_packed = _packed_string_ptr_from_data(
+            builder, pattern_data, pattern_index_value, intp)
+        value_status, value_size, value_buffer = _load_string(
+            builder, value_allocator, value_packed, intp, byte_ptr)
+        pattern_status, pattern_size, pattern_buffer = _load_string(
+            builder, pattern_allocator, pattern_packed, intp, byte_ptr)
+
+        result = cgutils.alloca_once(builder, ir.IntType(1))
+        builder.store(cgutils.false_bit, result)
+
+        value_valid = builder.icmp_signed(
+            '==', value_status, ir.Constant(int32, 0))
+        pattern_valid = builder.icmp_signed(
+            '==', pattern_status, ir.Constant(int32, 0))
+
+        with builder.if_then(builder.and_(value_valid, pattern_valid)):
+            _, start_offset, end_offset, slice_valid = _normalise_slice(
+                builder, value_size, value_buffer, start, end, intp, int8)
+            pattern_effective_size = _trimmed_size(
+                builder, pattern_size, pattern_buffer, intp, int8)
+            slice_size = builder.sub(end_offset, start_offset)
+            empty_pattern = builder.icmp_unsigned(
+                '==', pattern_effective_size, ir.Constant(intp, 0))
+            builder.store(builder.and_(slice_valid, empty_pattern), result)
+
+            nonempty_pattern = builder.not_(empty_pattern)
+            fits = builder.icmp_unsigned('<=', pattern_effective_size,
+                                         slice_size)
+            with builder.if_then(builder.and_(slice_valid,
+                                              builder.and_(nonempty_pattern,
+                                                           fits))):
+                memcmp_type = ir.FunctionType(
+                    int32, [byte_ptr, byte_ptr, intp])
+                memcmp = cgutils.get_or_insert_function(
+                    builder.module, memcmp_type, 'memcmp',
+                )
+                if suffix:
+                    compare_offset = builder.sub(end_offset,
+                                                 pattern_effective_size)
+                else:
+                    compare_offset = start_offset
+                cmp_buffer = builder.gep(value_buffer, [compare_offset])
+                cmp_result = builder.call(
+                    memcmp, [cmp_buffer, pattern_buffer,
+                             pattern_effective_size],
+                )
+                builder.store(
+                    builder.icmp_signed('==', cmp_result,
+                                        ir.Constant(int32, 0)),
+                    result,
+                )
+
+        return builder.load(result)
+
+    return sig, codegen
+
+
+@intrinsic
+def stringdtype_startswith_data(typingctx, value_data, value_index,
+                                value_allocator, pattern_data, pattern_index,
+                                pattern_allocator, start, end):
+    return _stringdtype_affix_data(
+        typingctx, value_data, value_index, value_allocator,
+        pattern_data, pattern_index, pattern_allocator, start, end, False,
+    )
+
+
+@intrinsic
+def stringdtype_endswith_data(typingctx, value_data, value_index,
+                              value_allocator, pattern_data, pattern_index,
+                              pattern_allocator, start, end):
+    return _stringdtype_affix_data(
+        typingctx, value_data, value_index, value_allocator,
+        pattern_data, pattern_index, pattern_allocator, start, end, True,
+    )
 
 
 def _install_typeof():

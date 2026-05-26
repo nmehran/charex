@@ -384,6 +384,41 @@ Acceptance bar for this tranche:
 - No broad helper abstraction unless `find`/`count` reuse is already obvious
   from the prototype.
 
+Runtime checkpoint:
+
+- `np.strings.startswith` and `np.strings.endswith` support same-shape,
+  one-dimensional C-contiguous default `StringDType` arrays.
+- 0-D arrays, multidimensional arrays, non-contiguous arrays, mixed scalar/array
+  inputs, and `na_object` variants are rejected for now.
+- The implementation reuses operation-scope paired allocator acquisition and
+  hoisted packed data pointers.
+- Slice normalization converts codepoint `start`/`end` to UTF-8 byte offsets,
+  trims trailing NUL bytes consistently with `StringDType` string length, and
+  uses `memcmp` for prefix/suffix comparison.
+- The first codepoint-offset implementation had a multibyte suffix bug: it
+  stopped after the leading byte of the target codepoint. The current helper
+  advances through UTF-8 continuation bytes before returning the next
+  codepoint boundary.
+
+Exploratory benchmark:
+
+```bash
+python docs/exploration/stringdtype_affix_bench.py
+```
+
+Representative 100k-row medians on Python 3.12.8, NumPy 2.4.6,
+Numba 0.65.1:
+
+| case | startswith | endswith |
+| ---- | ---------- | -------- |
+| short default | 1.34x | 1.17x |
+| short slice | 1.56x | 1.39x |
+| empty pattern | 1.11x | 1.18x |
+| embedded NUL | 1.71x | 1.44x |
+| Unicode | 1.56x | 1.34x |
+| long equal | 3.35x | 4.80x |
+| long late mismatch | 7.57x | 7.61x |
+
 ## Prototype Order
 
 1. Type recognition only:
