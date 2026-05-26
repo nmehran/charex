@@ -886,6 +886,69 @@ Acceptance bar for this tranche:
 - No generalized N-D broadcasting code.
 - No benchmark-fitted thresholds.
 
+## Tranche 9: Missing Sentinels And `na_object`
+
+This tranche should replace the current blanket rejection of
+`StringDType(na_object=...)` with exact NumPy behavior. It should not begin
+until the supported default-`StringDType` operation surface is stable enough
+that sentinel propagation can be audited operation by operation.
+
+Currently unsupported variants:
+
+- `np.dtypes.StringDType(na_object=None)`
+- `np.dtypes.StringDType(na_object=np.nan)`
+- `np.dtypes.StringDType(na_object="MISSING")`
+- other user-provided sentinel values accepted by NumPy
+
+Known risk:
+
+- `NpyString_load` can report a null-string status for sentinel values, while
+  NumPy operation semantics are not uniformly "return missing" or "raise".
+  For example, a string sentinel can behave like a normal string in operations
+  such as `np.strings.str_len`.
+
+Correctness questions to answer before implementation:
+
+- Exact result and exception behavior for every currently supported operation:
+  `str_len`, predicates, equality/order comparisons, prefix/suffix, search,
+  `index`, and `rindex`.
+- Whether `None`, `np.nan`, and string sentinels have different propagation
+  rules.
+- Whether sentinel values compare equal to themselves, to normal strings with
+  the same text, or to neither, per operation.
+- Whether search-like operations treat a sentinel substring as missing,
+  ordinary text, empty, or an error.
+- Whether scalar/0-D sentinel behavior differs from array element behavior.
+- Whether result dtypes change when missing propagation is involved.
+
+Implementation shape to prototype:
+
+- Keep the current default-`StringDType` fast path unchanged.
+- Add sentinel-aware load metadata rather than treating load status alone as
+  final operation semantics.
+- Keep operation-specific propagation explicit until a smaller shared rule is
+  proven by tests.
+- Preserve allocator release discipline on every success and failure path.
+
+Benchmark and test harness:
+
+- Build an operation-by-operation truth table against NumPy for `na_object=None`,
+  `na_object=np.nan`, and a string sentinel.
+- Cover sentinel in the value operand, pattern/right operand, both operands,
+  mixed sentinel and normal text, empty arrays, readonly arrays, and failure
+  paths.
+- Benchmark only after correctness is settled; sentinel handling should not
+  slow the default-`StringDType()` path.
+
+Acceptance bar for this tranche:
+
+- Exact NumPy behavior for each supported `na_object` variant and operation.
+- No change in behavior or performance shape for default `StringDType()`.
+- No sentinel approximation, especially no treating every `rc == 1` load as
+  the same operation-level result.
+- No mutation of inputs.
+- No allocator leaks or deadlocks.
+
 ## Prototype Order
 
 1. Type recognition only:
@@ -926,6 +989,10 @@ Acceptance bar for this tranche:
    - scalar broadcast for the existing StringDType operation families;
    - direct 0-D StringDType behavior;
    - scalar-only return types after semantics are proven.
+7. Missing sentinels:
+   - exact `na_object` propagation per operation;
+   - preserve the default-`StringDType()` fast path;
+   - support only after operation-specific NumPy behavior is fully mapped.
 
 ## Resolved Decisions
 
@@ -939,8 +1006,8 @@ Acceptance bar for this tranche:
 - Require the compiled helper for descriptor-to-allocator access. If the helper
   is unavailable, fail during StringDType typing instead of reading private
   NumPy object layout.
-- Reject `StringDType(na_object=...)` arrays until sentinel propagation is
-  implemented exactly.
+- Reject `StringDType(na_object=...)` arrays until Tranche 9 implements
+  sentinel propagation exactly.
 - Keep this in charex while prototyping. The dtype recognition and helper
   approach are enough for exploration; a future upstream Numba proposal can be
   cut from the distilled implementation if it proves generally useful.
