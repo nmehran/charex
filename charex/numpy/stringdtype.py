@@ -761,6 +761,136 @@ def _stringdtype_unicode_equal(builder, string_size, string_buffer,
     return builder.load(result)
 
 
+def _stringdtype_unicode_region_equal(builder, string_buffer, string_offset,
+                                      unicode_struct, unicode_start,
+                                      unicode_length, intp, int8, int32):
+    result = cgutils.alloca_once(builder, ir.IntType(1))
+    byte_pos = cgutils.alloca_once(builder, intp)
+    unicode_pos = cgutils.alloca_once(builder, intp)
+    remaining = cgutils.alloca_once(builder, intp)
+    builder.store(cgutils.true_bit, result)
+    builder.store(string_offset, byte_pos)
+    builder.store(unicode_start, unicode_pos)
+    builder.store(unicode_length, remaining)
+
+    cond = builder.append_basic_block('stringdtype.unicode.region.cond')
+    body = builder.append_basic_block('stringdtype.unicode.region.body')
+    after = builder.append_basic_block('stringdtype.unicode.region.after')
+    builder.branch(cond)
+
+    builder.position_at_end(cond)
+    keep_going = builder.and_(
+        builder.icmp_unsigned('>', builder.load(remaining),
+                              ir.Constant(intp, 0)),
+        builder.load(result),
+    )
+    builder.cbranch(keep_going, body, after)
+
+    builder.position_at_end(body)
+    left_codepoint, next_byte_pos = _decode_utf8_codepoint(
+        builder, string_buffer, builder.load(byte_pos), intp, int8, int32)
+    right_codepoint = _unicode_codepoint(
+        builder, unicode_struct.data, unicode_struct.kind,
+        builder.load(unicode_pos), int32,
+    )
+    with builder.if_else(builder.icmp_unsigned('==', left_codepoint,
+                                               right_codepoint)) as (same,
+                                                                    different):
+        with same:
+            builder.store(next_byte_pos, byte_pos)
+            builder.store(builder.add(builder.load(unicode_pos),
+                                      ir.Constant(intp, 1)), unicode_pos)
+            builder.store(builder.sub(builder.load(remaining),
+                                      ir.Constant(intp, 1)), remaining)
+        with different:
+            builder.store(cgutils.false_bit, result)
+    builder.branch(cond)
+
+    builder.position_at_end(after)
+    return builder.load(result)
+
+
+def _unicode_stringdtype_region_equal(builder, unicode_struct, unicode_start,
+                                      string_buffer, string_size,
+                                      intp, int8, int32):
+    result = cgutils.alloca_once(builder, ir.IntType(1))
+    byte_pos = cgutils.alloca_once(builder, intp)
+    unicode_pos = cgutils.alloca_once(builder, intp)
+    builder.store(cgutils.true_bit, result)
+    builder.store(ir.Constant(intp, 0), byte_pos)
+    builder.store(unicode_start, unicode_pos)
+
+    cond = builder.append_basic_block('stringdtype.unicode.pattern.cond')
+    body = builder.append_basic_block('stringdtype.unicode.pattern.body')
+    after = builder.append_basic_block('stringdtype.unicode.pattern.after')
+    builder.branch(cond)
+
+    builder.position_at_end(cond)
+    keep_going = builder.and_(
+        builder.icmp_unsigned('<', builder.load(byte_pos), string_size),
+        builder.load(result),
+    )
+    builder.cbranch(keep_going, body, after)
+
+    builder.position_at_end(body)
+    left_codepoint = _unicode_codepoint(
+        builder, unicode_struct.data, unicode_struct.kind,
+        builder.load(unicode_pos), int32,
+    )
+    right_codepoint, next_byte_pos = _decode_utf8_codepoint(
+        builder, string_buffer, builder.load(byte_pos), intp, int8, int32)
+    with builder.if_else(builder.icmp_unsigned('==', left_codepoint,
+                                               right_codepoint)) as (same,
+                                                                    different):
+        with same:
+            builder.store(next_byte_pos, byte_pos)
+            builder.store(builder.add(builder.load(unicode_pos),
+                                      ir.Constant(intp, 1)), unicode_pos)
+        with different:
+            builder.store(cgutils.false_bit, result)
+    builder.branch(cond)
+
+    builder.position_at_end(after)
+    return builder.load(result)
+
+
+def _normalise_unicode_slice(builder, length, start, end, intp):
+    zero = ir.Constant(intp, 0)
+
+    start_from_end = builder.add(length, start)
+    start_negative = builder.icmp_signed('<', start, zero)
+    start_from_end = builder.select(
+        builder.icmp_signed('<', start_from_end, zero),
+        zero,
+        start_from_end,
+    )
+    start_index = builder.select(start_negative, start_from_end, start)
+    start_valid = builder.icmp_signed('<=', start_index, length)
+    start_index = builder.select(
+        builder.icmp_signed('>', start_index, length),
+        length,
+        start_index,
+    )
+
+    end_from_end = builder.add(length, end)
+    end_negative = builder.icmp_signed('<', end, zero)
+    end_from_end = builder.select(
+        builder.icmp_signed('<', end_from_end, zero),
+        zero,
+        end_from_end,
+    )
+    end_index = builder.select(end_negative, end_from_end, end)
+    end_index = builder.select(
+        builder.icmp_signed('>', end_index, length),
+        length,
+        end_index,
+    )
+
+    ordered = builder.icmp_signed('<=', start_index, end_index)
+    valid = builder.and_(start_valid, ordered)
+    return start_index, end_index, valid
+
+
 def _codepoint_offset(builder, size, buffer, target, intp, int8):
     offset = cgutils.alloca_once(builder, intp)
     count = cgutils.alloca_once(builder, intp)
@@ -1443,6 +1573,140 @@ def _stringdtype_affix_data(typingctx, value_data, value_index,
     return sig, codegen
 
 
+def _stringdtype_unicode_affix_data(typingctx, value_data, value_index,
+                                    value_allocator, pattern, start, end,
+                                    suffix):
+    if value_data != types.voidptr \
+            or not isinstance(value_index, types.Integer) \
+            or value_allocator != types.voidptr \
+            or not isinstance(pattern, types.UnicodeType) \
+            or not isinstance(start, types.Integer) \
+            or not isinstance(end, types.Integer):
+        return None
+
+    sig = signature(types.boolean, value_data, types.intp, value_allocator,
+                    pattern, types.intp, types.intp)
+
+    def codegen(context, builder, signature, args):
+        value_data, value_index_value, value_allocator, pattern, start, end = \
+            args
+
+        int8 = ir.IntType(8)
+        int32 = ir.IntType(32)
+        intp = context.get_value_type(types.intp)
+        byte_ptr = int8.as_pointer()
+        value_packed = _packed_string_ptr_from_data(
+            builder, value_data, value_index_value, intp)
+        value_status, value_size, value_buffer = _load_string(
+            builder, value_allocator, value_packed, intp, byte_ptr)
+
+        result = cgutils.alloca_once(builder, ir.IntType(1))
+        builder.store(cgutils.false_bit, result)
+        value_valid = builder.icmp_signed(
+            '==', value_status, ir.Constant(int32, 0))
+
+        with builder.if_then(value_valid):
+            unicode_struct, pattern_length, pattern_size = _unicode_parts(
+                context, builder, pattern, intp, int32)
+            _, _, start_offset, end_offset, slice_valid = _normalise_slice(
+                builder, value_size, value_buffer, start, end, intp, int8)
+            slice_size = builder.sub(end_offset, start_offset)
+            empty_pattern = builder.icmp_unsigned(
+                '==', pattern_size, ir.Constant(intp, 0))
+            builder.store(builder.and_(slice_valid, empty_pattern), result)
+
+            nonempty_pattern = builder.not_(empty_pattern)
+            fits = builder.icmp_unsigned('<=', pattern_size, slice_size)
+            with builder.if_then(builder.and_(slice_valid,
+                                              builder.and_(nonempty_pattern,
+                                                           fits))):
+                if suffix:
+                    compare_offset = builder.sub(end_offset, pattern_size)
+                else:
+                    compare_offset = start_offset
+                builder.store(
+                    _stringdtype_unicode_region_equal(
+                        builder, value_buffer, compare_offset, unicode_struct,
+                        ir.Constant(intp, 0), pattern_length, intp, int8,
+                        int32,
+                    ),
+                    result,
+                )
+
+        return builder.load(result)
+
+    return sig, codegen
+
+
+def _unicode_stringdtype_affix_data(typingctx, value, pattern_data,
+                                    pattern_index, pattern_allocator, start,
+                                    end, suffix):
+    if not isinstance(value, types.UnicodeType) \
+            or pattern_data != types.voidptr \
+            or not isinstance(pattern_index, types.Integer) \
+            or pattern_allocator != types.voidptr \
+            or not isinstance(start, types.Integer) \
+            or not isinstance(end, types.Integer):
+        return None
+
+    sig = signature(types.boolean, value, pattern_data, types.intp,
+                    pattern_allocator, types.intp, types.intp)
+
+    def codegen(context, builder, signature, args):
+        value, pattern_data, pattern_index_value, pattern_allocator, \
+            start, end = args
+
+        int8 = ir.IntType(8)
+        int32 = ir.IntType(32)
+        intp = context.get_value_type(types.intp)
+        byte_ptr = int8.as_pointer()
+        pattern_packed = _packed_string_ptr_from_data(
+            builder, pattern_data, pattern_index_value, intp)
+        pattern_status, pattern_size, pattern_buffer = _load_string(
+            builder, pattern_allocator, pattern_packed, intp, byte_ptr)
+
+        result = cgutils.alloca_once(builder, ir.IntType(1))
+        builder.store(cgutils.false_bit, result)
+        pattern_valid = builder.icmp_signed(
+            '==', pattern_status, ir.Constant(int32, 0))
+
+        with builder.if_then(pattern_valid):
+            unicode_struct, value_length, _ = _unicode_parts(
+                context, builder, value, intp, int32)
+            start_index, end_index, slice_valid = _normalise_unicode_slice(
+                builder, value_length, start, end, intp)
+            pattern_effective_size = _trimmed_size(
+                builder, pattern_size, pattern_buffer, intp, int8)
+            pattern_length = _codepoint_count(
+                builder, pattern_effective_size, pattern_buffer, intp, int8)
+            slice_length = builder.sub(end_index, start_index)
+            empty_pattern = builder.icmp_unsigned(
+                '==', pattern_effective_size, ir.Constant(intp, 0))
+            builder.store(builder.and_(slice_valid, empty_pattern), result)
+
+            nonempty_pattern = builder.not_(empty_pattern)
+            fits = builder.icmp_unsigned('<=', pattern_length, slice_length)
+            with builder.if_then(builder.and_(slice_valid,
+                                              builder.and_(nonempty_pattern,
+                                                           fits))):
+                if suffix:
+                    compare_index = builder.sub(end_index, pattern_length)
+                else:
+                    compare_index = start_index
+                builder.store(
+                    _unicode_stringdtype_region_equal(
+                        builder, unicode_struct, compare_index,
+                        pattern_buffer, pattern_effective_size, intp, int8,
+                        int32,
+                    ),
+                    result,
+                )
+
+        return builder.load(result)
+
+    return sig, codegen
+
+
 @intrinsic
 def stringdtype_startswith_data(typingctx, value_data, value_index,
                                 value_allocator, pattern_data, pattern_index,
@@ -1460,6 +1724,44 @@ def stringdtype_endswith_data(typingctx, value_data, value_index,
     return _stringdtype_affix_data(
         typingctx, value_data, value_index, value_allocator,
         pattern_data, pattern_index, pattern_allocator, start, end, True,
+    )
+
+
+@intrinsic
+def stringdtype_startswith_unicode_data(typingctx, value_data, value_index,
+                                        value_allocator, pattern, start, end):
+    return _stringdtype_unicode_affix_data(
+        typingctx, value_data, value_index, value_allocator, pattern, start,
+        end, False,
+    )
+
+
+@intrinsic
+def stringdtype_endswith_unicode_data(typingctx, value_data, value_index,
+                                      value_allocator, pattern, start, end):
+    return _stringdtype_unicode_affix_data(
+        typingctx, value_data, value_index, value_allocator, pattern, start,
+        end, True,
+    )
+
+
+@intrinsic
+def unicode_startswith_stringdtype_data(typingctx, value, pattern_data,
+                                        pattern_index, pattern_allocator,
+                                        start, end):
+    return _unicode_stringdtype_affix_data(
+        typingctx, value, pattern_data, pattern_index, pattern_allocator,
+        start, end, False,
+    )
+
+
+@intrinsic
+def unicode_endswith_stringdtype_data(typingctx, value, pattern_data,
+                                      pattern_index, pattern_allocator,
+                                      start, end):
+    return _unicode_stringdtype_affix_data(
+        typingctx, value, pattern_data, pattern_index, pattern_allocator,
+        start, end, True,
     )
 
 

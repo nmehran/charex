@@ -10,15 +10,17 @@ from charex.numpy.stringdtype import (
     stringdtype_acquire_allocators, stringdtype_codepoint_len_data,
     stringdtype_compare_data, stringdtype_compare_unicode_data,
     stringdtype_count_data, stringdtype_data_ptr, stringdtype_endswith_data,
-    stringdtype_equal_data, stringdtype_equal_unicode_data,
-    stringdtype_find_data,
+    stringdtype_endswith_unicode_data, stringdtype_equal_data,
+    stringdtype_equal_unicode_data, stringdtype_find_data,
     stringdtype_isalnum_data, stringdtype_isalpha_data,
     stringdtype_isdecimal_data, stringdtype_isdigit_data,
     stringdtype_islower_data, stringdtype_isnumeric_data,
     stringdtype_isspace_data, stringdtype_istitle_data,
     stringdtype_isupper_data, stringdtype_release_allocator,
     stringdtype_release_allocators, stringdtype_rfind_data,
-    stringdtype_startswith_data, stringdtype_unicode_valid,
+    stringdtype_startswith_data, stringdtype_startswith_unicode_data,
+    stringdtype_unicode_valid, unicode_endswith_stringdtype_data,
+    unicode_startswith_stringdtype_data,
 )
 from charex.numpy.overloads.definitions import (
     equal, equal_sub32_bytes, equal_sub32_unicode, greater, greater_equal,
@@ -375,14 +377,102 @@ def _overload_order(left, right, op):
 
 
 def _overload_affix(value, pattern, start, end, suffix):
-    if is_stringdtype_array_type(value) or is_stringdtype_array_type(pattern):
-        if not is_stringdtype_array_type(value) \
-                or not is_stringdtype_array_type(pattern):
+    value_stringdtype = is_stringdtype_array_type(value)
+    pattern_stringdtype = is_stringdtype_array_type(pattern)
+    if value_stringdtype or pattern_stringdtype:
+        s, e = ensure_slice(start, end)
+
+        if value_stringdtype and _is_unicode_scalar(pattern):
+            _validate_stringdtype_array(value)
+            if value.ndim == 0:
+                def impl(value, pattern, start=0, end=None):
+                    if not stringdtype_unicode_valid(pattern):
+                        raise TypeError('Invalid unicode code point found')
+                    start = start or s
+                    end = e if end is None else end
+                    allocator = stringdtype_acquire_allocator(value)
+                    data = stringdtype_data_ptr(value)
+                    if suffix:
+                        result = stringdtype_endswith_unicode_data(
+                            data, 0, allocator, pattern, start, end)
+                    else:
+                        result = stringdtype_startswith_unicode_data(
+                            data, 0, allocator, pattern, start, end)
+                    stringdtype_release_allocator(allocator)
+                    return result
+
+                return impl
+
+            def impl(value, pattern, start=0, end=None):
+                if not stringdtype_unicode_valid(pattern):
+                    raise TypeError('Invalid unicode code point found')
+                start = start or s
+                end = e if end is None else end
+                result = np.empty(value.size, np.bool_)
+                if value.size == 0:
+                    return result
+                allocator = stringdtype_acquire_allocator(value)
+                data = stringdtype_data_ptr(value)
+                for i in range(value.size):
+                    if suffix:
+                        result[i] = stringdtype_endswith_unicode_data(
+                            data, i, allocator, pattern, start, end)
+                    else:
+                        result[i] = stringdtype_startswith_unicode_data(
+                            data, i, allocator, pattern, start, end)
+                stringdtype_release_allocator(allocator)
+                return result
+
+            return impl
+
+        if _is_unicode_scalar(value) and pattern_stringdtype:
+            _validate_stringdtype_array(pattern)
+            if pattern.ndim == 0:
+                def impl(value, pattern, start=0, end=None):
+                    if not stringdtype_unicode_valid(value):
+                        raise TypeError('Invalid unicode code point found')
+                    start = start or s
+                    end = e if end is None else end
+                    allocator = stringdtype_acquire_allocator(pattern)
+                    data = stringdtype_data_ptr(pattern)
+                    if suffix:
+                        result = unicode_endswith_stringdtype_data(
+                            value, data, 0, allocator, start, end)
+                    else:
+                        result = unicode_startswith_stringdtype_data(
+                            value, data, 0, allocator, start, end)
+                    stringdtype_release_allocator(allocator)
+                    return result
+
+                return impl
+
+            def impl(value, pattern, start=0, end=None):
+                if not stringdtype_unicode_valid(value):
+                    raise TypeError('Invalid unicode code point found')
+                start = start or s
+                end = e if end is None else end
+                result = np.empty(pattern.size, np.bool_)
+                if pattern.size == 0:
+                    return result
+                allocator = stringdtype_acquire_allocator(pattern)
+                data = stringdtype_data_ptr(pattern)
+                for i in range(pattern.size):
+                    if suffix:
+                        result[i] = unicode_endswith_stringdtype_data(
+                            value, data, i, allocator, start, end)
+                    else:
+                        result[i] = unicode_startswith_stringdtype_data(
+                            value, data, i, allocator, start, end)
+                stringdtype_release_allocator(allocator)
+                return result
+
+            return impl
+
+        if not value_stringdtype or not pattern_stringdtype:
             raise NumbaValueError('StringDType prefix/suffix operations '
                                   'currently require two StringDType arrays')
         _validate_stringdtype_array(value)
         _validate_stringdtype_array(pattern)
-        s, e = ensure_slice(start, end)
 
         if value.ndim == 0 and pattern.ndim == 0:
             def impl(value, pattern, start=0, end=None):

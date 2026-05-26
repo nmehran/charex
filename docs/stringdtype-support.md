@@ -894,9 +894,11 @@ Checkpoint:
 - Python `str` mixed comparisons now use a Unicode-scalar bridge. It trims
   trailing NULs on the Python scalar side, preserves StringDType's NUL-prefix
   comparison behavior, and rejects invalid surrogate code points like NumPy.
-- Python `str` mixed affix and search calls remain the next bridge. They need
-  separate slice and substring logic and should not be implemented as blind
-  aliases to the packed `StringDType` array-array path.
+- Python `str` mixed `startswith` and `endswith` now use the same scalar bridge
+  with explicit slice normalization for the Unicode-value side.
+- Python `str` mixed search calls remain the next bridge. They need separate
+  substring logic and should not be implemented as blind aliases to the packed
+  `StringDType` array-array path.
 
 ## Tranche 9: Missing Sentinels And `na_object`
 

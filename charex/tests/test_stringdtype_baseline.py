@@ -627,15 +627,36 @@ def test_stringdtype_array_affix_rejects_multidimensional_arrays(impl_name):
     'strings_startswith',
     'strings_endswith',
 ])
-@pytest.mark.parametrize('scalar_left', [False, True])
-def test_stringdtype_array_affix_rejects_mixed_stringdtype_inputs(
-        impl_name, scalar_left):
+@pytest.mark.parametrize('scalar', [
+    'a', 'a\x00', 'a\x00x', '\x00', '\x00x', '', 'é', '🙂',
+])
+@pytest.mark.parametrize('args', [(), (0, None), (1, None), (0, -1)])
+def test_stringdtype_array_affix_mixed_python_str_matches_numpy(
+        impl_name, scalar, args):
+    strings = StringsInformation()
+    baseline = STRINGS.startswith if impl_name == 'strings_startswith' \
+        else STRINGS.endswith
+    values = stringdtype_array([
+        'a', 'a\x00', 'a\x00x', 'a\x00y', '\x00', '\x00x',
+        '', 'éabc', '🙂abc',
+    ])
+
+    assert_same(getattr(strings, impl_name), baseline, values, scalar, *args)
+    assert_same(getattr(strings, impl_name), baseline, scalar, values, *args)
+
+
+@pytest.mark.parametrize('impl_name, baseline', [
+    ('strings_startswith', STRINGS.startswith),
+    ('strings_endswith', STRINGS.endswith),
+])
+@pytest.mark.parametrize('scalar', ['\ud800', 'a\ud800', 'a\x00\ud800'])
+def test_stringdtype_array_affix_mixed_python_str_invalid_unicode_matches_numpy(
+        impl_name, baseline, scalar):
     strings = StringsInformation()
     values = stringdtype_array(['a', 'b'])
-    args = ('a', values) if scalar_left else (values, 'a')
 
-    with pytest.raises(TypingError, match='two StringDType arrays'):
-        getattr(strings, impl_name)(*args)
+    assert_same_exception(getattr(strings, impl_name), baseline, values, scalar)
+    assert_same_exception(getattr(strings, impl_name), baseline, scalar, values)
 
 
 @pytest.mark.parametrize('impl_name, baseline', [
