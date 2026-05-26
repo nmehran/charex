@@ -1021,6 +1021,10 @@ Acceptance bar for this tranche:
 - Require the compiled helper for descriptor-to-allocator access. If the helper
   is unavailable, fail during StringDType typing instead of reading private
   NumPy object layout.
+- In the current mixed Python `str` paths, validate the scalar once and hoist
+  its trimmed codepoint length plus UTF-8 byte size once per operation before
+  entering the StringDType element loop. This is a cleanup of the prototype
+  bridge, not the final scalar bridge decision.
 - Reject `StringDType(na_object=...)` arrays until Tranche 9 implements
   sentinel propagation exactly.
 - Keep this in charex while prototyping. The dtype recognition and helper

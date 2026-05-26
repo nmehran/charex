@@ -33,6 +33,7 @@ class StringDTypePacket(types.Type):
 
 
 stringdtype_packet = StringDTypePacket()
+_UNICODE_PARTS_TYPE = types.UniTuple(types.intp, 2)
 
 
 def _numpy_api_slots():
@@ -597,16 +598,20 @@ def _unicode_utf8_size(builder, data, length, kind, intp, int32):
     return builder.load(size)
 
 
-def _unicode_parts(context, builder, unicode_value, intp, int32):
+def _unicode_parts(context, builder, unicode_value, intp, int32,
+                   length=None, size=None):
     unicode_struct = context.make_helper(builder, types.unicode_type,
                                          value=unicode_value)
-    length = _unicode_trimmed_length(
-        builder, unicode_struct.data, unicode_struct.length,
-        unicode_struct.kind, intp, int32,
-    )
-    size = _unicode_utf8_size(
-        builder, unicode_struct.data, length, unicode_struct.kind, intp, int32,
-    )
+    if length is None:
+        length = _unicode_trimmed_length(
+            builder, unicode_struct.data, unicode_struct.length,
+            unicode_struct.kind, intp, int32,
+        )
+    if size is None:
+        size = _unicode_utf8_size(
+            builder, unicode_struct.data, length, unicode_struct.kind, intp,
+            int32,
+        )
     return unicode_struct, length, size
 
 
@@ -627,9 +632,11 @@ def _unicode_is_valid(builder, data, length, kind, intp, int32):
 
 
 def _stringdtype_unicode_compare(builder, string_size, string_buffer,
-                                 unicode_value, context, intp, int8, int32):
+                                 unicode_value, unicode_length, unicode_size,
+                                 context, intp, int8, int32):
     unicode_struct, unicode_length, unicode_size = _unicode_parts(
-        context, builder, unicode_value, intp, int32)
+        context, builder, unicode_value, intp, int32, unicode_length,
+        unicode_size)
 
     result = cgutils.alloca_once(builder, int32)
     done = cgutils.alloca_once(builder, ir.IntType(1))
@@ -702,9 +709,11 @@ def _stringdtype_unicode_compare(builder, string_size, string_buffer,
 
 
 def _stringdtype_unicode_equal(builder, string_size, string_buffer,
-                               unicode_value, context, intp, int8, int32):
+                               unicode_value, unicode_length, unicode_size,
+                               context, intp, int8, int32):
     unicode_struct, unicode_length, unicode_size = _unicode_parts(
-        context, builder, unicode_value, intp, int32)
+        context, builder, unicode_value, intp, int32, unicode_length,
+        unicode_size)
 
     result = cgutils.alloca_once(builder, ir.IntType(1))
     done = cgutils.alloca_once(builder, ir.IntType(1))
@@ -892,7 +901,8 @@ def _normalise_unicode_slice(builder, length, start, end, intp):
 
 
 def _stringdtype_unicode_search(builder, value_size, value_buffer, pattern,
-                                context, start, end, mode, intp, int8, int32):
+                                pattern_length, pattern_size, context, start,
+                                end, mode, intp, int8, int32):
     zero = ir.Constant(intp, 0)
     one = ir.Constant(intp, 1)
     result = cgutils.alloca_once(builder, intp)
@@ -902,7 +912,7 @@ def _stringdtype_unicode_search(builder, value_size, value_buffer, pattern,
         builder.store(ir.Constant(intp, -1), result)
 
     unicode_struct, pattern_length, pattern_size = _unicode_parts(
-        context, builder, pattern, intp, int32)
+        context, builder, pattern, intp, int32, pattern_length, pattern_size)
     start_index, end_index, start_offset, end_offset, slice_valid = \
         _normalise_slice(builder, value_size, value_buffer, start, end, intp,
                          int8)
@@ -1013,8 +1023,9 @@ def _stringdtype_unicode_search(builder, value_size, value_buffer, pattern,
     return builder.load(result)
 
 
-def _unicode_stringdtype_search(builder, value, pattern_size, pattern_buffer,
-                                context, start, end, mode, intp, int8, int32):
+def _unicode_stringdtype_search(builder, value, value_length, value_size,
+                                pattern_size, pattern_buffer, context, start,
+                                end, mode, intp, int8, int32):
     zero = ir.Constant(intp, 0)
     one = ir.Constant(intp, 1)
     result = cgutils.alloca_once(builder, intp)
@@ -1024,7 +1035,7 @@ def _unicode_stringdtype_search(builder, value, pattern_size, pattern_buffer,
         builder.store(ir.Constant(intp, -1), result)
 
     unicode_struct, value_length, _ = _unicode_parts(
-        context, builder, value, intp, int32)
+        context, builder, value, intp, int32, value_length, value_size)
     start_index, end_index, slice_valid = _normalise_unicode_slice(
         builder, value_length, start, end, intp)
     pattern_effective_size = _trimmed_size(
@@ -1672,17 +1683,39 @@ def stringdtype_unicode_valid(typingctx, value):
 
 
 @intrinsic
-def stringdtype_equal_unicode_data(typingctx, data, index, allocator, value):
+def stringdtype_unicode_parts(typingctx, value):
+    if not isinstance(value, types.UnicodeType):
+        return None
+
+    sig = signature(_UNICODE_PARTS_TYPE, value)
+
+    def codegen(context, builder, signature, args):
+        int32 = ir.IntType(32)
+        intp = context.get_value_type(types.intp)
+        value, = args
+        unicode_struct, length, size = _unicode_parts(
+            context, builder, value, intp, int32)
+        return context.make_tuple(builder, signature.return_type,
+                                  [length, size])
+
+    return sig, codegen
+
+
+@intrinsic
+def stringdtype_equal_unicode_data(typingctx, data, index, allocator, value,
+                                   value_parts):
     if data != types.voidptr \
             or not isinstance(index, types.Integer) \
             or allocator != types.voidptr \
-            or not isinstance(value, types.UnicodeType):
+            or not isinstance(value, types.UnicodeType) \
+            or value_parts != _UNICODE_PARTS_TYPE:
         return None
 
-    sig = signature(types.boolean, data, types.intp, allocator, value)
+    sig = signature(types.boolean, data, types.intp, allocator, value,
+                    _UNICODE_PARTS_TYPE)
 
     def codegen(context, builder, signature, args):
-        data, index_value, allocator, value = args
+        data, index_value, allocator, value, value_parts = args
 
         int8 = ir.IntType(8)
         int32 = ir.IntType(32)
@@ -1696,9 +1729,12 @@ def stringdtype_equal_unicode_data(typingctx, data, index, allocator, value):
         builder.store(cgutils.false_bit, result)
         valid = builder.icmp_signed('==', status, ir.Constant(int32, 0))
         with builder.if_then(valid):
+            value_length, value_size = cgutils.unpack_tuple(
+                builder, value_parts, 2)
             builder.store(
-                _stringdtype_unicode_equal(builder, size, buffer, value,
-                                           context, intp, int8, int32),
+                _stringdtype_unicode_equal(
+                    builder, size, buffer, value, value_length, value_size,
+                    context, intp, int8, int32),
                 result,
             )
 
@@ -1708,17 +1744,20 @@ def stringdtype_equal_unicode_data(typingctx, data, index, allocator, value):
 
 
 @intrinsic
-def stringdtype_compare_unicode_data(typingctx, data, index, allocator, value):
+def stringdtype_compare_unicode_data(typingctx, data, index, allocator, value,
+                                     value_parts):
     if data != types.voidptr \
             or not isinstance(index, types.Integer) \
             or allocator != types.voidptr \
-            or not isinstance(value, types.UnicodeType):
+            or not isinstance(value, types.UnicodeType) \
+            or value_parts != _UNICODE_PARTS_TYPE:
         return None
 
-    sig = signature(types.int32, data, types.intp, allocator, value)
+    sig = signature(types.int32, data, types.intp, allocator, value,
+                    _UNICODE_PARTS_TYPE)
 
     def codegen(context, builder, signature, args):
-        data, index_value, allocator, value = args
+        data, index_value, allocator, value, value_parts = args
 
         int8 = ir.IntType(8)
         int32 = ir.IntType(32)
@@ -1732,9 +1771,12 @@ def stringdtype_compare_unicode_data(typingctx, data, index, allocator, value):
         builder.store(ir.Constant(int32, 0), result)
         valid = builder.icmp_signed('==', status, ir.Constant(int32, 0))
         with builder.if_then(valid):
+            value_length, value_size = cgutils.unpack_tuple(
+                builder, value_parts, 2)
             builder.store(
-                _stringdtype_unicode_compare(builder, size, buffer, value,
-                                             context, intp, int8, int32),
+                _stringdtype_unicode_compare(
+                    builder, size, buffer, value, value_length, value_size,
+                    context, intp, int8, int32),
                 result,
             )
 
@@ -1829,22 +1871,24 @@ def _stringdtype_affix_data(typingctx, value_data, value_index,
 
 
 def _stringdtype_unicode_affix_data(typingctx, value_data, value_index,
-                                    value_allocator, pattern, start, end,
-                                    suffix):
+                                    value_allocator, pattern, pattern_length,
+                                    pattern_size, start, end, suffix):
     if value_data != types.voidptr \
             or not isinstance(value_index, types.Integer) \
             or value_allocator != types.voidptr \
             or not isinstance(pattern, types.UnicodeType) \
+            or not isinstance(pattern_length, types.Integer) \
+            or not isinstance(pattern_size, types.Integer) \
             or not isinstance(start, types.Integer) \
             or not isinstance(end, types.Integer):
         return None
 
     sig = signature(types.boolean, value_data, types.intp, value_allocator,
-                    pattern, types.intp, types.intp)
+                    pattern, types.intp, types.intp, types.intp, types.intp)
 
     def codegen(context, builder, signature, args):
-        value_data, value_index_value, value_allocator, pattern, start, end = \
-            args
+        value_data, value_index_value, value_allocator, pattern, \
+            pattern_length, pattern_size, start, end = args
 
         int8 = ir.IntType(8)
         int32 = ir.IntType(32)
@@ -1862,7 +1906,8 @@ def _stringdtype_unicode_affix_data(typingctx, value_data, value_index,
 
         with builder.if_then(value_valid):
             unicode_struct, pattern_length, pattern_size = _unicode_parts(
-                context, builder, pattern, intp, int32)
+                context, builder, pattern, intp, int32, pattern_length,
+                pattern_size)
             _, _, start_offset, end_offset, slice_valid = _normalise_slice(
                 builder, value_size, value_buffer, start, end, intp, int8)
             slice_size = builder.sub(end_offset, start_offset)
@@ -1894,10 +1939,12 @@ def _stringdtype_unicode_affix_data(typingctx, value_data, value_index,
 
 
 def _unicode_stringdtype_affix_data(typingctx, value, pattern_data,
-                                    pattern_index, pattern_allocator, start,
-                                    end, suffix):
+                                    value_length, value_size, pattern_index,
+                                    pattern_allocator, start, end, suffix):
     if not isinstance(value, types.UnicodeType) \
             or pattern_data != types.voidptr \
+            or not isinstance(value_length, types.Integer) \
+            or not isinstance(value_size, types.Integer) \
             or not isinstance(pattern_index, types.Integer) \
             or pattern_allocator != types.voidptr \
             or not isinstance(start, types.Integer) \
@@ -1905,11 +1952,12 @@ def _unicode_stringdtype_affix_data(typingctx, value, pattern_data,
         return None
 
     sig = signature(types.boolean, value, pattern_data, types.intp,
-                    pattern_allocator, types.intp, types.intp)
+                    types.intp, types.intp, pattern_allocator,
+                    types.intp, types.intp)
 
     def codegen(context, builder, signature, args):
-        value, pattern_data, pattern_index_value, pattern_allocator, \
-            start, end = args
+        value, pattern_data, value_length, value_size, pattern_index_value, \
+            pattern_allocator, start, end = args
 
         int8 = ir.IntType(8)
         int32 = ir.IntType(32)
@@ -1927,7 +1975,8 @@ def _unicode_stringdtype_affix_data(typingctx, value, pattern_data,
 
         with builder.if_then(pattern_valid):
             unicode_struct, value_length, _ = _unicode_parts(
-                context, builder, value, intp, int32)
+                context, builder, value, intp, int32, value_length,
+                value_size)
             start_index, end_index, slice_valid = _normalise_unicode_slice(
                 builder, value_length, start, end, intp)
             pattern_effective_size = _trimmed_size(
@@ -1984,39 +2033,45 @@ def stringdtype_endswith_data(typingctx, value_data, value_index,
 
 @intrinsic
 def stringdtype_startswith_unicode_data(typingctx, value_data, value_index,
-                                        value_allocator, pattern, start, end):
+                                        value_allocator, pattern,
+                                        pattern_length, pattern_size, start,
+                                        end):
     return _stringdtype_unicode_affix_data(
-        typingctx, value_data, value_index, value_allocator, pattern, start,
-        end, False,
+        typingctx, value_data, value_index, value_allocator, pattern,
+        pattern_length, pattern_size, start, end, False,
     )
 
 
 @intrinsic
 def stringdtype_endswith_unicode_data(typingctx, value_data, value_index,
-                                      value_allocator, pattern, start, end):
+                                      value_allocator, pattern,
+                                      pattern_length, pattern_size, start,
+                                      end):
     return _stringdtype_unicode_affix_data(
-        typingctx, value_data, value_index, value_allocator, pattern, start,
-        end, True,
+        typingctx, value_data, value_index, value_allocator, pattern,
+        pattern_length, pattern_size, start, end, True,
     )
 
 
 @intrinsic
 def unicode_startswith_stringdtype_data(typingctx, value, pattern_data,
+                                        value_length, value_size,
                                         pattern_index, pattern_allocator,
                                         start, end):
     return _unicode_stringdtype_affix_data(
-        typingctx, value, pattern_data, pattern_index, pattern_allocator,
-        start, end, False,
+        typingctx, value, pattern_data, value_length, value_size,
+        pattern_index, pattern_allocator, start, end, False,
     )
 
 
 @intrinsic
 def unicode_endswith_stringdtype_data(typingctx, value, pattern_data,
+                                      value_length, value_size,
                                       pattern_index, pattern_allocator,
                                       start, end):
     return _unicode_stringdtype_affix_data(
-        typingctx, value, pattern_data, pattern_index, pattern_allocator,
-        start, end, True,
+        typingctx, value, pattern_data, value_length, value_size,
+        pattern_index, pattern_allocator, start, end, True,
     )
 
 
@@ -2274,22 +2329,24 @@ def stringdtype_count_data(typingctx, value_data, value_index, value_allocator,
 
 
 def _stringdtype_unicode_search_data(typingctx, value_data, value_index,
-                                     value_allocator, pattern, start, end,
-                                     mode):
+                                     value_allocator, pattern, pattern_length,
+                                     pattern_size, start, end, mode):
     if value_data != types.voidptr \
             or not isinstance(value_index, types.Integer) \
             or value_allocator != types.voidptr \
             or not isinstance(pattern, types.UnicodeType) \
+            or not isinstance(pattern_length, types.Integer) \
+            or not isinstance(pattern_size, types.Integer) \
             or not isinstance(start, types.Integer) \
             or not isinstance(end, types.Integer):
         return None
 
     sig = signature(types.intp, value_data, types.intp, value_allocator,
-                    pattern, types.intp, types.intp)
+                    pattern, types.intp, types.intp, types.intp, types.intp)
 
     def codegen(context, builder, signature, args):
-        value_data, value_index_value, value_allocator, pattern, start, end = \
-            args
+        value_data, value_index_value, value_allocator, pattern, \
+            pattern_length, pattern_size, start, end = args
 
         int8 = ir.IntType(8)
         int32 = ir.IntType(32)
@@ -2309,8 +2366,9 @@ def _stringdtype_unicode_search_data(typingctx, value_data, value_index,
         with builder.if_then(valid):
             builder.store(
                 _stringdtype_unicode_search(
-                    builder, value_size, value_buffer, pattern, context,
-                    start, end, mode, intp, int8, int32,
+                    builder, value_size, value_buffer, pattern,
+                    pattern_length, pattern_size, context, start, end, mode,
+                    intp, int8, int32,
                 ),
                 result,
             )
@@ -2321,22 +2379,24 @@ def _stringdtype_unicode_search_data(typingctx, value_data, value_index,
 
 
 def _unicode_stringdtype_search_data(typingctx, value, pattern_data,
-                                     pattern_index, pattern_allocator, start,
-                                     end, mode):
+                                     value_length, value_size, pattern_index,
+                                     pattern_allocator, start, end, mode):
     if not isinstance(value, types.UnicodeType) \
             or pattern_data != types.voidptr \
+            or not isinstance(value_length, types.Integer) \
+            or not isinstance(value_size, types.Integer) \
             or not isinstance(pattern_index, types.Integer) \
             or pattern_allocator != types.voidptr \
             or not isinstance(start, types.Integer) \
             or not isinstance(end, types.Integer):
         return None
 
-    sig = signature(types.intp, value, pattern_data, types.intp,
-                    pattern_allocator, types.intp, types.intp)
+    sig = signature(types.intp, value, pattern_data, types.intp, types.intp,
+                    types.intp, pattern_allocator, types.intp, types.intp)
 
     def codegen(context, builder, signature, args):
-        value, pattern_data, pattern_index_value, pattern_allocator, \
-            start, end = args
+        value, pattern_data, value_length, value_size, pattern_index_value, \
+            pattern_allocator, start, end = args
 
         int8 = ir.IntType(8)
         int32 = ir.IntType(32)
@@ -2357,8 +2417,9 @@ def _unicode_stringdtype_search_data(typingctx, value, pattern_data,
         with builder.if_then(valid):
             builder.store(
                 _unicode_stringdtype_search(
-                    builder, value, pattern_size, pattern_buffer, context,
-                    start, end, mode, intp, int8, int32,
+                    builder, value, value_length, value_size, pattern_size,
+                    pattern_buffer, context, start, end, mode, intp, int8,
+                    int32,
                 ),
                 result,
             )
@@ -2370,58 +2431,61 @@ def _unicode_stringdtype_search_data(typingctx, value, pattern_data,
 
 @intrinsic
 def stringdtype_find_unicode_data(typingctx, value_data, value_index,
-                                  value_allocator, pattern, start, end):
+                                  value_allocator, pattern, pattern_length,
+                                  pattern_size, start, end):
     return _stringdtype_unicode_search_data(
-        typingctx, value_data, value_index, value_allocator, pattern, start,
-        end, 'find',
+        typingctx, value_data, value_index, value_allocator, pattern,
+        pattern_length, pattern_size, start, end, 'find',
     )
 
 
 @intrinsic
 def stringdtype_rfind_unicode_data(typingctx, value_data, value_index,
-                                   value_allocator, pattern, start, end):
+                                   value_allocator, pattern, pattern_length,
+                                   pattern_size, start, end):
     return _stringdtype_unicode_search_data(
-        typingctx, value_data, value_index, value_allocator, pattern, start,
-        end, 'rfind',
+        typingctx, value_data, value_index, value_allocator, pattern,
+        pattern_length, pattern_size, start, end, 'rfind',
     )
 
 
 @intrinsic
 def stringdtype_count_unicode_data(typingctx, value_data, value_index,
-                                   value_allocator, pattern, start, end):
+                                   value_allocator, pattern, pattern_length,
+                                   pattern_size, start, end):
     return _stringdtype_unicode_search_data(
-        typingctx, value_data, value_index, value_allocator, pattern, start,
-        end, 'count',
+        typingctx, value_data, value_index, value_allocator, pattern,
+        pattern_length, pattern_size, start, end, 'count',
     )
 
 
 @intrinsic
-def unicode_find_stringdtype_data(typingctx, value, pattern_data,
-                                  pattern_index, pattern_allocator, start,
-                                  end):
+def unicode_find_stringdtype_data(typingctx, value, pattern_data, value_length,
+                                  value_size, pattern_index,
+                                  pattern_allocator, start, end):
     return _unicode_stringdtype_search_data(
-        typingctx, value, pattern_data, pattern_index, pattern_allocator,
-        start, end, 'find',
+        typingctx, value, pattern_data, value_length, value_size,
+        pattern_index, pattern_allocator, start, end, 'find',
     )
 
 
 @intrinsic
 def unicode_rfind_stringdtype_data(typingctx, value, pattern_data,
-                                   pattern_index, pattern_allocator, start,
-                                   end):
+                                   value_length, value_size, pattern_index,
+                                   pattern_allocator, start, end):
     return _unicode_stringdtype_search_data(
-        typingctx, value, pattern_data, pattern_index, pattern_allocator,
-        start, end, 'rfind',
+        typingctx, value, pattern_data, value_length, value_size,
+        pattern_index, pattern_allocator, start, end, 'rfind',
     )
 
 
 @intrinsic
 def unicode_count_stringdtype_data(typingctx, value, pattern_data,
-                                   pattern_index, pattern_allocator, start,
-                                   end):
+                                   value_length, value_size, pattern_index,
+                                   pattern_allocator, start, end):
     return _unicode_stringdtype_search_data(
-        typingctx, value, pattern_data, pattern_index, pattern_allocator,
-        start, end, 'count',
+        typingctx, value, pattern_data, value_length, value_size,
+        pattern_index, pattern_allocator, start, end, 'count',
     )
 
 

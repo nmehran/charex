@@ -21,8 +21,9 @@ from charex.numpy.stringdtype import (
     stringdtype_isupper_data, stringdtype_release_allocator,
     stringdtype_release_allocators, stringdtype_rfind_data,
     stringdtype_rfind_unicode_data, stringdtype_startswith_data,
-    stringdtype_startswith_unicode_data, stringdtype_unicode_valid,
-    unicode_count_stringdtype_data, unicode_endswith_stringdtype_data,
+    stringdtype_startswith_unicode_data, stringdtype_unicode_parts,
+    stringdtype_unicode_valid, unicode_count_stringdtype_data,
+    unicode_endswith_stringdtype_data,
     unicode_find_stringdtype_data, unicode_rfind_stringdtype_data,
     unicode_startswith_stringdtype_data,
 )
@@ -108,9 +109,11 @@ def _overload_equal(left, right, invert):
                 def impl(left, right):
                     if not stringdtype_unicode_valid(right):
                         raise TypeError('Invalid unicode code point found')
+                    right_parts = stringdtype_unicode_parts(right)
                     allocator = stringdtype_acquire_allocator(left)
                     result = stringdtype_equal_unicode_data(
-                        stringdtype_data_ptr(left), 0, allocator, right)
+                        stringdtype_data_ptr(left), 0, allocator, right,
+                        right_parts[0], right_parts[1])
                     stringdtype_release_allocator(allocator)
                     return not result if invert else result
 
@@ -119,6 +122,7 @@ def _overload_equal(left, right, invert):
             def impl(left, right):
                 if not stringdtype_unicode_valid(right):
                     raise TypeError('Invalid unicode code point found')
+                right_parts = stringdtype_unicode_parts(right)
                 result = np.empty(left.size, np.bool_)
                 if left.size == 0:
                     return ~result if invert else result
@@ -126,7 +130,8 @@ def _overload_equal(left, right, invert):
                 data = stringdtype_data_ptr(left)
                 for i in range(left.size):
                     result[i] = stringdtype_equal_unicode_data(
-                        data, i, allocator, right)
+                        data, i, allocator, right, right_parts[0],
+                        right_parts[1])
                 stringdtype_release_allocator(allocator)
                 return ~result if invert else result
 
@@ -138,9 +143,11 @@ def _overload_equal(left, right, invert):
                 def impl(left, right):
                     if not stringdtype_unicode_valid(left):
                         raise TypeError('Invalid unicode code point found')
+                    left_parts = stringdtype_unicode_parts(left)
                     allocator = stringdtype_acquire_allocator(right)
                     result = stringdtype_equal_unicode_data(
-                        stringdtype_data_ptr(right), 0, allocator, left)
+                        stringdtype_data_ptr(right), 0, allocator, left,
+                        left_parts[0], left_parts[1])
                     stringdtype_release_allocator(allocator)
                     return not result if invert else result
 
@@ -149,6 +156,7 @@ def _overload_equal(left, right, invert):
             def impl(left, right):
                 if not stringdtype_unicode_valid(left):
                     raise TypeError('Invalid unicode code point found')
+                left_parts = stringdtype_unicode_parts(left)
                 result = np.empty(right.size, np.bool_)
                 if right.size == 0:
                     return ~result if invert else result
@@ -156,7 +164,8 @@ def _overload_equal(left, right, invert):
                 data = stringdtype_data_ptr(right)
                 for i in range(right.size):
                     result[i] = stringdtype_equal_unicode_data(
-                        data, i, allocator, left)
+                        data, i, allocator, left, left_parts[0],
+                        left_parts[1])
                 stringdtype_release_allocator(allocator)
                 return ~result if invert else result
 
@@ -229,9 +238,11 @@ def _overload_order(left, right, op):
                 def impl(left, right):
                     if not stringdtype_unicode_valid(right):
                         raise TypeError('Invalid unicode code point found')
+                    right_parts = stringdtype_unicode_parts(right)
                     allocator = stringdtype_acquire_allocator(left)
                     cmp_result = stringdtype_compare_unicode_data(
-                        stringdtype_data_ptr(left), 0, allocator, right)
+                        stringdtype_data_ptr(left), 0, allocator, right,
+                        right_parts[0], right_parts[1])
                     stringdtype_release_allocator(allocator)
                     if op == 'greater':
                         return cmp_result > 0
@@ -246,6 +257,7 @@ def _overload_order(left, right, op):
             def impl(left, right):
                 if not stringdtype_unicode_valid(right):
                     raise TypeError('Invalid unicode code point found')
+                right_parts = stringdtype_unicode_parts(right)
                 result = np.empty(left.size, np.bool_)
                 if left.size == 0:
                     return result
@@ -253,7 +265,8 @@ def _overload_order(left, right, op):
                 data = stringdtype_data_ptr(left)
                 for i in range(left.size):
                     cmp_result = stringdtype_compare_unicode_data(
-                        data, i, allocator, right)
+                        data, i, allocator, right, right_parts[0],
+                        right_parts[1])
                     if op == 'greater':
                         result[i] = cmp_result > 0
                     elif op == 'greater_equal':
@@ -273,9 +286,11 @@ def _overload_order(left, right, op):
                 def impl(left, right):
                     if not stringdtype_unicode_valid(left):
                         raise TypeError('Invalid unicode code point found')
+                    left_parts = stringdtype_unicode_parts(left)
                     allocator = stringdtype_acquire_allocator(right)
                     cmp_result = -stringdtype_compare_unicode_data(
-                        stringdtype_data_ptr(right), 0, allocator, left)
+                        stringdtype_data_ptr(right), 0, allocator, left,
+                        left_parts[0], left_parts[1])
                     stringdtype_release_allocator(allocator)
                     if op == 'greater':
                         return cmp_result > 0
@@ -290,6 +305,7 @@ def _overload_order(left, right, op):
             def impl(left, right):
                 if not stringdtype_unicode_valid(left):
                     raise TypeError('Invalid unicode code point found')
+                left_parts = stringdtype_unicode_parts(left)
                 result = np.empty(right.size, np.bool_)
                 if right.size == 0:
                     return result
@@ -297,7 +313,8 @@ def _overload_order(left, right, op):
                 data = stringdtype_data_ptr(right)
                 for i in range(right.size):
                     cmp_result = -stringdtype_compare_unicode_data(
-                        data, i, allocator, left)
+                        data, i, allocator, left, left_parts[0],
+                        left_parts[1])
                     if op == 'greater':
                         result[i] = cmp_result > 0
                     elif op == 'greater_equal':
@@ -392,16 +409,19 @@ def _overload_affix(value, pattern, start, end, suffix):
                 def impl(value, pattern, start=0, end=None):
                     if not stringdtype_unicode_valid(pattern):
                         raise TypeError('Invalid unicode code point found')
+                    pattern_parts = stringdtype_unicode_parts(pattern)
                     start = start or s
                     end = e if end is None else end
                     allocator = stringdtype_acquire_allocator(value)
                     data = stringdtype_data_ptr(value)
                     if suffix:
                         result = stringdtype_endswith_unicode_data(
-                            data, 0, allocator, pattern, start, end)
+                            data, 0, allocator, pattern, pattern_parts[0],
+                            pattern_parts[1], start, end)
                     else:
                         result = stringdtype_startswith_unicode_data(
-                            data, 0, allocator, pattern, start, end)
+                            data, 0, allocator, pattern, pattern_parts[0],
+                            pattern_parts[1], start, end)
                     stringdtype_release_allocator(allocator)
                     return result
 
@@ -410,6 +430,7 @@ def _overload_affix(value, pattern, start, end, suffix):
             def impl(value, pattern, start=0, end=None):
                 if not stringdtype_unicode_valid(pattern):
                     raise TypeError('Invalid unicode code point found')
+                pattern_parts = stringdtype_unicode_parts(pattern)
                 start = start or s
                 end = e if end is None else end
                 result = np.empty(value.size, np.bool_)
@@ -420,10 +441,12 @@ def _overload_affix(value, pattern, start, end, suffix):
                 for i in range(value.size):
                     if suffix:
                         result[i] = stringdtype_endswith_unicode_data(
-                            data, i, allocator, pattern, start, end)
+                            data, i, allocator, pattern, pattern_parts[0],
+                            pattern_parts[1], start, end)
                     else:
                         result[i] = stringdtype_startswith_unicode_data(
-                            data, i, allocator, pattern, start, end)
+                            data, i, allocator, pattern, pattern_parts[0],
+                            pattern_parts[1], start, end)
                 stringdtype_release_allocator(allocator)
                 return result
 
@@ -435,16 +458,19 @@ def _overload_affix(value, pattern, start, end, suffix):
                 def impl(value, pattern, start=0, end=None):
                     if not stringdtype_unicode_valid(value):
                         raise TypeError('Invalid unicode code point found')
+                    value_parts = stringdtype_unicode_parts(value)
                     start = start or s
                     end = e if end is None else end
                     allocator = stringdtype_acquire_allocator(pattern)
                     data = stringdtype_data_ptr(pattern)
                     if suffix:
                         result = unicode_endswith_stringdtype_data(
-                            value, data, 0, allocator, start, end)
+                            value, data, value_parts[0], value_parts[1], 0,
+                            allocator, start, end)
                     else:
                         result = unicode_startswith_stringdtype_data(
-                            value, data, 0, allocator, start, end)
+                            value, data, value_parts[0], value_parts[1], 0,
+                            allocator, start, end)
                     stringdtype_release_allocator(allocator)
                     return result
 
@@ -453,6 +479,7 @@ def _overload_affix(value, pattern, start, end, suffix):
             def impl(value, pattern, start=0, end=None):
                 if not stringdtype_unicode_valid(value):
                     raise TypeError('Invalid unicode code point found')
+                value_parts = stringdtype_unicode_parts(value)
                 start = start or s
                 end = e if end is None else end
                 result = np.empty(pattern.size, np.bool_)
@@ -463,10 +490,12 @@ def _overload_affix(value, pattern, start, end, suffix):
                 for i in range(pattern.size):
                     if suffix:
                         result[i] = unicode_endswith_stringdtype_data(
-                            value, data, i, allocator, start, end)
+                            value, data, value_parts[0], value_parts[1], i,
+                            allocator, start, end)
                     else:
                         result[i] = unicode_startswith_stringdtype_data(
-                            value, data, i, allocator, start, end)
+                            value, data, value_parts[0], value_parts[1], i,
+                            allocator, start, end)
                 stringdtype_release_allocator(allocator)
                 return result
 
@@ -559,19 +588,23 @@ def _overload_search(value, pattern, start, end, op):
                 def impl(value, pattern, start=0, end=None):
                     if not stringdtype_unicode_valid(pattern):
                         raise TypeError('Invalid unicode code point found')
+                    pattern_parts = stringdtype_unicode_parts(pattern)
                     start = start or s
                     end = e if end is None else end
                     allocator = stringdtype_acquire_allocator(value)
                     data = stringdtype_data_ptr(value)
                     if forward:
                         found = stringdtype_find_unicode_data(
-                            data, 0, allocator, pattern, start, end)
+                            data, 0, allocator, pattern, pattern_parts[0],
+                            pattern_parts[1], start, end)
                     elif reverse:
                         found = stringdtype_rfind_unicode_data(
-                            data, 0, allocator, pattern, start, end)
+                            data, 0, allocator, pattern, pattern_parts[0],
+                            pattern_parts[1], start, end)
                     else:
                         found = stringdtype_count_unicode_data(
-                            data, 0, allocator, pattern, start, end)
+                            data, 0, allocator, pattern, pattern_parts[0],
+                            pattern_parts[1], start, end)
                     stringdtype_release_allocator(allocator)
                     if raise_not_found and found < 0:
                         raise ValueError('substring not found')
@@ -582,6 +615,7 @@ def _overload_search(value, pattern, start, end, op):
             def impl(value, pattern, start=0, end=None):
                 if not stringdtype_unicode_valid(pattern):
                     raise TypeError('Invalid unicode code point found')
+                pattern_parts = stringdtype_unicode_parts(pattern)
                 start = start or s
                 end = e if end is None else end
                 result = np.empty(value.size, np.int64)
@@ -593,13 +627,16 @@ def _overload_search(value, pattern, start, end, op):
                 for i in range(value.size):
                     if forward:
                         found = stringdtype_find_unicode_data(
-                            data, i, allocator, pattern, start, end)
+                            data, i, allocator, pattern, pattern_parts[0],
+                            pattern_parts[1], start, end)
                     elif reverse:
                         found = stringdtype_rfind_unicode_data(
-                            data, i, allocator, pattern, start, end)
+                            data, i, allocator, pattern, pattern_parts[0],
+                            pattern_parts[1], start, end)
                     else:
                         found = stringdtype_count_unicode_data(
-                            data, i, allocator, pattern, start, end)
+                            data, i, allocator, pattern, pattern_parts[0],
+                            pattern_parts[1], start, end)
                     if raise_not_found and found < 0:
                         not_found = True
                         break
@@ -617,19 +654,23 @@ def _overload_search(value, pattern, start, end, op):
                 def impl(value, pattern, start=0, end=None):
                     if not stringdtype_unicode_valid(value):
                         raise TypeError('Invalid unicode code point found')
+                    value_parts = stringdtype_unicode_parts(value)
                     start = start or s
                     end = e if end is None else end
                     allocator = stringdtype_acquire_allocator(pattern)
                     data = stringdtype_data_ptr(pattern)
                     if forward:
                         found = unicode_find_stringdtype_data(
-                            value, data, 0, allocator, start, end)
+                            value, data, value_parts[0], value_parts[1], 0,
+                            allocator, start, end)
                     elif reverse:
                         found = unicode_rfind_stringdtype_data(
-                            value, data, 0, allocator, start, end)
+                            value, data, value_parts[0], value_parts[1], 0,
+                            allocator, start, end)
                     else:
                         found = unicode_count_stringdtype_data(
-                            value, data, 0, allocator, start, end)
+                            value, data, value_parts[0], value_parts[1], 0,
+                            allocator, start, end)
                     stringdtype_release_allocator(allocator)
                     if raise_not_found and found < 0:
                         raise ValueError('substring not found')
@@ -640,6 +681,7 @@ def _overload_search(value, pattern, start, end, op):
             def impl(value, pattern, start=0, end=None):
                 if not stringdtype_unicode_valid(value):
                     raise TypeError('Invalid unicode code point found')
+                value_parts = stringdtype_unicode_parts(value)
                 start = start or s
                 end = e if end is None else end
                 result = np.empty(pattern.size, np.int64)
@@ -651,13 +693,16 @@ def _overload_search(value, pattern, start, end, op):
                 for i in range(pattern.size):
                     if forward:
                         found = unicode_find_stringdtype_data(
-                            value, data, i, allocator, start, end)
+                            value, data, value_parts[0], value_parts[1], i,
+                            allocator, start, end)
                     elif reverse:
                         found = unicode_rfind_stringdtype_data(
-                            value, data, i, allocator, start, end)
+                            value, data, value_parts[0], value_parts[1], i,
+                            allocator, start, end)
                     else:
                         found = unicode_count_stringdtype_data(
-                            value, data, i, allocator, start, end)
+                            value, data, value_parts[0], value_parts[1], i,
+                            allocator, start, end)
                     if raise_not_found and found < 0:
                         not_found = True
                         break

@@ -91,6 +91,18 @@ def test_stringdtype_zero_dimensional_unary_matches_numpy(
 
 
 @pytest.mark.parametrize('impl_name, baseline', [
+    ('strings_str_len', STRINGS.str_len),
+    *STRINGDTYPE_PREDICATES,
+])
+@pytest.mark.parametrize('value', [
+    'a', 'é', '🙂', 'a\x00', 'a\x00x', '', '\ud800',
+])
+def test_strings_python_str_scalar_unary_matches_numpy(
+        impl_name, baseline, value):
+    assert_same(strings_impl(impl_name), baseline, value)
+
+
+@pytest.mark.parametrize('impl_name, baseline', [
     ('strings_equal', STRINGS.equal),
     ('strings_not_equal', STRINGS.not_equal),
     *STRINGDTYPE_ORDER_COMPARISONS,
