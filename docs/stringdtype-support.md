@@ -52,6 +52,10 @@ The hard part is element unpacking:
 - The allocator can be acquired from the `PyArray_StringDTypeObject` descriptor.
 - Missing sentinels return `rc == 1` from `NpyString_load`; normal strings
   return `rc == 0`.
+- `na_object` variants have operation-specific semantics. For example,
+  `StringDType(na_object='MISSING')` makes `np.strings.str_len` return `7`
+  for the sentinel value even though the low-level load path reports the null
+  status.
 - Calling back into NumPy/Python-level element access while holding a
   StringDType allocator can deadlock. Keep C-API unpacking probes and future
   native helpers clear about lock lifetime.
@@ -59,6 +63,42 @@ The hard part is element unpacking:
 The first implementation should reject non-default or missing-sentinel
 StringDType variants unless we can handle them exactly. Correctness is the
 contract.
+
+## Tranche 1: Access Layer
+
+Exploratory benchmark:
+
+```bash
+python docs/exploration/stringdtype_access_bench.py
+```
+
+This compares allocator access strategies for `np.strings.str_len` on mixed
+short `StringDType` values. The benchmark randomizes measurement order and
+reports per-call median timings.
+
+Local result on Python 3.12.8, NumPy 2.4.6, Numba 0.65.1:
+
+| rows | NumPy | parent offset | C helper | default descriptor | callback | per element acquire |
+| ---- | ----- | ------------- | -------- | ------------------ | -------- | ------------------- |
+| 100 | 0.001 ms | 0.009 ms | 0.009 ms | 0.009 ms | 0.010 ms | 0.010 ms |
+| 1,000 | 0.006 ms | 0.013 ms | 0.014 ms | 0.013 ms | 0.015 ms | 0.026 ms |
+| 10,000 | 0.058 ms | 0.060 ms | 0.065 ms | 0.060 ms | 0.064 ms | 0.186 ms |
+| 100,000 | 0.575 ms | 0.509 ms | 0.526 ms | 0.514 ms | 0.530 ms | 1.743 ms |
+
+Findings:
+
+- Acquiring the allocator once per operation is required. Per-element acquire
+  is roughly 3x slower at larger sizes.
+- A small C helper that reads `PyArray_DESCR(array)` performs close to the
+  current parent-offset prototype and is much cleaner.
+- A Python callback is slower and should not be part of the final shape.
+- A default-descriptor constant is fast, but it is not general enough for
+  dtype variants and missing-sentinel semantics.
+- The current parent-offset prototype is useful for exploration only. It reads
+  NumPy object layout discovered at import time and should be replaced before a
+  merge-ready implementation.
+- Until sentinel propagation is implemented exactly, charex rejects
+  `StringDType(na_object=...)` arrays during Numba typing.
 
 ## Prototype Order
 
@@ -80,7 +120,7 @@ contract.
    - `np.strings.str_len` for one-dimensional C-contiguous arrays;
    - count Unicode code points from UTF-8 bytes.
   - Current prototype matches NumPy for normal values and raises
-    `ValueError` for null strings.
+    `NumbaValueError` for `StringDType(na_object=...)` variants.
   - Quick local timing on mixed short strings: still slower below about 1k
     rows, but faster than NumPy at 10k+ rows.
 4. First comparison:
