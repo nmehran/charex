@@ -886,6 +886,15 @@ Acceptance bar for this tranche:
 - No generalized N-D broadcasting code.
 - No benchmark-fitted thresholds.
 
+Checkpoint:
+
+- 0-D default `StringDType` operands now use the same packed-element allocator
+  path as one-dimensional arrays. Unary 0-D calls return scalar values; binary
+  0-D/0-D calls return scalar values; 0-D/1-D calls broadcast over the 1-D side.
+- Python `str` mixed with `StringDType` remains the next bridge. NumPy trims
+  trailing NULs on the Python scalar side, so it should not be implemented as a
+  blind alias to the packed `StringDType` array-array path.
+
 ## Tranche 9: Missing Sentinels And `na_object`
 
 This tranche should replace the current blanket rejection of

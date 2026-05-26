@@ -47,6 +47,18 @@ STRINGDTYPE_ORDER_COMPARISONS = [
 ]
 
 
+STRINGDTYPE_COMPARISON_METHODS = {
+    'strings_equal', 'strings_not_equal', 'strings_greater',
+    'strings_greater_equal', 'strings_less', 'strings_less_equal',
+}
+
+
+def strings_impl(impl_name):
+    if impl_name in STRINGDTYPE_COMPARISON_METHODS:
+        return getattr(StringsComparisonOperators(), impl_name)
+    return getattr(StringsInformation(), impl_name)
+
+
 def test_charex_registers_stringdtype_array_type():
     values = stringdtype_array(['a', 'é', '🙂'])
 
@@ -67,44 +79,58 @@ def test_stringdtype_shape_metadata_compiles():
     assert shape_info(values) == (3, 16, 16)
 
 
-@pytest.mark.parametrize('impl_name, binary', [
-    ('strings_str_len', False),
-    ('strings_equal', True),
-    ('strings_not_equal', True),
-    ('strings_greater', True),
-    ('strings_greater_equal', True),
-    ('strings_less', True),
-    ('strings_less_equal', True),
-    ('strings_startswith', True),
-    ('strings_endswith', True),
-    ('strings_find', True),
-    ('strings_rfind', True),
-    ('strings_count', True),
-    ('strings_index', True),
-    ('strings_rindex', True),
-    ('strings_isalpha', False),
-    ('strings_isalnum', False),
-    ('strings_isdecimal', False),
-    ('strings_isdigit', False),
-    ('strings_islower', False),
-    ('strings_isnumeric', False),
-    ('strings_isspace', False),
-    ('strings_istitle', False),
-    ('strings_isupper', False),
+@pytest.mark.parametrize('impl_name, baseline', [
+    ('strings_str_len', STRINGS.str_len),
+    *STRINGDTYPE_PREDICATES,
 ])
-def test_stringdtype_zero_dimensional_arrays_are_rejected(impl_name, binary):
-    info = StringsInformation()
-    comparisons = StringsComparisonOperators()
-    comparison_methods = {
-        'strings_equal', 'strings_not_equal', 'strings_greater',
-        'strings_greater_equal', 'strings_less', 'strings_less_equal',
-    }
-    owner = comparisons if impl_name in comparison_methods else info
-    values = np.array('abc', dtype=STRING_DTYPE())
-    call_args = (values, values) if binary else (values,)
+def test_stringdtype_zero_dimensional_unary_matches_numpy(
+        impl_name, baseline):
+    value = np.array('abc', dtype=STRING_DTYPE())
 
-    with pytest.raises(TypingError, match='one-dimensional arrays'):
-        getattr(owner, impl_name)(*call_args)
+    assert_same(strings_impl(impl_name), baseline, value)
+
+
+@pytest.mark.parametrize('impl_name, baseline', [
+    ('strings_equal', STRINGS.equal),
+    ('strings_not_equal', STRINGS.not_equal),
+    *STRINGDTYPE_ORDER_COMPARISONS,
+    ('strings_startswith', STRINGS.startswith),
+    ('strings_endswith', STRINGS.endswith),
+    ('strings_find', STRINGS.find),
+    ('strings_rfind', STRINGS.rfind),
+    ('strings_count', STRINGS.count),
+    ('strings_index', STRINGS.index),
+    ('strings_rindex', STRINGS.rindex),
+])
+def test_stringdtype_zero_dimensional_binary_matches_numpy(
+        impl_name, baseline):
+    value = np.array('abcabc', dtype=STRING_DTYPE())
+    pattern = np.array('a', dtype=STRING_DTYPE())
+
+    assert_same(strings_impl(impl_name), baseline, value, pattern)
+
+
+@pytest.mark.parametrize('impl_name, baseline', [
+    ('strings_equal', STRINGS.equal),
+    ('strings_not_equal', STRINGS.not_equal),
+    *STRINGDTYPE_ORDER_COMPARISONS,
+    ('strings_startswith', STRINGS.startswith),
+    ('strings_endswith', STRINGS.endswith),
+    ('strings_find', STRINGS.find),
+    ('strings_rfind', STRINGS.rfind),
+    ('strings_count', STRINGS.count),
+    ('strings_index', STRINGS.index),
+    ('strings_rindex', STRINGS.rindex),
+])
+def test_stringdtype_zero_dimensional_broadcast_matches_numpy(
+        impl_name, baseline):
+    values = stringdtype_array(['abcabc', 'a', 'ba', 'a🙂'])
+    patterns = stringdtype_array(['a', 'bc', 'abc', ''])
+    value = np.array('abcabc', dtype=STRING_DTYPE())
+    pattern = np.array('a', dtype=STRING_DTYPE())
+
+    assert_same(strings_impl(impl_name), baseline, values, pattern)
+    assert_same(strings_impl(impl_name), baseline, value, patterns)
 
 
 def test_numpy_stringdtype_strlen_counts_codepoints():
