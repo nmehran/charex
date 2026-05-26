@@ -70,14 +70,19 @@ contract.
    - get a UTF-8 byte span for one element through NumPy's `NpyString_*` API;
    - define lifetime/locking rules explicitly;
    - reject or handle missing values deliberately.
-   - Current prototype uses a Python `ctypes` callback per element. This is
-     useful for proving semantics but is not the final performance shape and
-     should not be cached across processes.
+  - The first callback prototype was correct but hundreds of times slower
+    than NumPy.
+  - Current prototype calls NumPy's `NpyString_*` C API directly from LLVM and
+    acquires the allocator once per array operation. This is the right
+    performance direction, but it currently discovers the ndarray descriptor
+    offset at import time instead of using a compiled C helper.
 3. First operation:
    - `np.strings.str_len` for one-dimensional C-contiguous arrays;
    - count Unicode code points from UTF-8 bytes.
-   - Current prototype matches NumPy for normal values and raises
-     `ValueError` for null strings.
+  - Current prototype matches NumPy for normal values and raises
+    `ValueError` for null strings.
+  - Quick local timing on mixed short strings: still slower below about 1k
+    rows, but faster than NumPy at 10k+ rows.
 4. First comparison:
    - `np.strings.equal`;
    - then `not_equal`.

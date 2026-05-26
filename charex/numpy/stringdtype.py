@@ -2,8 +2,9 @@
 
 import ctypes
 
+from llvmlite import binding as llvm
 from llvmlite import ir
-from numba.core import types
+from numba.core import cgutils, types
 from numba.core.datamodel import models, register_default
 from numba.core.typing import signature
 from numba.core.typing.typeof import typeof_impl
@@ -40,55 +41,27 @@ class _StaticString(ctypes.Structure):
 
 if _STRING_DTYPE is not None:
     _API_SLOTS = _numpy_api_slots()
-    _NpyString_load = ctypes.CFUNCTYPE(
-        ctypes.c_int,
-        ctypes.c_void_p,
-        ctypes.c_void_p,
-        ctypes.POINTER(_StaticString),
-    )(_API_SLOTS[313])
-    _NpyString_acquire_allocator = ctypes.CFUNCTYPE(
-        ctypes.c_void_p, ctypes.c_void_p,
-    )(_API_SLOTS[316])
-    _NpyString_release_allocator = ctypes.CFUNCTYPE(
-        None, ctypes.c_void_p,
-    )(_API_SLOTS[318])
+    llvm.add_symbol('charex_NpyString_load', _API_SLOTS[313])
+    llvm.add_symbol('charex_NpyString_acquire_allocator', _API_SLOTS[316])
+    llvm.add_symbol('charex_NpyString_release_allocator', _API_SLOTS[318])
 else:
-    _NpyString_load = None
-    _NpyString_acquire_allocator = None
-    _NpyString_release_allocator = None
+    _API_SLOTS = None
 
 
-def _count_utf8_codepoints(data):
-    count = 0
-    for byte in data:
-        count += (byte & 0xc0) != 0x80
-    return count
+def _array_descr_offset():
+    if _STRING_DTYPE is None:
+        return 0
+    array = np.array([''], dtype=_STRING_DTYPE())
+    target = id(array.dtype)
+    pointer_size = ctypes.sizeof(ctypes.c_void_p)
+    for offset in range(0, 256, pointer_size):
+        value = ctypes.c_void_p.from_address(id(array) + offset).value
+        if value == target:
+            return offset
+    raise RuntimeError('could not locate NumPy array descriptor offset')
 
 
-_LEN_CALLBACK_TYPE = ctypes.CFUNCTYPE(
-    ctypes.c_int64, ctypes.c_size_t, ctypes.c_size_t,
-)
-
-
-@_LEN_CALLBACK_TYPE
-def _codepoint_len_callback(parent_addr, packed_addr):
-    parent = ctypes.cast(parent_addr, ctypes.py_object).value
-    allocator = _NpyString_acquire_allocator(id(parent.dtype))
-    try:
-        out = _StaticString()
-        status = _NpyString_load(allocator, packed_addr, ctypes.byref(out))
-        if status != 0:
-            return -1
-        data = ctypes.string_at(out.buf, out.size) \
-            if out.buf and out.size else b''
-        return _count_utf8_codepoints(data)
-    finally:
-        _NpyString_release_allocator(allocator)
-
-
-_CODEPOINT_LEN_ADDR = ctypes.cast(
-    _codepoint_len_callback, ctypes.c_void_p,
-).value
+_ARRAY_DESCR_OFFSET = _array_descr_offset()
 
 
 @register_default(StringDTypePacket)
@@ -131,39 +104,120 @@ def is_stringdtype_array_type(value):
         and isinstance(value.dtype, StringDTypePacket)
 
 
+def _array_descriptor(context, builder, array_type, array_value):
+    intp = context.get_value_type(types.intp)
+    byte_ptr = ir.IntType(8).as_pointer()
+    array_struct = context.make_array(array_type)(
+        context, builder, array_value,
+    )
+    parent = builder.bitcast(array_struct.parent, byte_ptr)
+    descr_addr = builder.gep(
+        parent, [ir.Constant(intp, _ARRAY_DESCR_OFFSET)],
+    )
+    return builder.load(builder.bitcast(descr_addr, byte_ptr.as_pointer()))
+
+
 @intrinsic
-def stringdtype_codepoint_len(typingctx, array, index):
-    if not is_stringdtype_array_type(array) \
-            or not isinstance(index, types.Integer):
+def stringdtype_acquire_allocator(typingctx, array):
+    if not is_stringdtype_array_type(array):
         return None
 
-    sig = signature(types.intp, array, types.intp)
+    sig = signature(types.voidptr, array)
+
+    def codegen(context, builder, signature, args):
+        byte_ptr = ir.IntType(8).as_pointer()
+        descriptor = _array_descriptor(context, builder, signature.args[0],
+                                       args[0])
+        acquire_type = ir.FunctionType(byte_ptr, [byte_ptr])
+        acquire = cgutils.get_or_insert_function(
+            builder.module, acquire_type, 'charex_NpyString_acquire_allocator',
+        )
+        return builder.call(acquire, [descriptor])
+
+    return sig, codegen
+
+
+@intrinsic
+def stringdtype_release_allocator(typingctx, allocator):
+    if allocator != types.voidptr:
+        return None
+
+    sig = signature(types.void, allocator)
+
+    def codegen(context, builder, signature, args):
+        byte_ptr = ir.IntType(8).as_pointer()
+        release_type = ir.FunctionType(ir.VoidType(), [byte_ptr])
+        release = cgutils.get_or_insert_function(
+            builder.module, release_type, 'charex_NpyString_release_allocator',
+        )
+        builder.call(release, [args[0]])
+
+    return sig, codegen
+
+
+@intrinsic
+def stringdtype_codepoint_len(typingctx, array, index, allocator):
+    if not is_stringdtype_array_type(array) \
+            or not isinstance(index, types.Integer) \
+            or allocator != types.voidptr:
+        return None
+
+    sig = signature(types.intp, array, types.intp, allocator)
 
     def codegen(context, builder, signature, args):
         array_type = signature.args[0]
-        array_value, index_value = args
+        array_value, index_value, allocator = args
         array_struct = context.make_array(array_type)(
             context, builder, array_value,
         )
 
+        int8 = ir.IntType(8)
+        int32 = ir.IntType(32)
         intp = context.get_value_type(types.intp)
-        uintp = context.get_value_type(types.uintp)
-        byte_ptr = ir.IntType(8).as_pointer()
+        byte_ptr = int8.as_pointer()
         data = builder.bitcast(array_struct.data, byte_ptr)
         stride = builder.extract_value(array_struct.strides, 0)
         offset = builder.mul(index_value, stride)
         packed = builder.gep(data, [offset])
 
-        callback_type = ir.FunctionType(intp, [uintp, uintp])
-        callback_addr = context.get_constant(
-            types.uintp, _CODEPOINT_LEN_ADDR,
+        static_type = ir.LiteralStructType([intp, byte_ptr])
+        load_type = ir.FunctionType(
+            int32, [byte_ptr, byte_ptr, static_type.as_pointer()],
         )
-        callback = builder.inttoptr(
-            callback_addr, callback_type.as_pointer(),
+
+        load = cgutils.get_or_insert_function(
+            builder.module, load_type, 'charex_NpyString_load',
         )
-        parent = builder.ptrtoint(array_struct.parent, uintp)
-        packed = builder.ptrtoint(packed, uintp)
-        return builder.call(callback, [parent, packed])
+
+        static = cgutils.alloca_once(builder, static_type)
+        status = builder.call(load, [allocator, packed, static])
+
+        result = cgutils.alloca_once(builder, intp)
+        builder.store(ir.Constant(intp, -1), result)
+        valid = builder.icmp_signed('==', status, ir.Constant(int32, 0))
+
+        with builder.if_then(valid):
+            unpacked = builder.load(static)
+            size = builder.extract_value(unpacked, 0)
+            buffer = builder.extract_value(unpacked, 1)
+            count = cgutils.alloca_once(builder, intp)
+            builder.store(ir.Constant(intp, 0), count)
+
+            with cgutils.for_range(builder, size, intp=intp) as loop:
+                char = builder.load(builder.gep(buffer, [loop.index]))
+                tag = builder.and_(char, ir.Constant(int8, 0xc0))
+                continuation = builder.icmp_unsigned(
+                    '==', tag, ir.Constant(int8, 0x80),
+                )
+                increment = builder.select(
+                    continuation, ir.Constant(intp, 0), ir.Constant(intp, 1),
+                )
+                builder.store(builder.add(builder.load(count), increment),
+                              count)
+
+            builder.store(builder.load(count), result)
+
+        return builder.load(result)
 
     return sig, codegen
 

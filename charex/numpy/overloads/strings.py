@@ -5,7 +5,8 @@ from charex.numpy.overloads._shared import (
     equal_dispatch, equal_kernel, order_dispatch, try_register_pair,
 )
 from charex.numpy.stringdtype import (
-    is_stringdtype_array_type, stringdtype_codepoint_len,
+    is_stringdtype_array_type, stringdtype_acquire_allocator,
+    stringdtype_codepoint_len, stringdtype_release_allocator,
 )
 from charex.numpy.overloads.definitions import (
     equal, equal_sub32_bytes, equal_sub32_unicode, greater, greater_equal,
@@ -166,12 +167,17 @@ if _STRINGS is not None:
 
         def impl(value):
             result = np.empty(value.size, np.int64)
+            allocator = stringdtype_acquire_allocator(value)
+            null_string = False
             for i in range(value.size):
-                length = stringdtype_codepoint_len(value, i)
+                length = stringdtype_codepoint_len(value, i, allocator)
                 if length < 0:
-                    raise ValueError(
-                        'The length of a null string is undefined')
+                    null_string = True
+                    length = 0
                 result[i] = length
+            stringdtype_release_allocator(allocator)
+            if null_string:
+                raise ValueError('The length of a null string is undefined')
             return result
 
         return impl
