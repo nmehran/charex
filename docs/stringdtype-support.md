@@ -660,6 +660,77 @@ Review-pass findings:
   first-element not-found case, followed by a successful search to guard
   allocator release.
 
+## Tranche 6: Predicate Information
+
+This tranche adds the remaining read-only boolean information methods before
+moving into scalar support, missing sentinels, or multidimensional behavior.
+
+Target operations:
+
+- `np.strings.isalpha`
+- `np.strings.isalnum`
+- `np.strings.isdecimal`
+- `np.strings.isdigit`
+- `np.strings.isnumeric`
+- `np.strings.isspace`
+- `np.strings.islower`
+- `np.strings.isupper`
+- `np.strings.istitle`
+
+Initial runtime scope:
+
+- default `StringDType` only, still rejecting `na_object` variants;
+- one-dimensional C-contiguous arrays;
+- array input only;
+- scalar support deferred to the broader scalar StringDType tranche.
+
+Implementation shape:
+
+- Reuse the existing allocator-once-per-call and packed-data-pointer path.
+- Trim trailing NUL bytes once per element, matching the behavior already
+  established for StringDType length and information routines.
+- Decode UTF-8 into Unicode code points inside a shared intrinsic loop.
+- Reuse Numba/Python Unicode category helpers for exact predicate semantics.
+- Keep simple predicates and cased predicates in one shared loop shape so the
+  public overload layer remains small.
+
+Runtime checkpoint:
+
+- All nine predicate operations now match NumPy for Unicode letters, decimal
+  digits, digit/numeric-only characters, whitespace control characters,
+  titlecase characters, emoji, empty strings, embedded NULs, and trailing NULs.
+- Empty arrays and readonly arrays match NumPy.
+- Non-contiguous arrays, multidimensional arrays, 0-D arrays, and
+  `na_object` variants remain rejected consistently with the current
+  StringDType scope.
+
+Benchmark:
+
+```bash
+python docs/exploration/stringdtype_predicate_bench.py
+```
+
+Representative 100k-row speedups on Python 3.12.8, NumPy 2.4.6,
+Numba 0.65.1:
+
+| case | isalpha | isalnum | isdecimal | isdigit | isnumeric | isspace | islower | isupper | istitle |
+| ---- | ------- | ------- | --------- | ------- | --------- | ------- | ------- | ------- | ------- |
+| ASCII alpha | 3.05x | 2.07x | 2.94x | 3.28x | 2.95x | 2.91x | 6.45x | 4.94x | 4.56x |
+| Unicode alpha | 2.01x | 1.55x | 1.96x | 2.04x | 1.98x | 1.98x | 1.48x | 1.06x | 1.61x |
+| Numeric mix | 1.95x | 1.45x | 1.83x | 1.79x | 1.93x | 2.00x | 1.49x | 1.56x | 1.44x |
+| Long ASCII | 5.78x | 3.16x | 66.15x | 54.73x | 65.85x | 37.97x | 14.21x | 13.21x | 9.82x |
+
+Review-pass notes to revisit before distillation:
+
+- The UTF-8 decode helper is the largest code surface added in this tranche.
+  It is shared by all predicates and is the likely reusable primitive for later
+  scalar and transformation work.
+- The current implementation favors one readable decode loop over specialized
+  branchless/SWAR variants. Aggressive predicate optimization is deferred until
+  the full StringDType information surface is stable.
+- The slowest relative case in this benchmark is `isupper` on mixed Unicode
+  alpha input, where the current path is near parity rather than a large win.
+
 ## Prototype Order
 
 1. Type recognition only:

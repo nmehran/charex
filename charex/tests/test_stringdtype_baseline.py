@@ -26,6 +26,19 @@ def stringdtype_array(values):
     return np.array(values, dtype=STRING_DTYPE())
 
 
+STRINGDTYPE_PREDICATES = [
+    ('strings_isalpha', STRINGS.isalpha),
+    ('strings_isalnum', STRINGS.isalnum),
+    ('strings_isdecimal', STRINGS.isdecimal),
+    ('strings_isdigit', STRINGS.isdigit),
+    ('strings_islower', STRINGS.islower),
+    ('strings_isnumeric', STRINGS.isnumeric),
+    ('strings_isspace', STRINGS.isspace),
+    ('strings_istitle', STRINGS.istitle),
+    ('strings_isupper', STRINGS.isupper),
+]
+
+
 def test_charex_registers_stringdtype_array_type():
     values = stringdtype_array(['a', 'é', '🙂'])
 
@@ -57,6 +70,15 @@ def test_stringdtype_shape_metadata_compiles():
     ('strings_count', True),
     ('strings_index', True),
     ('strings_rindex', True),
+    ('strings_isalpha', False),
+    ('strings_isalnum', False),
+    ('strings_isdecimal', False),
+    ('strings_isdigit', False),
+    ('strings_islower', False),
+    ('strings_isnumeric', False),
+    ('strings_isspace', False),
+    ('strings_istitle', False),
+    ('strings_isupper', False),
 ])
 def test_stringdtype_zero_dimensional_arrays_are_rejected(impl_name, binary):
     info = StringsInformation()
@@ -102,6 +124,74 @@ def test_stringdtype_str_len_long_trailing_nuls():
     ])
 
     assert_same(strings.strings_str_len, STRINGS.str_len, values)
+
+
+@pytest.mark.parametrize('impl_name, baseline', STRINGDTYPE_PREDICATES)
+def test_stringdtype_array_predicates_match_numpy(impl_name, baseline):
+    strings = StringsInformation()
+    values = stringdtype_array([
+        'alpha', 'α', '١', 'Ⅷ', '一', 'A', 'a', 'ǅuro', 'ǆuro',
+        '中A', ' ', '\t', '\x1c', '\x1f', '', 'ab\x00cd',
+        'abc\x00', '\x00abc', 'A1', '１２', '²', '⅕',
+        'Title Case', 'Title case', 'UPPER', 'lower', '🙂',
+        '\x00\x00', '🙂A', 'A🙂',
+    ])
+
+    assert_same(getattr(strings, impl_name), baseline, values)
+
+
+@pytest.mark.parametrize('impl_name, baseline', STRINGDTYPE_PREDICATES)
+def test_stringdtype_array_predicates_empty_arrays_match_numpy(
+        impl_name, baseline):
+    strings = StringsInformation()
+    values = stringdtype_array([])
+
+    assert_same(getattr(strings, impl_name), baseline, values)
+
+
+@pytest.mark.parametrize('impl_name, baseline', STRINGDTYPE_PREDICATES)
+def test_stringdtype_array_predicates_readonly_arrays_match_numpy(
+        impl_name, baseline):
+    strings = StringsInformation()
+    values = stringdtype_array(['alpha', 'α', '١', 'Title Case'])
+    values.flags.writeable = False
+
+    assert_same(getattr(strings, impl_name), baseline, values)
+
+
+@pytest.mark.parametrize('impl_name, baseline', STRINGDTYPE_PREDICATES)
+def test_stringdtype_array_predicates_embedded_nul_matches_numpy(
+        impl_name, baseline):
+    strings = StringsInformation()
+    values = stringdtype_array([
+        'ab\x00cd', 'ABC\x00DEF', 'Title\x00Case', '\x00abc',
+        '\x00ABC', '\x00Title Case', 'abc\x00', 'ABC\x00',
+    ])
+
+    assert_same(getattr(strings, impl_name), baseline, values)
+
+
+@pytest.mark.parametrize('impl_name', [
+    name for name, _ in STRINGDTYPE_PREDICATES
+])
+def test_stringdtype_array_predicates_reject_noncontiguous_arrays(impl_name):
+    strings = StringsInformation()
+    values = stringdtype_array(['a', 'b', 'c', 'd'])
+
+    with pytest.raises(TypingError, match='C-contiguous'):
+        getattr(strings, impl_name)(values[::2])
+
+
+@pytest.mark.parametrize('impl_name', [
+    name for name, _ in STRINGDTYPE_PREDICATES
+])
+def test_stringdtype_array_predicates_reject_multidimensional_arrays(
+        impl_name):
+    strings = StringsInformation()
+    values = stringdtype_array(['a', 'b', 'c', 'd']).reshape(2, 2)
+
+    with pytest.raises(TypingError, match='one-dimensional arrays'):
+        getattr(strings, impl_name)(values)
 
 
 def test_direct_numba_stringdtype_target_behavior():

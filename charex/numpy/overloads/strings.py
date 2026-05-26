@@ -10,16 +10,23 @@ from charex.numpy.stringdtype import (
     stringdtype_acquire_allocators, stringdtype_codepoint_len_data,
     stringdtype_count_data, stringdtype_data_ptr, stringdtype_endswith_data,
     stringdtype_equal_data, stringdtype_find_data,
-    stringdtype_release_allocator, stringdtype_release_allocators,
-    stringdtype_rfind_data, stringdtype_startswith_data,
+    stringdtype_isalnum_data, stringdtype_isalpha_data,
+    stringdtype_isdecimal_data, stringdtype_isdigit_data,
+    stringdtype_islower_data, stringdtype_isnumeric_data,
+    stringdtype_isspace_data, stringdtype_istitle_data,
+    stringdtype_isupper_data, stringdtype_release_allocator,
+    stringdtype_release_allocators, stringdtype_rfind_data,
+    stringdtype_startswith_data,
 )
 from charex.numpy.overloads.definitions import (
     equal, equal_sub32_bytes, equal_sub32_unicode, greater, greater_equal,
 )
 from charex.numpy.overloads.char import (
     _CHAR_INFO_FUNCTIONS, ov_char_count, ov_char_endswith, ov_char_find,
-    ov_char_index, ov_char_rfind, ov_char_rindex, ov_char_startswith,
-    ov_char_str_len,
+    ov_char_index, ov_char_isalnum, ov_char_isalpha, ov_char_isdecimal,
+    ov_char_isdigit, ov_char_islower, ov_char_isnumeric, ov_char_isspace,
+    ov_char_istitle, ov_char_isupper, ov_char_rfind, ov_char_rindex,
+    ov_char_startswith, ov_char_str_len,
 )
 from numba.core import types
 from numba.core.errors import NumbaValueError
@@ -250,6 +257,68 @@ def _overload_search(value, pattern, start, end, op):
     return ov_char_count(value, pattern, start, end)
 
 
+def _char_predicate_overload(op):
+    if op == 'isalpha':
+        return ov_char_isalpha
+    if op == 'isalnum':
+        return ov_char_isalnum
+    if op == 'isdecimal':
+        return ov_char_isdecimal
+    if op == 'isdigit':
+        return ov_char_isdigit
+    if op == 'isnumeric':
+        return ov_char_isnumeric
+    if op == 'isspace':
+        return ov_char_isspace
+    if op == 'islower':
+        return ov_char_islower
+    if op == 'isupper':
+        return ov_char_isupper
+    return ov_char_istitle
+
+
+def _overload_predicate(value, op):
+    if not is_stringdtype_array_type(value):
+        return _char_predicate_overload(op)(value)
+
+    if value.ndim != 1:
+        raise NumbaValueError('charex StringDType support currently '
+                              'requires one-dimensional arrays')
+    if value.layout != 'C':
+        raise NumbaValueError('charex requires C-contiguous arrays; '
+                              'call numpy.ascontiguousarray')
+
+    def impl(value):
+        result = np.empty(value.size, np.bool_)
+        if value.size == 0:
+            return result
+        allocator = stringdtype_acquire_allocator(value)
+        data = stringdtype_data_ptr(value)
+        for i in range(value.size):
+            if op == 'isalpha':
+                result[i] = stringdtype_isalpha_data(data, i, allocator)
+            elif op == 'isalnum':
+                result[i] = stringdtype_isalnum_data(data, i, allocator)
+            elif op == 'isdecimal':
+                result[i] = stringdtype_isdecimal_data(data, i, allocator)
+            elif op == 'isdigit':
+                result[i] = stringdtype_isdigit_data(data, i, allocator)
+            elif op == 'isnumeric':
+                result[i] = stringdtype_isnumeric_data(data, i, allocator)
+            elif op == 'isspace':
+                result[i] = stringdtype_isspace_data(data, i, allocator)
+            elif op == 'islower':
+                result[i] = stringdtype_islower_data(data, i, allocator)
+            elif op == 'isupper':
+                result[i] = stringdtype_isupper_data(data, i, allocator)
+            else:
+                result[i] = stringdtype_istitle_data(data, i, allocator)
+        stringdtype_release_allocator(allocator)
+        return result
+
+    return impl
+
+
 if _STRINGS is not None:
     def _strings_count(value, sub, start=0, end=None):
         return _STRINGS.count(value, sub, start, end)
@@ -293,6 +362,33 @@ if _STRINGS is not None:
     def _strings_str_len(value):
         return _STRINGS.str_len(value)
 
+    def _strings_isalpha(value):
+        return _STRINGS.isalpha(value)
+
+    def _strings_isalnum(value):
+        return _STRINGS.isalnum(value)
+
+    def _strings_isdecimal(value):
+        return _STRINGS.isdecimal(value)
+
+    def _strings_isdigit(value):
+        return _STRINGS.isdigit(value)
+
+    def _strings_islower(value):
+        return _STRINGS.islower(value)
+
+    def _strings_isnumeric(value):
+        return _STRINGS.isnumeric(value)
+
+    def _strings_isspace(value):
+        return _STRINGS.isspace(value)
+
+    def _strings_istitle(value):
+        return _STRINGS.istitle(value)
+
+    def _strings_isupper(value):
+        return _STRINGS.isupper(value)
+
     _STRINGS_FUNCTIONS = {
         **_CHAR_INFO_FUNCTIONS,
         'count': _strings_count,
@@ -303,6 +399,15 @@ if _STRINGS is not None:
         'not_equal': _strings_not_equal,
         'greater_equal': _strings_greater_equal,
         'greater': _strings_greater,
+        'isalnum': _strings_isalnum,
+        'isalpha': _strings_isalpha,
+        'isdecimal': _strings_isdecimal,
+        'isdigit': _strings_isdigit,
+        'islower': _strings_islower,
+        'isnumeric': _strings_isnumeric,
+        'isspace': _strings_isspace,
+        'istitle': _strings_istitle,
+        'isupper': _strings_isupper,
         'less': _strings_less,
         'less_equal': _strings_less_equal,
         'rfind': _strings_rfind,
@@ -401,3 +506,39 @@ if _STRINGS is not None:
             return result
 
         return impl
+
+    @overload(_strings_isalpha, **OPTIONS)
+    def ov_strings_isalpha(value):
+        return _overload_predicate(value, 'isalpha')
+
+    @overload(_strings_isalnum, **OPTIONS)
+    def ov_strings_isalnum(value):
+        return _overload_predicate(value, 'isalnum')
+
+    @overload(_strings_isdecimal, **OPTIONS)
+    def ov_strings_isdecimal(value):
+        return _overload_predicate(value, 'isdecimal')
+
+    @overload(_strings_isdigit, **OPTIONS)
+    def ov_strings_isdigit(value):
+        return _overload_predicate(value, 'isdigit')
+
+    @overload(_strings_islower, **OPTIONS)
+    def ov_strings_islower(value):
+        return _overload_predicate(value, 'islower')
+
+    @overload(_strings_isnumeric, **OPTIONS)
+    def ov_strings_isnumeric(value):
+        return _overload_predicate(value, 'isnumeric')
+
+    @overload(_strings_isspace, **OPTIONS)
+    def ov_strings_isspace(value):
+        return _overload_predicate(value, 'isspace')
+
+    @overload(_strings_istitle, **OPTIONS)
+    def ov_strings_istitle(value):
+        return _overload_predicate(value, 'istitle')
+
+    @overload(_strings_isupper, **OPTIONS)
+    def ov_strings_isupper(value):
+        return _overload_predicate(value, 'isupper')

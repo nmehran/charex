@@ -5,12 +5,18 @@ import importlib
 
 from llvmlite import binding as llvm
 from llvmlite import ir
+from charex.core import JIT_OPTIONS
 from numba.core import cgutils, types
 from numba.core.datamodel import models, register_default
 from numba.core.errors import NumbaValueError
 from numba.core.typing import signature
 from numba.core.typing.typeof import typeof_impl
-from numba.extending import intrinsic
+from numba.cpython.unicode_support import (
+    _PyUnicode_IsAlpha, _PyUnicode_IsDecimalDigit, _PyUnicode_IsDigit,
+    _PyUnicode_IsLowercase, _PyUnicode_IsNumeric, _PyUnicode_IsSpace,
+    _PyUnicode_IsTitlecase, _PyUnicode_IsUppercase,
+)
+from numba.extending import intrinsic, register_jitable
 from numba.np import numpy_support
 import numpy as np
 
@@ -223,6 +229,276 @@ def _codepoint_count(builder, size, buffer, intp, int8):
         builder.store(builder.add(builder.load(count), increment), count)
 
     return builder.load(count)
+
+
+@register_jitable(**JIT_OPTIONS)
+def _stringdtype_isalpha_ord(chr_ord):
+    if chr_ord < 128:
+        return 65 <= chr_ord <= 90 or 97 <= chr_ord <= 122
+    return bool(_PyUnicode_IsAlpha(chr_ord))
+
+
+@register_jitable(**JIT_OPTIONS)
+def _stringdtype_isalnum_ord(chr_ord):
+    if chr_ord < 128:
+        return 65 <= chr_ord <= 90 or 97 <= chr_ord <= 122 \
+            or 48 <= chr_ord <= 57
+    return bool(_PyUnicode_IsAlpha(chr_ord)) \
+        or bool(_PyUnicode_IsNumeric(chr_ord))
+
+
+@register_jitable(**JIT_OPTIONS)
+def _stringdtype_isdecimal_ord(chr_ord):
+    if chr_ord < 128:
+        return 48 <= chr_ord <= 57
+    return bool(_PyUnicode_IsDecimalDigit(chr_ord))
+
+
+@register_jitable(**JIT_OPTIONS)
+def _stringdtype_isdigit_ord(chr_ord):
+    if chr_ord < 128:
+        return 48 <= chr_ord <= 57
+    return bool(_PyUnicode_IsDigit(chr_ord))
+
+
+@register_jitable(**JIT_OPTIONS)
+def _stringdtype_isnumeric_ord(chr_ord):
+    if chr_ord < 128:
+        return 48 <= chr_ord <= 57
+    return bool(_PyUnicode_IsNumeric(chr_ord))
+
+
+@register_jitable(**JIT_OPTIONS)
+def _stringdtype_isspace_ord(chr_ord):
+    if chr_ord < 128:
+        return 9 <= chr_ord <= 13 or 28 <= chr_ord <= 32
+    return bool(_PyUnicode_IsSpace(chr_ord))
+
+
+@register_jitable(**JIT_OPTIONS)
+def _stringdtype_islower_ord(chr_ord):
+    if chr_ord < 128:
+        return 97 <= chr_ord <= 122
+    return bool(_PyUnicode_IsLowercase(chr_ord))
+
+
+@register_jitable(**JIT_OPTIONS)
+def _stringdtype_isupper_ord(chr_ord):
+    if chr_ord < 128:
+        return 65 <= chr_ord <= 90
+    return bool(_PyUnicode_IsUppercase(chr_ord))
+
+
+@register_jitable(**JIT_OPTIONS)
+def _stringdtype_istitle_ord(chr_ord):
+    if chr_ord < 128:
+        return False
+    return bool(_PyUnicode_IsTitlecase(chr_ord))
+
+
+def _call_property(context, builder, helper, codepoint):
+    sig = signature(types.boolean, types.int32)
+    return context.compile_internal(builder, helper, sig, [codepoint])
+
+
+def _decode_utf8_codepoint(builder, buffer, offset, intp, int8, int32):
+    codepoint = cgutils.alloca_once(builder, int32)
+    next_offset = cgutils.alloca_once(builder, intp)
+
+    first = builder.zext(builder.load(builder.gep(buffer, [offset])), int32)
+    one_byte = builder.icmp_unsigned('<', first, ir.Constant(int32, 0x80))
+    with builder.if_else(one_byte) as (single, multi):
+        with single:
+            builder.store(first, codepoint)
+            builder.store(builder.add(offset, ir.Constant(intp, 1)),
+                          next_offset)
+        with multi:
+            two_byte = builder.icmp_unsigned(
+                '<', first, ir.Constant(int32, 0xe0))
+            with builder.if_else(two_byte) as (two, longer):
+                with two:
+                    second = builder.zext(
+                        builder.load(builder.gep(
+                            buffer, [builder.add(
+                                offset, ir.Constant(intp, 1))])),
+                        int32,
+                    )
+                    value = builder.or_(
+                        builder.shl(builder.and_(
+                            first, ir.Constant(int32, 0x1f)),
+                            ir.Constant(int32, 6)),
+                        builder.and_(second, ir.Constant(int32, 0x3f)),
+                    )
+                    builder.store(value, codepoint)
+                    builder.store(builder.add(offset, ir.Constant(intp, 2)),
+                                  next_offset)
+                with longer:
+                    three_byte = builder.icmp_unsigned(
+                        '<', first, ir.Constant(int32, 0xf0))
+                    with builder.if_else(three_byte) as (three, four):
+                        with three:
+                            second = builder.zext(
+                                builder.load(builder.gep(
+                                    buffer, [builder.add(
+                                        offset, ir.Constant(intp, 1))])),
+                                int32,
+                            )
+                            third = builder.zext(
+                                builder.load(builder.gep(
+                                    buffer, [builder.add(
+                                        offset, ir.Constant(intp, 2))])),
+                                int32,
+                            )
+                            value = builder.or_(
+                                builder.or_(
+                                    builder.shl(builder.and_(
+                                        first, ir.Constant(int32, 0x0f)),
+                                        ir.Constant(int32, 12)),
+                                    builder.shl(builder.and_(
+                                        second, ir.Constant(int32, 0x3f)),
+                                        ir.Constant(int32, 6)),
+                                ),
+                                builder.and_(third,
+                                             ir.Constant(int32, 0x3f)),
+                            )
+                            builder.store(value, codepoint)
+                            builder.store(
+                                builder.add(offset, ir.Constant(intp, 3)),
+                                next_offset,
+                            )
+                        with four:
+                            second = builder.zext(
+                                builder.load(builder.gep(
+                                    buffer, [builder.add(
+                                        offset, ir.Constant(intp, 1))])),
+                                int32,
+                            )
+                            third = builder.zext(
+                                builder.load(builder.gep(
+                                    buffer, [builder.add(
+                                        offset, ir.Constant(intp, 2))])),
+                                int32,
+                            )
+                            fourth = builder.zext(
+                                builder.load(builder.gep(
+                                    buffer, [builder.add(
+                                        offset, ir.Constant(intp, 3))])),
+                                int32,
+                            )
+                            value = builder.or_(
+                                builder.or_(
+                                    builder.shl(builder.and_(
+                                        first, ir.Constant(int32, 0x07)),
+                                        ir.Constant(int32, 18)),
+                                    builder.shl(builder.and_(
+                                        second, ir.Constant(int32, 0x3f)),
+                                        ir.Constant(int32, 12)),
+                                ),
+                                builder.or_(
+                                    builder.shl(builder.and_(
+                                        third, ir.Constant(int32, 0x3f)),
+                                        ir.Constant(int32, 6)),
+                                    builder.and_(
+                                        fourth, ir.Constant(int32, 0x3f)),
+                                ),
+                            )
+                            builder.store(value, codepoint)
+                            builder.store(
+                                builder.add(offset, ir.Constant(intp, 4)),
+                                next_offset,
+                            )
+
+    return builder.load(codepoint), builder.load(next_offset)
+
+
+def _simple_property_helper(mode):
+    if mode == 'isalpha':
+        return _stringdtype_isalpha_ord
+    if mode == 'isalnum':
+        return _stringdtype_isalnum_ord
+    if mode == 'isdecimal':
+        return _stringdtype_isdecimal_ord
+    if mode == 'isdigit':
+        return _stringdtype_isdigit_ord
+    if mode == 'isnumeric':
+        return _stringdtype_isnumeric_ord
+    return _stringdtype_isspace_ord
+
+
+def _emit_stringdtype_predicate(context, builder, mode, size, buffer,
+                                intp, int8, int32):
+    pos = cgutils.alloca_once(builder, intp)
+    valid = cgutils.alloca_once(builder, ir.IntType(1))
+    seen = cgutils.alloca_once(builder, ir.IntType(1))
+    cased_state = cgutils.alloca_once(builder, ir.IntType(1))
+    builder.store(ir.Constant(intp, 0), pos)
+    builder.store(cgutils.true_bit, valid)
+    builder.store(cgutils.false_bit, seen)
+    builder.store(cgutils.false_bit, cased_state)
+
+    cond = builder.append_basic_block(f'stringdtype.{mode}.cond')
+    body = builder.append_basic_block(f'stringdtype.{mode}.body')
+    after = builder.append_basic_block(f'stringdtype.{mode}.after')
+    builder.branch(cond)
+
+    builder.position_at_end(cond)
+    within_size = builder.icmp_unsigned('<', builder.load(pos), size)
+    keep_going = builder.and_(within_size, builder.load(valid))
+    builder.cbranch(keep_going, body, after)
+
+    builder.position_at_end(body)
+    codepoint, next_pos = _decode_utf8_codepoint(
+        builder, buffer, builder.load(pos), intp, int8, int32)
+
+    if mode in {'isalpha', 'isalnum', 'isdecimal', 'isdigit',
+                'isnumeric', 'isspace'}:
+        property_result = _call_property(
+            context, builder, _simple_property_helper(mode), codepoint)
+        with builder.if_else(property_result) as (passed, failed):
+            with passed:
+                builder.store(cgutils.true_bit, seen)
+            with failed:
+                builder.store(cgutils.false_bit, valid)
+    else:
+        is_lower = _call_property(
+            context, builder, _stringdtype_islower_ord, codepoint)
+        is_upper = _call_property(
+            context, builder, _stringdtype_isupper_ord, codepoint)
+        is_title = _call_property(
+            context, builder, _stringdtype_istitle_ord, codepoint)
+        is_start = builder.or_(is_upper, is_title)
+
+        if mode == 'islower':
+            invalid = builder.or_(is_upper, is_title)
+            with builder.if_then(invalid):
+                builder.store(cgutils.false_bit, valid)
+            with builder.if_then(is_lower):
+                builder.store(cgutils.true_bit, seen)
+        elif mode == 'isupper':
+            invalid = builder.or_(is_lower, is_title)
+            with builder.if_then(invalid):
+                builder.store(cgutils.false_bit, valid)
+            with builder.if_then(is_upper):
+                builder.store(cgutils.true_bit, seen)
+        else:
+            with builder.if_else(builder.load(cased_state)) as (
+                    in_cased, in_uncased):
+                with in_cased:
+                    with builder.if_then(is_start):
+                        builder.store(cgutils.false_bit, valid)
+                    builder.store(is_lower, cased_state)
+                with in_uncased:
+                    with builder.if_then(is_lower):
+                        builder.store(cgutils.false_bit, valid)
+                    builder.store(is_start, cased_state)
+                    with builder.if_then(is_start):
+                        builder.store(cgutils.true_bit, seen)
+
+    builder.store(next_pos, pos)
+    builder.branch(cond)
+
+    builder.position_at_end(after)
+    return builder.and_(builder.load(valid), builder.load(seen))
 
 
 def _codepoint_offset(builder, size, buffer, target, intp, int8):
@@ -496,6 +772,101 @@ def stringdtype_codepoint_len_data(typingctx, data, index, allocator):
         return builder.load(result)
 
     return sig, codegen
+
+
+def _stringdtype_predicate_data(typingctx, data, index, allocator, mode):
+    if data != types.voidptr \
+            or not isinstance(index, types.Integer) \
+            or allocator != types.voidptr:
+        return None
+
+    sig = signature(types.boolean, data, types.intp, allocator)
+
+    def codegen(context, builder, signature, args):
+        data, index_value, allocator = args
+
+        int8 = ir.IntType(8)
+        int32 = ir.IntType(32)
+        intp = context.get_value_type(types.intp)
+        byte_ptr = int8.as_pointer()
+        packed = _packed_string_ptr_from_data(builder, data, index_value, intp)
+        status, size, buffer = _load_string(builder, allocator, packed, intp,
+                                            byte_ptr)
+
+        result = cgutils.alloca_once(builder, ir.IntType(1))
+        builder.store(cgutils.false_bit, result)
+        valid = builder.icmp_signed('==', status, ir.Constant(int32, 0))
+
+        with builder.if_then(valid):
+            effective_size = _trimmed_size(builder, size, buffer, intp, int8)
+            nonempty = builder.icmp_unsigned(
+                '>', effective_size, ir.Constant(intp, 0))
+            with builder.if_then(nonempty):
+                builder.store(
+                    _emit_stringdtype_predicate(
+                        context, builder, mode, effective_size, buffer,
+                        intp, int8, int32,
+                    ),
+                    result,
+                )
+
+        return builder.load(result)
+
+    return sig, codegen
+
+
+@intrinsic
+def stringdtype_isalpha_data(typingctx, data, index, allocator):
+    return _stringdtype_predicate_data(
+        typingctx, data, index, allocator, 'isalpha')
+
+
+@intrinsic
+def stringdtype_isalnum_data(typingctx, data, index, allocator):
+    return _stringdtype_predicate_data(
+        typingctx, data, index, allocator, 'isalnum')
+
+
+@intrinsic
+def stringdtype_isdecimal_data(typingctx, data, index, allocator):
+    return _stringdtype_predicate_data(
+        typingctx, data, index, allocator, 'isdecimal')
+
+
+@intrinsic
+def stringdtype_isdigit_data(typingctx, data, index, allocator):
+    return _stringdtype_predicate_data(
+        typingctx, data, index, allocator, 'isdigit')
+
+
+@intrinsic
+def stringdtype_isnumeric_data(typingctx, data, index, allocator):
+    return _stringdtype_predicate_data(
+        typingctx, data, index, allocator, 'isnumeric')
+
+
+@intrinsic
+def stringdtype_isspace_data(typingctx, data, index, allocator):
+    return _stringdtype_predicate_data(
+        typingctx, data, index, allocator, 'isspace')
+
+
+@intrinsic
+def stringdtype_islower_data(typingctx, data, index, allocator):
+    return _stringdtype_predicate_data(
+        typingctx, data, index, allocator, 'islower')
+
+
+@intrinsic
+def stringdtype_isupper_data(typingctx, data, index, allocator):
+    return _stringdtype_predicate_data(
+        typingctx, data, index, allocator, 'isupper')
+
+
+@intrinsic
+def stringdtype_istitle_data(typingctx, data, index, allocator):
+    return _stringdtype_predicate_data(
+        typingctx, data, index, allocator, 'istitle')
 
 
 @intrinsic
