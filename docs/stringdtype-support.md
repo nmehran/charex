@@ -196,12 +196,48 @@ The durable result is that backward trim remains the clean minimal baseline,
 while SWAR continuation counting is the main max-performance long-string and
 Unicode-heavy candidate.
 
+Fifth pass findings:
+
+- ASCII-skipping SWAR helps some short mostly-ASCII distributions, but it is
+  not a cleaner universal replacement for plain SWAR. It adds a branch in the
+  word loop and loses on long mixed/ASCII cases.
+- Four-word unrolling is rejected. It increased generated LLVM size
+  substantially and was slower or noisier in every relevant distribution.
+- Word-level trailing-NUL trim is a real but narrow win. It is excellent when
+  the physical StringDType payload has long trailing NUL runs, but it is slower
+  than normal backward trim on ordinary mixed and ASCII payloads.
+- None of these variants produce a new compiler-level vectorization story. The
+  durable speedups still come from algorithmic shape and explicit word loads,
+  not from LLVM discovering a better loop form.
+
+Representative 100k-row medians from the fifth pass:
+
+| case | current | backward | SWAR | ASCII-skip SWAR | unroll4 SWAR | word-trim SWAR | best |
+| ---- | ------- | -------- | ---- | --------------- | ------------ | -------------- | ---- |
+| mixed short | 0.504 ms | 0.385 ms | 0.381 ms | 0.358 ms | 0.410 ms | 0.392 ms | peeled16/SWAR |
+| Unicode short | 0.741 ms | 0.484 ms | 0.455 ms | 0.476 ms | 0.476 ms | 0.473 ms | SWAR |
+| long mixed | 2.276 ms | 1.273 ms | 0.673 ms | 0.692 ms | 0.929 ms | 0.706 ms | SWAR |
+| long ASCII | 5.286 ms | 2.735 ms | 1.034 ms | 1.091 ms | 1.217 ms | 1.084 ms | SWAR |
+| long NUL-tail | 1.586 ms | 3.142 ms | 2.220 ms | 2.257 ms | 2.112 ms | 0.769 ms | word-trim SWAR |
+
+Generated-code inspection from this pass:
+
+| variant | LLVM size | ctpop | ctlz | note |
+| ------- | --------- | ----- | ---- | ---- |
+| backward byte-count | 37.7 KB | 0 | 0 | clean minimal baseline |
+| backward SWAR | 43.1 KB | 8 | 0 | best broad max-performance candidate |
+| ASCII-skip SWAR | 44.4 KB | 8 | 0 | distribution-sensitive |
+| unroll4 SWAR | 63.7 KB | 32 | 0 | rejected |
+| word-trim SWAR | 44.8 KB | 8 | 2 | narrow NUL-tail candidate |
+
 Final tranche-1 recommendation:
 
 - Minimal production candidate: descriptor C helper, operation-scope allocator,
   hoisted data pointer, backward trim plus byte-wise continuation counting.
-- Max-performance candidate: add a separately evaluated SWAR continuation path
-  for longer strings after portability and code-layout costs are resolved.
+- Max-performance candidate: add plain SWAR continuation counting after
+  portability and code-layout costs are resolved.
+- Keep word-level trailing-NUL trim as a documented special-case candidate, not
+  as the default kernel.
 - Keep peeled-16 as a specialized inline-string candidate, not part of the base
   kernel until broader operations show it pays for its surface area.
 
