@@ -427,6 +427,84 @@ Review-pass finding:
   Keep the simpler independent offset scans until a more substantial
   slice-indexing strategy is justified.
 
+## Tranche 4: Substring Search
+
+The next tranche should build on the codepoint span-slicing primitive from
+Tranche 3 and add substring search before moving to predicates or
+transformations. `find`, `rfind`, and `count` share most of the required
+search machinery. `index` and `rindex` should follow after not-found exception
+behavior is exact.
+
+Target operations:
+
+- `np.strings.find`
+- `np.strings.rfind`
+- `np.strings.count`
+- then `np.strings.index` and `np.strings.rindex`
+
+Initial runtime scope:
+
+- default `StringDType` only, still rejecting `na_object` variants;
+- one-dimensional C-contiguous arrays;
+- array-array same-shape inputs first;
+- scalar substring support deferred until the scalar UTF-8 access strategy is
+  designed;
+- `start` and `end` with positive, negative, omitted, and out-of-range values.
+
+Correctness questions to answer before implementation:
+
+- Exact empty-substring behavior:
+  - `find` returns the normalized start offset when the slice is valid;
+  - `rfind` returns the normalized end offset;
+  - `count` returns the number of codepoint insertion positions in the slice.
+- Whether result offsets are always codepoint offsets, including multibyte
+  Unicode and non-BMP characters.
+- How trailing NUL trimming and embedded NUL bytes interact with search and
+  returned offsets.
+- Whether `count` uses non-overlapping matches, matching Python/NumPy string
+  semantics.
+- `index`/`rindex` exception semantics: any not-found element should raise
+  `ValueError`, not return a partially useful result.
+- Whether the broad search primitive should return byte offsets, codepoint
+  offsets, or both to avoid repeated UTF-8 scans.
+
+Implementation shape to prototype:
+
+- Reuse operation-scope paired allocator acquisition and hoisted packed data
+  pointers.
+- Reuse the existing slice normalization helper for `start`/`end`.
+- Start with a simple byte-wise search over the normalized slice and convert
+  match byte offsets back to codepoint offsets. Keep this correct and readable
+  before trying a vectorized or word-based strategy.
+- Use `memcmp` for candidate verification after a first-byte check.
+- Keep `find` and `rfind` as the first public surface. Add `count` once the
+  shared forward iteration is stable. Add `index`/`rindex` last with explicit
+  not-found aggregation.
+
+Benchmark and test harness:
+
+- Add a focused exploration benchmark for `find`, `rfind`, and `count`.
+- Randomize measurement order and validate every candidate against NumPy before
+  timing.
+- Cover ASCII, multibyte Unicode, non-BMP characters, empty substring, empty
+  value, trailing NUL, embedded NUL, positive/negative `start`/`end`, no-match,
+  first match, last match, repeated matches, overlapping-looking matches, and
+  long strings.
+- Include same-array, readonly, empty-array, shape mismatch, non-contiguous,
+  multidimensional, unsupported mixed-input, and not-found exception tests.
+
+Acceptance bar for this tranche:
+
+- Exact NumPy behavior for the supported surface.
+- Codepoint offsets, not UTF-8 byte offsets, in public results.
+- No mutation of inputs.
+- No per-element allocator acquisition.
+- No arbitrary performance gates. Search strategy can branch for semantic
+  cases such as empty substring or direction, but not for benchmark-fitted
+  widths.
+- Clear documentation of rejected search strategies so later optimization work
+  does not repeat failed experiments.
+
 ## Prototype Order
 
 1. Type recognition only:
@@ -459,7 +537,8 @@ Review-pass finding:
      the first NUL do not affect equality if the stored byte lengths match.
 5. Broader operations:
    - `startswith`, `endswith` after a shared codepoint span-slicing primitive;
-   - `find`, `rfind`, `count`, `index`, `rindex`;
+   - `find`, `rfind`, `count`, `index`, `rindex` after substring search
+     semantics and codepoint result offsets are exact;
    - predicates.
 
 ## Resolved Decisions
@@ -492,3 +571,6 @@ Review-pass finding:
 - Whether scalar prefix/suffix support should be implemented by a dedicated
   UTF-8 scalar bridge or deferred until a broader scalar StringDType strategy is
   designed.
+- Whether substring search should keep a reusable byte-to-codepoint mapping per
+  element, or whether repeated linear scans are cleaner until broader operation
+  coverage justifies the extra surface.
