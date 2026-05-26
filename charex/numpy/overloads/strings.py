@@ -8,15 +8,17 @@ from charex.numpy.overloads._shared import (
 from charex.numpy.stringdtype import (
     is_stringdtype_array_type, stringdtype_acquire_allocator,
     stringdtype_acquire_allocators, stringdtype_codepoint_len_data,
-    stringdtype_compare_data, stringdtype_count_data, stringdtype_data_ptr,
-    stringdtype_endswith_data, stringdtype_equal_data, stringdtype_find_data,
+    stringdtype_compare_data, stringdtype_compare_unicode_data,
+    stringdtype_count_data, stringdtype_data_ptr, stringdtype_endswith_data,
+    stringdtype_equal_data, stringdtype_equal_unicode_data,
+    stringdtype_find_data,
     stringdtype_isalnum_data, stringdtype_isalpha_data,
     stringdtype_isdecimal_data, stringdtype_isdigit_data,
     stringdtype_islower_data, stringdtype_isnumeric_data,
     stringdtype_isspace_data, stringdtype_istitle_data,
     stringdtype_isupper_data, stringdtype_release_allocator,
     stringdtype_release_allocators, stringdtype_rfind_data,
-    stringdtype_startswith_data,
+    stringdtype_startswith_data, stringdtype_unicode_valid,
 )
 from charex.numpy.overloads.definitions import (
     equal, equal_sub32_bytes, equal_sub32_unicode, greater, greater_equal,
@@ -45,6 +47,10 @@ def _validate_stringdtype_array(value):
     if value.ndim == 1 and value.layout != 'C':
         raise NumbaValueError('charex requires C-contiguous arrays; '
                               'call numpy.ascontiguousarray')
+
+
+def _is_unicode_scalar(value):
+    return isinstance(value, types.UnicodeType)
 
 
 def _has_string_operand(left, right):
@@ -87,9 +93,70 @@ def _numpy_fallback(op):
 
 
 def _overload_equal(left, right, invert):
-    if is_stringdtype_array_type(left) or is_stringdtype_array_type(right):
-        if not is_stringdtype_array_type(left) \
-                or not is_stringdtype_array_type(right):
+    left_stringdtype = is_stringdtype_array_type(left)
+    right_stringdtype = is_stringdtype_array_type(right)
+    if left_stringdtype or right_stringdtype:
+        if left_stringdtype and _is_unicode_scalar(right):
+            _validate_stringdtype_array(left)
+            if left.ndim == 0:
+                def impl(left, right):
+                    if not stringdtype_unicode_valid(right):
+                        raise TypeError('Invalid unicode code point found')
+                    allocator = stringdtype_acquire_allocator(left)
+                    result = stringdtype_equal_unicode_data(
+                        stringdtype_data_ptr(left), 0, allocator, right)
+                    stringdtype_release_allocator(allocator)
+                    return not result if invert else result
+
+                return impl
+
+            def impl(left, right):
+                if not stringdtype_unicode_valid(right):
+                    raise TypeError('Invalid unicode code point found')
+                result = np.empty(left.size, np.bool_)
+                if left.size == 0:
+                    return ~result if invert else result
+                allocator = stringdtype_acquire_allocator(left)
+                data = stringdtype_data_ptr(left)
+                for i in range(left.size):
+                    result[i] = stringdtype_equal_unicode_data(
+                        data, i, allocator, right)
+                stringdtype_release_allocator(allocator)
+                return ~result if invert else result
+
+            return impl
+
+        if _is_unicode_scalar(left) and right_stringdtype:
+            _validate_stringdtype_array(right)
+            if right.ndim == 0:
+                def impl(left, right):
+                    if not stringdtype_unicode_valid(left):
+                        raise TypeError('Invalid unicode code point found')
+                    allocator = stringdtype_acquire_allocator(right)
+                    result = stringdtype_equal_unicode_data(
+                        stringdtype_data_ptr(right), 0, allocator, left)
+                    stringdtype_release_allocator(allocator)
+                    return not result if invert else result
+
+                return impl
+
+            def impl(left, right):
+                if not stringdtype_unicode_valid(left):
+                    raise TypeError('Invalid unicode code point found')
+                result = np.empty(right.size, np.bool_)
+                if right.size == 0:
+                    return ~result if invert else result
+                allocator = stringdtype_acquire_allocator(right)
+                data = stringdtype_data_ptr(right)
+                for i in range(right.size):
+                    result[i] = stringdtype_equal_unicode_data(
+                        data, i, allocator, left)
+                stringdtype_release_allocator(allocator)
+                return ~result if invert else result
+
+            return impl
+
+        if not left_stringdtype or not right_stringdtype:
             raise NumbaValueError('StringDType comparisons currently require '
                                   'two StringDType arrays')
         _validate_stringdtype_array(left)
@@ -147,9 +214,98 @@ def _overload_equal(left, right, invert):
 
 
 def _overload_order(left, right, op):
-    if is_stringdtype_array_type(left) or is_stringdtype_array_type(right):
-        if not is_stringdtype_array_type(left) \
-                or not is_stringdtype_array_type(right):
+    left_stringdtype = is_stringdtype_array_type(left)
+    right_stringdtype = is_stringdtype_array_type(right)
+    if left_stringdtype or right_stringdtype:
+        if left_stringdtype and _is_unicode_scalar(right):
+            _validate_stringdtype_array(left)
+            if left.ndim == 0:
+                def impl(left, right):
+                    if not stringdtype_unicode_valid(right):
+                        raise TypeError('Invalid unicode code point found')
+                    allocator = stringdtype_acquire_allocator(left)
+                    cmp_result = stringdtype_compare_unicode_data(
+                        stringdtype_data_ptr(left), 0, allocator, right)
+                    stringdtype_release_allocator(allocator)
+                    if op == 'greater':
+                        return cmp_result > 0
+                    if op == 'greater_equal':
+                        return cmp_result >= 0
+                    if op == 'less':
+                        return cmp_result < 0
+                    return cmp_result <= 0
+
+                return impl
+
+            def impl(left, right):
+                if not stringdtype_unicode_valid(right):
+                    raise TypeError('Invalid unicode code point found')
+                result = np.empty(left.size, np.bool_)
+                if left.size == 0:
+                    return result
+                allocator = stringdtype_acquire_allocator(left)
+                data = stringdtype_data_ptr(left)
+                for i in range(left.size):
+                    cmp_result = stringdtype_compare_unicode_data(
+                        data, i, allocator, right)
+                    if op == 'greater':
+                        result[i] = cmp_result > 0
+                    elif op == 'greater_equal':
+                        result[i] = cmp_result >= 0
+                    elif op == 'less':
+                        result[i] = cmp_result < 0
+                    else:
+                        result[i] = cmp_result <= 0
+                stringdtype_release_allocator(allocator)
+                return result
+
+            return impl
+
+        if _is_unicode_scalar(left) and right_stringdtype:
+            _validate_stringdtype_array(right)
+            if right.ndim == 0:
+                def impl(left, right):
+                    if not stringdtype_unicode_valid(left):
+                        raise TypeError('Invalid unicode code point found')
+                    allocator = stringdtype_acquire_allocator(right)
+                    cmp_result = -stringdtype_compare_unicode_data(
+                        stringdtype_data_ptr(right), 0, allocator, left)
+                    stringdtype_release_allocator(allocator)
+                    if op == 'greater':
+                        return cmp_result > 0
+                    if op == 'greater_equal':
+                        return cmp_result >= 0
+                    if op == 'less':
+                        return cmp_result < 0
+                    return cmp_result <= 0
+
+                return impl
+
+            def impl(left, right):
+                if not stringdtype_unicode_valid(left):
+                    raise TypeError('Invalid unicode code point found')
+                result = np.empty(right.size, np.bool_)
+                if right.size == 0:
+                    return result
+                allocator = stringdtype_acquire_allocator(right)
+                data = stringdtype_data_ptr(right)
+                for i in range(right.size):
+                    cmp_result = -stringdtype_compare_unicode_data(
+                        data, i, allocator, left)
+                    if op == 'greater':
+                        result[i] = cmp_result > 0
+                    elif op == 'greater_equal':
+                        result[i] = cmp_result >= 0
+                    elif op == 'less':
+                        result[i] = cmp_result < 0
+                    else:
+                        result[i] = cmp_result <= 0
+                stringdtype_release_allocator(allocator)
+                return result
+
+            return impl
+
+        if not left_stringdtype or not right_stringdtype:
             raise NumbaValueError('StringDType comparisons currently require '
                                   'two StringDType arrays')
         _validate_stringdtype_array(left)

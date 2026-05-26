@@ -517,6 +517,250 @@ def _stringdtype_byte_compare(builder, left_size, left_buffer,
     )
 
 
+def _unicode_codepoint(builder, data, kind, index, int32):
+    int8 = ir.IntType(8)
+    int16 = ir.IntType(16)
+    result = cgutils.alloca_once(builder, int32)
+
+    one_byte = builder.icmp_signed('==', kind, ir.Constant(int32, 1))
+    with builder.if_else(one_byte) as (one, wider):
+        with one:
+            ptr = builder.bitcast(data, int8.as_pointer())
+            value = builder.load(builder.gep(ptr, [index]))
+            builder.store(builder.zext(value, int32), result)
+        with wider:
+            two_byte = builder.icmp_signed('==', kind, ir.Constant(int32, 2))
+            with builder.if_else(two_byte) as (two, four):
+                with two:
+                    ptr = builder.bitcast(data, int16.as_pointer())
+                    value = builder.load(builder.gep(ptr, [index]))
+                    builder.store(builder.zext(value, int32), result)
+                with four:
+                    ptr = builder.bitcast(data, int32.as_pointer())
+                    builder.store(builder.load(builder.gep(ptr, [index])),
+                                  result)
+
+    return builder.load(result)
+
+
+def _unicode_trimmed_length(builder, data, length, kind, intp, int32):
+    trimmed = cgutils.alloca_once(builder, intp)
+    builder.store(length, trimmed)
+
+    cond = builder.append_basic_block('stringdtype.unicode.trim.cond')
+    body = builder.append_basic_block('stringdtype.unicode.trim.body')
+    decrement = builder.append_basic_block('stringdtype.unicode.trim.decrement')
+    after = builder.append_basic_block('stringdtype.unicode.trim.after')
+    builder.branch(cond)
+
+    builder.position_at_end(cond)
+    has_char = builder.icmp_unsigned('>', builder.load(trimmed),
+                                     ir.Constant(intp, 0))
+    builder.cbranch(has_char, body, after)
+
+    builder.position_at_end(body)
+    previous = builder.sub(builder.load(trimmed), ir.Constant(intp, 1))
+    codepoint = _unicode_codepoint(builder, data, kind, previous, int32)
+    is_zero = builder.icmp_unsigned('==', codepoint, ir.Constant(int32, 0))
+    builder.cbranch(is_zero, decrement, after)
+
+    builder.position_at_end(decrement)
+    builder.store(previous, trimmed)
+    builder.branch(cond)
+
+    builder.position_at_end(after)
+    return builder.load(trimmed)
+
+
+def _unicode_utf8_size(builder, data, length, kind, intp, int32):
+    size = cgutils.alloca_once(builder, intp)
+    builder.store(ir.Constant(intp, 0), size)
+
+    with cgutils.for_range(builder, length, intp=intp) as loop:
+        codepoint = _unicode_codepoint(builder, data, kind, loop.index, int32)
+        one_byte = builder.icmp_unsigned('<', codepoint,
+                                         ir.Constant(int32, 0x80))
+        two_byte = builder.icmp_unsigned('<', codepoint,
+                                         ir.Constant(int32, 0x800))
+        three_byte = builder.icmp_unsigned('<', codepoint,
+                                           ir.Constant(int32, 0x10000))
+        width = builder.select(
+            one_byte, ir.Constant(intp, 1),
+            builder.select(
+                two_byte, ir.Constant(intp, 2),
+                builder.select(three_byte, ir.Constant(intp, 3),
+                               ir.Constant(intp, 4)),
+            ),
+        )
+        builder.store(builder.add(builder.load(size), width), size)
+
+    return builder.load(size)
+
+
+def _unicode_parts(context, builder, unicode_value, intp, int32):
+    unicode_struct = context.make_helper(builder, types.unicode_type,
+                                         value=unicode_value)
+    length = _unicode_trimmed_length(
+        builder, unicode_struct.data, unicode_struct.length,
+        unicode_struct.kind, intp, int32,
+    )
+    size = _unicode_utf8_size(
+        builder, unicode_struct.data, length, unicode_struct.kind, intp, int32,
+    )
+    return unicode_struct, length, size
+
+
+def _unicode_is_valid(builder, data, length, kind, intp, int32):
+    valid = cgutils.alloca_once(builder, ir.IntType(1))
+    builder.store(cgutils.true_bit, valid)
+
+    with cgutils.for_range(builder, length, intp=intp) as loop:
+        codepoint = _unicode_codepoint(builder, data, kind, loop.index, int32)
+        surrogate_start = builder.icmp_unsigned(
+            '>=', codepoint, ir.Constant(int32, 0xd800))
+        surrogate_end = builder.icmp_unsigned(
+            '<=', codepoint, ir.Constant(int32, 0xdfff))
+        with builder.if_then(builder.and_(surrogate_start, surrogate_end)):
+            builder.store(cgutils.false_bit, valid)
+
+    return builder.load(valid)
+
+
+def _stringdtype_unicode_compare(builder, string_size, string_buffer,
+                                 unicode_value, context, intp, int8, int32):
+    unicode_struct, unicode_length, unicode_size = _unicode_parts(
+        context, builder, unicode_value, intp, int32)
+
+    result = cgutils.alloca_once(builder, int32)
+    done = cgutils.alloca_once(builder, ir.IntType(1))
+    byte_pos = cgutils.alloca_once(builder, intp)
+    unicode_pos = cgutils.alloca_once(builder, intp)
+    builder.store(ir.Constant(int32, 0), result)
+    builder.store(cgutils.false_bit, done)
+    builder.store(ir.Constant(intp, 0), byte_pos)
+    builder.store(ir.Constant(intp, 0), unicode_pos)
+
+    cond = builder.append_basic_block('stringdtype.unicode.cmp.cond')
+    body = builder.append_basic_block('stringdtype.unicode.cmp.body')
+    after = builder.append_basic_block('stringdtype.unicode.cmp.after')
+    builder.branch(cond)
+
+    builder.position_at_end(cond)
+    has_string = builder.icmp_unsigned('<', builder.load(byte_pos),
+                                       string_size)
+    has_unicode = builder.icmp_unsigned('<', builder.load(unicode_pos),
+                                        unicode_length)
+    is_equal = builder.icmp_signed('==', builder.load(result),
+                                   ir.Constant(int32, 0))
+    builder.cbranch(builder.and_(builder.and_(has_string, has_unicode),
+                                 builder.and_(is_equal,
+                                              builder.not_(builder.load(done)))),
+                    body, after)
+
+    builder.position_at_end(body)
+    left_codepoint, next_byte_pos = _decode_utf8_codepoint(
+        builder, string_buffer, builder.load(byte_pos), intp, int8, int32)
+    right_codepoint = _unicode_codepoint(
+        builder, unicode_struct.data, unicode_struct.kind,
+        builder.load(unicode_pos), int32,
+    )
+    mismatch = builder.icmp_unsigned('!=', left_codepoint, right_codepoint)
+    with builder.if_else(mismatch) as (different, same):
+        with different:
+            smaller = builder.icmp_unsigned('<', left_codepoint,
+                                            right_codepoint)
+            builder.store(
+                builder.select(smaller, ir.Constant(int32, -1),
+                               ir.Constant(int32, 1)),
+                result,
+            )
+        with same:
+            is_nul = builder.icmp_unsigned('==', left_codepoint,
+                                           ir.Constant(int32, 0))
+            with builder.if_else(is_nul) as (nul, non_nul):
+                with nul:
+                    builder.store(cgutils.true_bit, done)
+                with non_nul:
+                    builder.store(next_byte_pos, byte_pos)
+                    builder.store(builder.add(builder.load(unicode_pos),
+                                              ir.Constant(intp, 1)),
+                                  unicode_pos)
+    builder.branch(cond)
+
+    builder.position_at_end(after)
+    with builder.if_then(builder.icmp_signed('==', builder.load(result),
+                                             ir.Constant(int32, 0))):
+        sizes_equal = builder.icmp_unsigned('==', string_size, unicode_size)
+        with builder.if_then(builder.not_(sizes_equal)):
+            builder.store(
+                _stringdtype_size_compare(builder, string_size, unicode_size,
+                                          int32),
+                result,
+            )
+
+    return builder.load(result)
+
+
+def _stringdtype_unicode_equal(builder, string_size, string_buffer,
+                               unicode_value, context, intp, int8, int32):
+    unicode_struct, unicode_length, unicode_size = _unicode_parts(
+        context, builder, unicode_value, intp, int32)
+
+    result = cgutils.alloca_once(builder, ir.IntType(1))
+    done = cgutils.alloca_once(builder, ir.IntType(1))
+    byte_pos = cgutils.alloca_once(builder, intp)
+    unicode_pos = cgutils.alloca_once(builder, intp)
+    builder.store(cgutils.false_bit, result)
+    builder.store(cgutils.false_bit, done)
+    builder.store(ir.Constant(intp, 0), byte_pos)
+    builder.store(ir.Constant(intp, 0), unicode_pos)
+
+    same_size = builder.icmp_unsigned('==', string_size, unicode_size)
+    with builder.if_then(same_size):
+        cond = builder.append_basic_block('stringdtype.unicode.eq.cond')
+        body = builder.append_basic_block('stringdtype.unicode.eq.body')
+        after = builder.append_basic_block('stringdtype.unicode.eq.after')
+        builder.branch(cond)
+
+        builder.position_at_end(cond)
+        in_range = builder.icmp_unsigned('<', builder.load(byte_pos),
+                                         string_size)
+        builder.cbranch(builder.and_(in_range,
+                                     builder.not_(builder.load(done))),
+                        body, after)
+
+        builder.position_at_end(body)
+        left_codepoint, next_byte_pos = _decode_utf8_codepoint(
+            builder, string_buffer, builder.load(byte_pos), intp, int8, int32)
+        right_codepoint = _unicode_codepoint(
+            builder, unicode_struct.data, unicode_struct.kind,
+            builder.load(unicode_pos), int32,
+        )
+        mismatch = builder.icmp_unsigned('!=', left_codepoint, right_codepoint)
+        with builder.if_else(mismatch) as (different, same):
+            with different:
+                builder.store(cgutils.true_bit, done)
+            with same:
+                is_nul = builder.icmp_unsigned('==', left_codepoint,
+                                               ir.Constant(int32, 0))
+                with builder.if_else(is_nul) as (nul, non_nul):
+                    with nul:
+                        builder.store(cgutils.true_bit, result)
+                        builder.store(cgutils.true_bit, done)
+                    with non_nul:
+                        builder.store(next_byte_pos, byte_pos)
+                        builder.store(builder.add(builder.load(unicode_pos),
+                                                  ir.Constant(intp, 1)),
+                                      unicode_pos)
+        builder.branch(cond)
+
+        builder.position_at_end(after)
+        with builder.if_then(builder.not_(builder.load(done))):
+            builder.store(cgutils.true_bit, result)
+
+    return builder.load(result)
+
+
 def _codepoint_offset(builder, size, buffer, target, intp, int8):
     offset = cgutils.alloca_once(builder, intp)
     count = cgutils.alloca_once(builder, intp)
@@ -1013,6 +1257,99 @@ def stringdtype_compare_data(typingctx, left_data, left_index, left_allocator,
                     builder, left_size, left_buffer, right_size,
                     right_buffer, intp, int8, int32,
                 ),
+                result,
+            )
+
+        return builder.load(result)
+
+    return sig, codegen
+
+
+@intrinsic
+def stringdtype_unicode_valid(typingctx, value):
+    if not isinstance(value, types.UnicodeType):
+        return None
+
+    sig = signature(types.boolean, value)
+
+    def codegen(context, builder, signature, args):
+        int32 = ir.IntType(32)
+        intp = context.get_value_type(types.intp)
+        value, = args
+        unicode_struct = context.make_helper(builder, types.unicode_type,
+                                             value=value)
+        return _unicode_is_valid(
+            builder, unicode_struct.data, unicode_struct.length,
+            unicode_struct.kind, intp, int32,
+        )
+
+    return sig, codegen
+
+
+@intrinsic
+def stringdtype_equal_unicode_data(typingctx, data, index, allocator, value):
+    if data != types.voidptr \
+            or not isinstance(index, types.Integer) \
+            or allocator != types.voidptr \
+            or not isinstance(value, types.UnicodeType):
+        return None
+
+    sig = signature(types.boolean, data, types.intp, allocator, value)
+
+    def codegen(context, builder, signature, args):
+        data, index_value, allocator, value = args
+
+        int8 = ir.IntType(8)
+        int32 = ir.IntType(32)
+        intp = context.get_value_type(types.intp)
+        byte_ptr = int8.as_pointer()
+        packed = _packed_string_ptr_from_data(builder, data, index_value, intp)
+        status, size, buffer = _load_string(builder, allocator, packed, intp,
+                                            byte_ptr)
+
+        result = cgutils.alloca_once(builder, ir.IntType(1))
+        builder.store(cgutils.false_bit, result)
+        valid = builder.icmp_signed('==', status, ir.Constant(int32, 0))
+        with builder.if_then(valid):
+            builder.store(
+                _stringdtype_unicode_equal(builder, size, buffer, value,
+                                           context, intp, int8, int32),
+                result,
+            )
+
+        return builder.load(result)
+
+    return sig, codegen
+
+
+@intrinsic
+def stringdtype_compare_unicode_data(typingctx, data, index, allocator, value):
+    if data != types.voidptr \
+            or not isinstance(index, types.Integer) \
+            or allocator != types.voidptr \
+            or not isinstance(value, types.UnicodeType):
+        return None
+
+    sig = signature(types.int32, data, types.intp, allocator, value)
+
+    def codegen(context, builder, signature, args):
+        data, index_value, allocator, value = args
+
+        int8 = ir.IntType(8)
+        int32 = ir.IntType(32)
+        intp = context.get_value_type(types.intp)
+        byte_ptr = int8.as_pointer()
+        packed = _packed_string_ptr_from_data(builder, data, index_value, intp)
+        status, size, buffer = _load_string(builder, allocator, packed, intp,
+                                            byte_ptr)
+
+        result = cgutils.alloca_once(builder, int32)
+        builder.store(ir.Constant(int32, 0), result)
+        valid = builder.icmp_signed('==', status, ir.Constant(int32, 0))
+        with builder.if_then(valid):
+            builder.store(
+                _stringdtype_unicode_compare(builder, size, buffer, value,
+                                             context, intp, int8, int32),
                 result,
             )
 

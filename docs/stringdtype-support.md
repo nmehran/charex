@@ -891,9 +891,12 @@ Checkpoint:
 - 0-D default `StringDType` operands now use the same packed-element allocator
   path as one-dimensional arrays. Unary 0-D calls return scalar values; binary
   0-D/0-D calls return scalar values; 0-D/1-D calls broadcast over the 1-D side.
-- Python `str` mixed with `StringDType` remains the next bridge. NumPy trims
-  trailing NULs on the Python scalar side, so it should not be implemented as a
-  blind alias to the packed `StringDType` array-array path.
+- Python `str` mixed comparisons now use a Unicode-scalar bridge. It trims
+  trailing NULs on the Python scalar side, preserves StringDType's NUL-prefix
+  comparison behavior, and rejects invalid surrogate code points like NumPy.
+- Python `str` mixed affix and search calls remain the next bridge. They need
+  separate slice and substring logic and should not be implemented as blind
+  aliases to the packed `StringDType` array-array path.
 
 ## Tranche 9: Missing Sentinels And `na_object`
 

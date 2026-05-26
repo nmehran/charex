@@ -11,7 +11,7 @@ from numba.core.errors import NumbaValueError, TypingError
 from charex.tests.definitions import (
     StringsComparisonOperators, StringsInformation,
 )
-from charex.tests.support import assert_same
+from charex.tests.support import assert_same, assert_same_exception
 
 
 STRINGS = getattr(np, 'strings', None)
@@ -476,28 +476,57 @@ def test_stringdtype_array_order_rejects_multidimensional_arrays(impl_name):
         getattr(strings, impl_name)(values, values)
 
 
-@pytest.mark.parametrize('scalar_left', [False, True])
-def test_stringdtype_array_equal_rejects_mixed_stringdtype_inputs(scalar_left):
+@pytest.mark.parametrize('impl_name, baseline', [
+    ('strings_equal', STRINGS.equal),
+    ('strings_not_equal', STRINGS.not_equal),
+])
+@pytest.mark.parametrize('scalar', [
+    'a', 'a\x00', 'a\x00x', '\x00', '', 'é', 'é\x00x', '🙂',
+])
+def test_stringdtype_array_equal_mixed_python_str_matches_numpy(
+        impl_name, baseline, scalar):
     strings = StringsComparisonOperators()
-    values = stringdtype_array(['a', 'b'])
-    args = ('a', values) if scalar_left else (values, 'a')
+    values = stringdtype_array([
+        'a', 'a\x00', 'a\x00\x00', 'a\x00x', '\x00', '\x00\x00',
+        '', 'é', 'é\x00x', '🙂',
+    ])
 
-    with pytest.raises(TypingError, match='two StringDType arrays'):
-        strings.strings_equal(*args)
+    assert_same(getattr(strings, impl_name), baseline, values, scalar)
+    assert_same(getattr(strings, impl_name), baseline, scalar, values)
 
 
 @pytest.mark.parametrize('impl_name', [
     name for name, _ in STRINGDTYPE_ORDER_COMPARISONS
 ])
-@pytest.mark.parametrize('scalar_left', [False, True])
-def test_stringdtype_array_order_rejects_mixed_stringdtype_inputs(
-        impl_name, scalar_left):
+@pytest.mark.parametrize('scalar', [
+    'a', 'a\x00', 'a\x00x', '\x00', '', 'é', 'é\x00x', '🙂',
+])
+def test_stringdtype_array_order_mixed_python_str_matches_numpy(
+        impl_name, scalar):
+    strings = StringsComparisonOperators()
+    baseline = dict(STRINGDTYPE_ORDER_COMPARISONS)[impl_name]
+    values = stringdtype_array([
+        'a', 'b', 'aa', '', 'a\x00', 'a\x00x', 'a\x00y',
+        '\x00', '\x00x', 'é', 'é\x00x', '🙂',
+    ])
+
+    assert_same(getattr(strings, impl_name), baseline, values, scalar)
+    assert_same(getattr(strings, impl_name), baseline, scalar, values)
+
+
+@pytest.mark.parametrize('impl_name, baseline', [
+    ('strings_equal', STRINGS.equal),
+    ('strings_not_equal', STRINGS.not_equal),
+    *STRINGDTYPE_ORDER_COMPARISONS,
+])
+@pytest.mark.parametrize('scalar', ['\ud800', 'a\ud800', 'a\x00\ud800'])
+def test_stringdtype_array_comparison_mixed_python_str_invalid_unicode_matches_numpy(
+        impl_name, baseline, scalar):
     strings = StringsComparisonOperators()
     values = stringdtype_array(['a', 'b'])
-    args = ('a', values) if scalar_left else (values, 'a')
 
-    with pytest.raises(TypingError, match='two StringDType arrays'):
-        getattr(strings, impl_name)(*args)
+    assert_same_exception(getattr(strings, impl_name), baseline, values, scalar)
+    assert_same_exception(getattr(strings, impl_name), baseline, scalar, values)
 
 
 @pytest.mark.parametrize('impl_name, baseline', [
