@@ -66,6 +66,27 @@ STRINGDTYPE_ORDER_COMPARISONS = [
 ]
 
 
+STRINGDTYPE_AFFIX_METHODS = [
+    ('strings_startswith', STRINGS.startswith),
+    ('strings_endswith', STRINGS.endswith),
+]
+
+
+STRINGDTYPE_SEARCH_METHODS = [
+    ('strings_find', STRINGS.find),
+    ('strings_rfind', STRINGS.rfind),
+    ('strings_count', STRINGS.count),
+    ('strings_index', STRINGS.index),
+    ('strings_rindex', STRINGS.rindex),
+]
+
+
+STRINGDTYPE_AFFIX_SEARCH_METHODS = [
+    *STRINGDTYPE_AFFIX_METHODS,
+    *STRINGDTYPE_SEARCH_METHODS,
+]
+
+
 STRINGDTYPE_COMPARISON_METHODS = {
     'strings_equal', 'strings_not_equal', 'strings_greater',
     'strings_greater_equal', 'strings_less', 'strings_less_equal',
@@ -633,18 +654,126 @@ def test_stringdtype_predicate_na_object_variants_match_numpy(
         assert_same_exception(implementation, baseline, values)
 
 
-@pytest.mark.parametrize('impl_name', [
-    'strings_startswith', 'strings_find',
-])
+@pytest.mark.parametrize('impl_name, baseline',
+                         STRINGDTYPE_AFFIX_SEARCH_METHODS)
 @pytest.mark.parametrize('na_object', NA_OBJECT_VARIANTS)
-def test_stringdtype_na_object_binary_operations_remain_explicitly_rejected(
-        impl_name, na_object):
-    values = np.array(['a', na_object, 'bb'],
+def test_stringdtype_na_object_affix_search_arrays_match_numpy(
+        impl_name, baseline, na_object):
+    values = np.array(['a', na_object, '', 'MISSING', 'aa'],
                       dtype=STRING_DTYPE(na_object=na_object))
+    patterns = np.array(['a', 'a', na_object, '', 'z'],
+                        dtype=STRING_DTYPE(na_object=na_object))
     implementation = strings_impl(impl_name)
 
-    with pytest.raises(TypingError, match='na_object support'):
-        implementation(values, values)
+    assert_same_outcome(implementation, baseline, values, values)
+    assert_same_outcome(implementation, baseline, values, patterns)
+
+
+@pytest.mark.parametrize('impl_name, baseline',
+                         STRINGDTYPE_AFFIX_SEARCH_METHODS)
+@pytest.mark.parametrize('na_object', NA_OBJECT_VARIANTS)
+def test_stringdtype_na_object_mixed_default_array_affix_search_match_numpy(
+        impl_name, baseline, na_object):
+    default = stringdtype_array(['a', 'x', '', 'MISSING', 'aa'])
+    sentinel = np.array(['a', na_object, '', 'MISSING', 'aa'],
+                        dtype=STRING_DTYPE(na_object=na_object))
+    implementation = strings_impl(impl_name)
+
+    assert_same_outcome(implementation, baseline, default, sentinel)
+    assert_same_outcome(implementation, baseline, sentinel, default)
+
+
+@pytest.mark.parametrize('impl_name, baseline',
+                         STRINGDTYPE_AFFIX_SEARCH_METHODS)
+@pytest.mark.parametrize('na_object', NA_OBJECT_VARIANTS)
+def test_stringdtype_na_object_mixed_unicode_array_affix_search_match_numpy(
+        impl_name, baseline, na_object):
+    sentinel = np.array(['a', na_object, '', 'MISSING', 'aa'],
+                        dtype=STRING_DTYPE(na_object=na_object))
+    unicode = np.array(['a', 'a', '', 'MISSING', 'z'], dtype='U16')
+    implementation = strings_impl(impl_name)
+
+    assert_same_outcome(implementation, baseline, sentinel, unicode)
+    assert_same_outcome(implementation, baseline, unicode, sentinel)
+
+
+@pytest.mark.parametrize('impl_name, baseline',
+                         STRINGDTYPE_AFFIX_SEARCH_METHODS)
+@pytest.mark.parametrize('left_na, right_na', [
+    (None, np.nan),
+    (np.nan, np.float32(np.nan)),
+    (np.nan, complex(np.nan, 0)),
+    ('', 'MISSING'),
+    ('é', 'MISSING'),
+    (None, 0),
+])
+def test_stringdtype_incompatible_na_object_affix_search_match_numpy(
+        impl_name, baseline, left_na, right_na):
+    left = np.array(['a', left_na], dtype=STRING_DTYPE(na_object=left_na))
+    right = np.array(['a', right_na], dtype=STRING_DTYPE(na_object=right_na))
+
+    assert_same_exception(strings_impl(impl_name), baseline, left, right)
+
+
+@pytest.mark.parametrize('impl_name, baseline',
+                         STRINGDTYPE_AFFIX_SEARCH_METHODS)
+@pytest.mark.parametrize('left_na, right_na', [
+    (0, False),
+    (0, np.int64(0)),
+    (False, np.bool_(False)),
+    (1, np.int64(1)),
+    (1, 1.0),
+    (1, complex(1, 0)),
+    (np.inf, np.float64(np.inf)),
+    (complex(np.inf, 0), np.complex128(complex(np.inf, 0))),
+    (np.nan, np.float64(np.nan)),
+])
+def test_stringdtype_compatible_numeric_na_object_affix_search_match_numpy(
+        impl_name, baseline, left_na, right_na):
+    left = np.array(['a', left_na, ''], dtype=STRING_DTYPE(na_object=left_na))
+    right = np.array(['a', right_na, ''],
+                     dtype=STRING_DTYPE(na_object=right_na))
+
+    assert_same_outcome(strings_impl(impl_name), baseline, left, right)
+
+
+@pytest.mark.parametrize('impl_name, baseline',
+                         STRINGDTYPE_AFFIX_SEARCH_METHODS)
+@pytest.mark.parametrize('na_object', [
+    None, np.nan, 'MISSING', 0,
+])
+@pytest.mark.parametrize('scalar', ['', 'a'])
+@pytest.mark.parametrize('scalar_factory', [
+    pytest.param(lambda value: value, id='python-str'),
+    pytest.param(np.str_, id='numpy-str-scalar'),
+    pytest.param(lambda value: np.array(value, dtype='U16'),
+                 id='zero-dimensional-unicode-array'),
+])
+def test_stringdtype_na_object_unicode_scalar_affix_search_match_numpy(
+        impl_name, baseline, na_object, scalar, scalar_factory):
+    values = np.array(['a', na_object, '', 'MISSING', 'aa'],
+                      dtype=STRING_DTYPE(na_object=na_object))
+    scalar = scalar_factory(scalar)
+    implementation = strings_impl(impl_name)
+
+    assert_same_outcome(implementation, baseline, values, scalar)
+    assert_same_outcome(implementation, baseline, scalar, values)
+
+
+@pytest.mark.parametrize('impl_name, baseline',
+                         STRINGDTYPE_AFFIX_SEARCH_METHODS)
+@pytest.mark.parametrize('na_object', [
+    None, np.nan, 'MISSING', 0,
+])
+def test_stringdtype_na_object_affix_search_slices_match_numpy(
+        impl_name, baseline, na_object):
+    values = np.array(['abcabc', na_object, '', 'MISSING', 'aa'],
+                      dtype=STRING_DTYPE(na_object=na_object))
+    patterns = np.array(['b', '', na_object, 'S', 'a'],
+                        dtype=STRING_DTYPE(na_object=na_object))
+    implementation = strings_impl(impl_name)
+
+    assert_same_outcome(implementation, baseline, values, patterns, 1, 4)
 
 
 @pytest.mark.parametrize('impl_name, baseline', [

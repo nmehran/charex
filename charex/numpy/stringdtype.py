@@ -28,6 +28,10 @@ _NA_NAN = 2
 _NA_STRING = 3
 STRINGDTYPE_ORDER_ERROR = -2147483648
 STRINGDTYPE_ORDER_FALSE = -2147483647
+STRINGDTYPE_BOOL_ERROR = -1
+STRINGDTYPE_BOOL_FALSE = 0
+STRINGDTYPE_BOOL_TRUE = 1
+STRINGDTYPE_SEARCH_ERROR = -2
 
 
 class StringDTypePacket(types.Type):
@@ -728,6 +732,34 @@ def _resolve_binary_na_value(builder, status, size, buffer, na_kind, na_size,
                        buffer),
     )
     return status, size, buffer
+
+
+def _resolve_stringdtype_pattern_na_value(builder, status, size, buffer,
+                                          na_kind, na_size, na_buffer,
+                                          empty_null, int32, intp, int8):
+    is_null = builder.icmp_signed('==', status, ir.Constant(int32, 1))
+    is_string = builder.icmp_signed('==', na_kind,
+                                    ir.Constant(int32, _NA_STRING))
+    use_name = builder.and_(builder.and_(is_null, is_string),
+                            builder.not_(empty_null))
+    use_empty = builder.and_(is_null, empty_null)
+    resolved = builder.or_(use_name, use_empty)
+    status = builder.select(resolved, ir.Constant(int32, 0), status)
+    size = builder.select(
+        use_name, na_size,
+        builder.select(use_empty, ir.Constant(intp, 0), size),
+    )
+    buffer = builder.select(
+        use_name, na_buffer,
+        builder.select(use_empty, ir.Constant(int8.as_pointer(), None),
+                       buffer),
+    )
+    return status, size, buffer
+
+
+def _stringdtype_bool(builder, value, int8):
+    return builder.select(value, ir.Constant(int8, STRINGDTYPE_BOOL_TRUE),
+                          ir.Constant(int8, STRINGDTYPE_BOOL_FALSE))
 
 
 def _store_byte_affix_result(builder, result, value_buffer, start_offset,
@@ -3065,6 +3097,344 @@ def _utf8_stringdtype_sliced_affix_data(
     return sig, codegen
 
 
+def _stringdtype_affix_na_data(
+        typingctx, value_data, value_index, value_allocator, value_na_kind,
+        value_na_size, value_na_buffer, pattern_data, pattern_index,
+        pattern_allocator, pattern_na_kind, pattern_na_size, pattern_na_buffer,
+        pattern_empty_null, start, end, suffix):
+    if value_data != types.voidptr \
+            or not isinstance(value_index, types.Integer) \
+            or value_allocator != types.voidptr \
+            or not isinstance(value_na_kind, types.Integer) \
+            or not isinstance(value_na_size, types.Integer) \
+            or value_na_buffer != types.voidptr \
+            or pattern_data != types.voidptr \
+            or not isinstance(pattern_index, types.Integer) \
+            or pattern_allocator != types.voidptr \
+            or not isinstance(pattern_na_kind, types.Integer) \
+            or not isinstance(pattern_na_size, types.Integer) \
+            or pattern_na_buffer != types.voidptr \
+            or not isinstance(pattern_empty_null, types.Boolean) \
+            or not isinstance(start, types.Integer) \
+            or not isinstance(end, types.Integer):
+        return None
+
+    sig = signature(
+        types.int8,
+        value_data, types.intp, value_allocator, types.int32, types.intp,
+        value_na_buffer, pattern_data, types.intp, pattern_allocator,
+        types.int32, types.intp, pattern_na_buffer, types.boolean, types.intp,
+        types.intp,
+    )
+
+    def codegen(context, builder, signature, args):
+        value_data, value_index_value, value_allocator, value_na_kind, \
+            value_na_size, value_na_buffer, pattern_data, \
+            pattern_index_value, pattern_allocator, pattern_na_kind, \
+            pattern_na_size, pattern_na_buffer, pattern_empty_null, start, \
+            end = args
+
+        int8 = ir.IntType(8)
+        int32 = ir.IntType(32)
+        intp = context.get_value_type(types.intp)
+        byte_ptr = int8.as_pointer()
+        value_packed = _packed_string_ptr_from_data(
+            builder, value_data, value_index_value, intp)
+        pattern_packed = _packed_string_ptr_from_data(
+            builder, pattern_data, pattern_index_value, intp)
+        value_status, value_size, value_buffer = _load_string(
+            builder, value_allocator, value_packed, intp, byte_ptr)
+        pattern_status, pattern_size, pattern_buffer = _load_string(
+            builder, pattern_allocator, pattern_packed, intp, byte_ptr)
+
+        value_null = builder.icmp_signed('==', value_status,
+                                         ir.Constant(int32, 1))
+        pattern_null = builder.icmp_signed('==', pattern_status,
+                                           ir.Constant(int32, 1))
+        value_string = builder.icmp_signed('==', value_na_kind,
+                                           ir.Constant(int32, _NA_STRING))
+        pattern_string = builder.icmp_signed('==', pattern_na_kind,
+                                             ir.Constant(int32, _NA_STRING))
+        value_nan = builder.icmp_signed('==', value_na_kind,
+                                        ir.Constant(int32, _NA_NAN))
+        pattern_nan = builder.icmp_signed('==', pattern_na_kind,
+                                          ir.Constant(int32, _NA_NAN))
+        value_error = builder.and_(
+            value_null, builder.not_(builder.or_(value_string, value_nan)))
+        pattern_error = builder.and_(
+            builder.and_(pattern_null, builder.not_(pattern_empty_null)),
+            builder.not_(builder.or_(pattern_string, pattern_nan)),
+        )
+        false_result = builder.or_(
+            builder.and_(value_null, value_nan),
+            builder.and_(builder.and_(pattern_null, pattern_nan),
+                         builder.not_(pattern_empty_null)),
+        )
+
+        result = cgutils.alloca_once(builder, int8)
+        builder.store(ir.Constant(int8, STRINGDTYPE_BOOL_FALSE), result)
+        with builder.if_else(builder.or_(value_error, pattern_error)) \
+                as (error_path, no_error):
+            with error_path:
+                builder.store(ir.Constant(int8, STRINGDTYPE_BOOL_ERROR),
+                              result)
+            with no_error:
+                with builder.if_else(false_result) as (false_path,
+                                                       compare_path):
+                    with false_path:
+                        builder.store(
+                            ir.Constant(int8, STRINGDTYPE_BOOL_FALSE), result)
+                    with compare_path:
+                        value_status, value_size, value_buffer = \
+                            _resolve_string_na(
+                                builder, value_status, value_size,
+                                value_buffer, value_na_kind, value_na_size,
+                                value_na_buffer, int32)
+                        pattern_status, pattern_size, pattern_buffer = \
+                            _resolve_stringdtype_pattern_na_value(
+                                builder, pattern_status, pattern_size,
+                                pattern_buffer, pattern_na_kind,
+                                pattern_na_size, pattern_na_buffer,
+                                pattern_empty_null, int32, intp, int8)
+                        value_valid = builder.icmp_signed(
+                            '==', value_status, ir.Constant(int32, 0))
+                        pattern_valid = builder.icmp_signed(
+                            '==', pattern_status, ir.Constant(int32, 0))
+                        with builder.if_then(builder.and_(value_valid,
+                                                          pattern_valid)):
+                            _, _, start_offset, end_offset, slice_valid = \
+                                _normalise_slice(
+                                    builder, value_size, value_buffer, start,
+                                    end, intp, int8)
+                            pattern_effective_size = _trimmed_size(
+                                builder, pattern_size, pattern_buffer, intp,
+                                int8)
+                            bool_result = cgutils.alloca_once(
+                                builder, ir.IntType(1))
+                            builder.store(cgutils.false_bit, bool_result)
+                            _store_byte_affix_result(
+                                builder, bool_result, value_buffer,
+                                start_offset, end_offset, slice_valid,
+                                pattern_buffer, pattern_effective_size, suffix,
+                                intp, int8, int32)
+                            builder.store(
+                                _stringdtype_bool(
+                                    builder, builder.load(bool_result), int8),
+                                result,
+                            )
+
+        return builder.load(result)
+
+    return sig, codegen
+
+
+def _stringdtype_unicode_affix_na_data(
+        typingctx, value_data, value_index, value_allocator, value_na_kind,
+        value_na_size, value_na_buffer, pattern, pattern_length, pattern_size,
+        start, end, suffix):
+    if value_data != types.voidptr \
+            or not isinstance(value_index, types.Integer) \
+            or value_allocator != types.voidptr \
+            or not isinstance(value_na_kind, types.Integer) \
+            or not isinstance(value_na_size, types.Integer) \
+            or value_na_buffer != types.voidptr \
+            or not isinstance(pattern, types.UnicodeType) \
+            or not isinstance(pattern_length, types.Integer) \
+            or not isinstance(pattern_size, types.Integer) \
+            or not isinstance(start, types.Integer) \
+            or not isinstance(end, types.Integer):
+        return None
+
+    sig = signature(types.int8, value_data, types.intp, value_allocator,
+                    types.int32, types.intp, value_na_buffer, pattern,
+                    types.intp, types.intp, types.intp, types.intp)
+
+    def codegen(context, builder, signature, args):
+        value_data, value_index_value, value_allocator, value_na_kind, \
+            value_na_size, value_na_buffer, pattern, pattern_length, \
+            pattern_size, start, end = args
+
+        int8 = ir.IntType(8)
+        int32 = ir.IntType(32)
+        intp = context.get_value_type(types.intp)
+        byte_ptr = int8.as_pointer()
+        value_packed = _packed_string_ptr_from_data(
+            builder, value_data, value_index_value, intp)
+        value_status, value_size, value_buffer = _load_string(
+            builder, value_allocator, value_packed, intp, byte_ptr)
+
+        value_null = builder.icmp_signed('==', value_status,
+                                         ir.Constant(int32, 1))
+        value_string = builder.icmp_signed('==', value_na_kind,
+                                           ir.Constant(int32, _NA_STRING))
+        value_nan = builder.icmp_signed('==', value_na_kind,
+                                        ir.Constant(int32, _NA_NAN))
+        value_error = builder.and_(
+            value_null, builder.not_(builder.or_(value_string, value_nan)))
+        value_false = builder.and_(value_null, value_nan)
+
+        result = cgutils.alloca_once(builder, int8)
+        builder.store(ir.Constant(int8, STRINGDTYPE_BOOL_FALSE), result)
+        with builder.if_else(value_error) as (error_path, no_error):
+            with error_path:
+                builder.store(ir.Constant(int8, STRINGDTYPE_BOOL_ERROR),
+                              result)
+            with no_error:
+                with builder.if_else(value_false) as (false_path,
+                                                      compare_path):
+                    with false_path:
+                        builder.store(
+                            ir.Constant(int8, STRINGDTYPE_BOOL_FALSE), result)
+                    with compare_path:
+                        value_status, value_size, value_buffer = \
+                            _resolve_string_na(
+                                builder, value_status, value_size,
+                                value_buffer, value_na_kind, value_na_size,
+                                value_na_buffer, int32)
+                        valid = builder.icmp_signed(
+                            '==', value_status, ir.Constant(int32, 0))
+                        with builder.if_then(valid):
+                            unicode_struct, pattern_length, pattern_size = \
+                                _unicode_parts(
+                                    context, builder, pattern, intp, int32,
+                                    pattern_length, pattern_size)
+                            _, _, start_offset, end_offset, slice_valid = \
+                                _normalise_slice(
+                                    builder, value_size, value_buffer, start,
+                                    end, intp, int8)
+                            slice_size = builder.sub(end_offset, start_offset)
+                            empty_pattern = builder.icmp_unsigned(
+                                '==', pattern_size, ir.Constant(intp, 0))
+                            affix_result = cgutils.alloca_once(
+                                builder, ir.IntType(1))
+                            builder.store(
+                                builder.and_(slice_valid, empty_pattern),
+                                affix_result)
+                            nonempty_pattern = builder.not_(empty_pattern)
+                            fits = builder.icmp_unsigned('<=', pattern_size,
+                                                         slice_size)
+                            with builder.if_then(
+                                    builder.and_(
+                                        slice_valid,
+                                        builder.and_(nonempty_pattern, fits))):
+                                if suffix:
+                                    compare_offset = builder.sub(
+                                        end_offset, pattern_size)
+                                else:
+                                    compare_offset = start_offset
+                                builder.store(
+                                    _stringdtype_unicode_region_equal(
+                                        builder, value_buffer, compare_offset,
+                                        unicode_struct, ir.Constant(intp, 0),
+                                        pattern_length, intp, int8, int32),
+                                    affix_result,
+                                )
+                            builder.store(
+                                _stringdtype_bool(
+                                    builder, builder.load(affix_result), int8),
+                                result,
+                            )
+
+        return builder.load(result)
+
+    return sig, codegen
+
+
+def _utf8_stringdtype_sliced_affix_na_data(
+        typingctx, value_data, start_offset, end_offset, slice_valid,
+        pattern_data, pattern_index, pattern_allocator, pattern_na_kind,
+        pattern_na_size, pattern_na_buffer, pattern_empty_null, suffix):
+    if value_data != types.voidptr \
+            or not isinstance(start_offset, types.Integer) \
+            or not isinstance(end_offset, types.Integer) \
+            or not isinstance(slice_valid, types.Boolean) \
+            or pattern_data != types.voidptr \
+            or not isinstance(pattern_index, types.Integer) \
+            or pattern_allocator != types.voidptr \
+            or not isinstance(pattern_na_kind, types.Integer) \
+            or not isinstance(pattern_na_size, types.Integer) \
+            or pattern_na_buffer != types.voidptr \
+            or not isinstance(pattern_empty_null, types.Boolean):
+        return None
+
+    sig = signature(types.int8, value_data, types.intp, types.intp,
+                    types.boolean, pattern_data, types.intp,
+                    pattern_allocator, types.int32, types.intp,
+                    pattern_na_buffer, types.boolean)
+
+    def codegen(context, builder, signature, args):
+        value_data, start_offset, end_offset, slice_valid, pattern_data, \
+            pattern_index_value, pattern_allocator, pattern_na_kind, \
+            pattern_na_size, pattern_na_buffer, pattern_empty_null = args
+
+        int8 = ir.IntType(8)
+        int32 = ir.IntType(32)
+        intp = context.get_value_type(types.intp)
+        byte_ptr = int8.as_pointer()
+        pattern_packed = _packed_string_ptr_from_data(
+            builder, pattern_data, pattern_index_value, intp)
+        pattern_status, pattern_size, pattern_buffer = _load_string(
+            builder, pattern_allocator, pattern_packed, intp, byte_ptr)
+
+        pattern_null = builder.icmp_signed('==', pattern_status,
+                                           ir.Constant(int32, 1))
+        pattern_string = builder.icmp_signed('==', pattern_na_kind,
+                                             ir.Constant(int32, _NA_STRING))
+        pattern_nan = builder.icmp_signed('==', pattern_na_kind,
+                                          ir.Constant(int32, _NA_NAN))
+        pattern_error = builder.and_(
+            builder.and_(pattern_null, builder.not_(pattern_empty_null)),
+            builder.not_(builder.or_(pattern_string, pattern_nan)),
+        )
+        pattern_false = builder.and_(
+            builder.and_(pattern_null, pattern_nan),
+            builder.not_(pattern_empty_null),
+        )
+
+        result = cgutils.alloca_once(builder, int8)
+        builder.store(ir.Constant(int8, STRINGDTYPE_BOOL_FALSE), result)
+        with builder.if_else(pattern_error) as (error_path, no_error):
+            with error_path:
+                builder.store(ir.Constant(int8, STRINGDTYPE_BOOL_ERROR),
+                              result)
+            with no_error:
+                with builder.if_else(pattern_false) as (false_path,
+                                                        compare_path):
+                    with false_path:
+                        builder.store(
+                            ir.Constant(int8, STRINGDTYPE_BOOL_FALSE), result)
+                    with compare_path:
+                        pattern_status, pattern_size, pattern_buffer = \
+                            _resolve_stringdtype_pattern_na_value(
+                                builder, pattern_status, pattern_size,
+                                pattern_buffer, pattern_na_kind,
+                                pattern_na_size, pattern_na_buffer,
+                                pattern_empty_null, int32, intp, int8)
+                        pattern_valid = builder.icmp_signed(
+                            '==', pattern_status, ir.Constant(int32, 0))
+                        with builder.if_then(pattern_valid):
+                            pattern_effective_size = _trimmed_size(
+                                builder, pattern_size, pattern_buffer, intp,
+                                int8)
+                            bool_result = cgutils.alloca_once(
+                                builder, ir.IntType(1))
+                            builder.store(cgutils.false_bit, bool_result)
+                            _store_byte_affix_result(
+                                builder, bool_result, value_data,
+                                start_offset, end_offset, slice_valid,
+                                pattern_buffer, pattern_effective_size, suffix,
+                                intp, int8, int32)
+                            builder.store(
+                                _stringdtype_bool(
+                                    builder, builder.load(bool_result), int8),
+                                result,
+                            )
+
+        return builder.load(result)
+
+    return sig, codegen
+
+
 @intrinsic
 def stringdtype_utf8_slice(typingctx, value_data, value_size, start, end):
     if value_data != types.voidptr \
@@ -3169,6 +3539,82 @@ def utf8_endswith_stringdtype_sliced_data(
     return _utf8_stringdtype_sliced_affix_data(
         typingctx, value_data, start_offset, end_offset, slice_valid,
         pattern_data, pattern_index, pattern_allocator, True,
+    )
+
+
+@intrinsic
+def stringdtype_startswith_na_data(
+        typingctx, value_data, value_index, value_allocator, value_na_kind,
+        value_na_size, value_na_buffer, pattern_data, pattern_index,
+        pattern_allocator, pattern_na_kind, pattern_na_size, pattern_na_buffer,
+        pattern_empty_null, start, end):
+    return _stringdtype_affix_na_data(
+        typingctx, value_data, value_index, value_allocator, value_na_kind,
+        value_na_size, value_na_buffer, pattern_data, pattern_index,
+        pattern_allocator, pattern_na_kind, pattern_na_size, pattern_na_buffer,
+        pattern_empty_null, start, end, False,
+    )
+
+
+@intrinsic
+def stringdtype_endswith_na_data(
+        typingctx, value_data, value_index, value_allocator, value_na_kind,
+        value_na_size, value_na_buffer, pattern_data, pattern_index,
+        pattern_allocator, pattern_na_kind, pattern_na_size, pattern_na_buffer,
+        pattern_empty_null, start, end):
+    return _stringdtype_affix_na_data(
+        typingctx, value_data, value_index, value_allocator, value_na_kind,
+        value_na_size, value_na_buffer, pattern_data, pattern_index,
+        pattern_allocator, pattern_na_kind, pattern_na_size, pattern_na_buffer,
+        pattern_empty_null, start, end, True,
+    )
+
+
+@intrinsic
+def stringdtype_startswith_unicode_na_data(
+        typingctx, value_data, value_index, value_allocator, value_na_kind,
+        value_na_size, value_na_buffer, pattern, pattern_length, pattern_size,
+        start, end):
+    return _stringdtype_unicode_affix_na_data(
+        typingctx, value_data, value_index, value_allocator, value_na_kind,
+        value_na_size, value_na_buffer, pattern, pattern_length, pattern_size,
+        start, end, False,
+    )
+
+
+@intrinsic
+def stringdtype_endswith_unicode_na_data(
+        typingctx, value_data, value_index, value_allocator, value_na_kind,
+        value_na_size, value_na_buffer, pattern, pattern_length, pattern_size,
+        start, end):
+    return _stringdtype_unicode_affix_na_data(
+        typingctx, value_data, value_index, value_allocator, value_na_kind,
+        value_na_size, value_na_buffer, pattern, pattern_length, pattern_size,
+        start, end, True,
+    )
+
+
+@intrinsic
+def utf8_startswith_stringdtype_sliced_na_data(
+        typingctx, value_data, start_offset, end_offset, slice_valid,
+        pattern_data, pattern_index, pattern_allocator, pattern_na_kind,
+        pattern_na_size, pattern_na_buffer, pattern_empty_null):
+    return _utf8_stringdtype_sliced_affix_na_data(
+        typingctx, value_data, start_offset, end_offset, slice_valid,
+        pattern_data, pattern_index, pattern_allocator, pattern_na_kind,
+        pattern_na_size, pattern_na_buffer, pattern_empty_null, False,
+    )
+
+
+@intrinsic
+def utf8_endswith_stringdtype_sliced_na_data(
+        typingctx, value_data, start_offset, end_offset, slice_valid,
+        pattern_data, pattern_index, pattern_allocator, pattern_na_kind,
+        pattern_na_size, pattern_na_buffer, pattern_empty_null):
+    return _utf8_stringdtype_sliced_affix_na_data(
+        typingctx, value_data, start_offset, end_offset, slice_valid,
+        pattern_data, pattern_index, pattern_allocator, pattern_na_kind,
+        pattern_na_size, pattern_na_buffer, pattern_empty_null, True,
     )
 
 
@@ -3546,6 +3992,275 @@ def _utf8_stringdtype_search_sliced_data(
     return sig, codegen
 
 
+def _stringdtype_search_na_data(
+        typingctx, value_data, value_index, value_allocator, value_na_kind,
+        value_na_size, value_na_buffer, pattern_data, pattern_index,
+        pattern_allocator, pattern_na_kind, pattern_na_size, pattern_na_buffer,
+        pattern_empty_null, start, end, mode):
+    if value_data != types.voidptr \
+            or not isinstance(value_index, types.Integer) \
+            or value_allocator != types.voidptr \
+            or not isinstance(value_na_kind, types.Integer) \
+            or not isinstance(value_na_size, types.Integer) \
+            or value_na_buffer != types.voidptr \
+            or pattern_data != types.voidptr \
+            or not isinstance(pattern_index, types.Integer) \
+            or pattern_allocator != types.voidptr \
+            or not isinstance(pattern_na_kind, types.Integer) \
+            or not isinstance(pattern_na_size, types.Integer) \
+            or pattern_na_buffer != types.voidptr \
+            or not isinstance(pattern_empty_null, types.Boolean) \
+            or not isinstance(start, types.Integer) \
+            or not isinstance(end, types.Integer):
+        return None
+
+    sig = signature(
+        types.intp,
+        value_data, types.intp, value_allocator, types.int32, types.intp,
+        value_na_buffer, pattern_data, types.intp, pattern_allocator,
+        types.int32, types.intp, pattern_na_buffer, types.boolean, types.intp,
+        types.intp,
+    )
+
+    def codegen(context, builder, signature, args):
+        value_data, value_index_value, value_allocator, value_na_kind, \
+            value_na_size, value_na_buffer, pattern_data, \
+            pattern_index_value, pattern_allocator, pattern_na_kind, \
+            pattern_na_size, pattern_na_buffer, pattern_empty_null, start, \
+            end = args
+
+        int8 = ir.IntType(8)
+        int32 = ir.IntType(32)
+        intp = context.get_value_type(types.intp)
+        byte_ptr = int8.as_pointer()
+        value_packed = _packed_string_ptr_from_data(
+            builder, value_data, value_index_value, intp)
+        pattern_packed = _packed_string_ptr_from_data(
+            builder, pattern_data, pattern_index_value, intp)
+        value_status, value_size, value_buffer = _load_string(
+            builder, value_allocator, value_packed, intp, byte_ptr)
+        pattern_status, pattern_size, pattern_buffer = _load_string(
+            builder, pattern_allocator, pattern_packed, intp, byte_ptr)
+
+        value_null = builder.icmp_signed('==', value_status,
+                                         ir.Constant(int32, 1))
+        pattern_null = builder.icmp_signed('==', pattern_status,
+                                           ir.Constant(int32, 1))
+        value_string = builder.icmp_signed('==', value_na_kind,
+                                           ir.Constant(int32, _NA_STRING))
+        pattern_string = builder.icmp_signed('==', pattern_na_kind,
+                                             ir.Constant(int32, _NA_STRING))
+        value_error = builder.and_(value_null, builder.not_(value_string))
+        pattern_error = builder.and_(
+            builder.and_(pattern_null, builder.not_(pattern_empty_null)),
+            builder.not_(pattern_string),
+        )
+
+        result = cgutils.alloca_once(builder, intp)
+        if mode == 'count':
+            builder.store(ir.Constant(intp, 0), result)
+        else:
+            builder.store(ir.Constant(intp, -1), result)
+
+        with builder.if_else(builder.or_(value_error, pattern_error)) \
+                as (error_path, search_path):
+            with error_path:
+                builder.store(ir.Constant(intp, STRINGDTYPE_SEARCH_ERROR),
+                              result)
+            with search_path:
+                value_status, value_size, value_buffer = _resolve_string_na(
+                    builder, value_status, value_size, value_buffer,
+                    value_na_kind, value_na_size, value_na_buffer, int32)
+                pattern_status, pattern_size, pattern_buffer = \
+                    _resolve_stringdtype_pattern_na_value(
+                        builder, pattern_status, pattern_size, pattern_buffer,
+                        pattern_na_kind, pattern_na_size, pattern_na_buffer,
+                        pattern_empty_null, int32, intp, int8)
+                value_valid = builder.icmp_signed(
+                    '==', value_status, ir.Constant(int32, 0))
+                pattern_valid = builder.icmp_signed(
+                    '==', pattern_status, ir.Constant(int32, 0))
+                with builder.if_then(builder.and_(value_valid,
+                                                  pattern_valid)):
+                    start_index, end_index, start_offset, end_offset, \
+                        slice_valid = _normalise_slice(
+                            builder, value_size, value_buffer, start, end,
+                            intp, int8)
+                    pattern_effective_size = _trimmed_size(
+                        builder, pattern_size, pattern_buffer, intp, int8)
+                    builder.store(
+                        _stringdtype_byte_search_sliced(
+                            builder, value_buffer, start_index, end_index,
+                            start_offset, end_offset, slice_valid,
+                            pattern_effective_size,
+                            _stringdtype_pattern_match_size(
+                                builder, pattern_size, pattern_effective_size,
+                                mode, intp),
+                            pattern_buffer, mode, intp, int8, int32),
+                        result,
+                    )
+
+        return builder.load(result)
+
+    return sig, codegen
+
+
+def _stringdtype_unicode_search_na_data(
+        typingctx, value_data, value_index, value_allocator, value_na_kind,
+        value_na_size, value_na_buffer, pattern, pattern_length, pattern_size,
+        start, end, mode):
+    if value_data != types.voidptr \
+            or not isinstance(value_index, types.Integer) \
+            or value_allocator != types.voidptr \
+            or not isinstance(value_na_kind, types.Integer) \
+            or not isinstance(value_na_size, types.Integer) \
+            or value_na_buffer != types.voidptr \
+            or not isinstance(pattern, types.UnicodeType) \
+            or not isinstance(pattern_length, types.Integer) \
+            or not isinstance(pattern_size, types.Integer) \
+            or not isinstance(start, types.Integer) \
+            or not isinstance(end, types.Integer):
+        return None
+
+    sig = signature(types.intp, value_data, types.intp, value_allocator,
+                    types.int32, types.intp, value_na_buffer, pattern,
+                    types.intp, types.intp, types.intp, types.intp)
+
+    def codegen(context, builder, signature, args):
+        value_data, value_index_value, value_allocator, value_na_kind, \
+            value_na_size, value_na_buffer, pattern, pattern_length, \
+            pattern_size, start, end = args
+
+        int8 = ir.IntType(8)
+        int32 = ir.IntType(32)
+        intp = context.get_value_type(types.intp)
+        byte_ptr = int8.as_pointer()
+        value_packed = _packed_string_ptr_from_data(
+            builder, value_data, value_index_value, intp)
+        value_status, value_size, value_buffer = _load_string(
+            builder, value_allocator, value_packed, intp, byte_ptr)
+
+        value_null = builder.icmp_signed('==', value_status,
+                                         ir.Constant(int32, 1))
+        value_string = builder.icmp_signed('==', value_na_kind,
+                                           ir.Constant(int32, _NA_STRING))
+        value_error = builder.and_(value_null, builder.not_(value_string))
+
+        result = cgutils.alloca_once(builder, intp)
+        if mode == 'count':
+            builder.store(ir.Constant(intp, 0), result)
+        else:
+            builder.store(ir.Constant(intp, -1), result)
+        with builder.if_else(value_error) as (error_path, search_path):
+            with error_path:
+                builder.store(ir.Constant(intp, STRINGDTYPE_SEARCH_ERROR),
+                              result)
+            with search_path:
+                value_status, value_size, value_buffer = _resolve_string_na(
+                    builder, value_status, value_size, value_buffer,
+                    value_na_kind, value_na_size, value_na_buffer, int32)
+                valid = builder.icmp_signed('==', value_status,
+                                            ir.Constant(int32, 0))
+                with builder.if_then(valid):
+                    builder.store(
+                        _stringdtype_unicode_search(
+                            builder, value_size, value_buffer, pattern,
+                            pattern_length, pattern_size, context, start, end,
+                            mode, intp, int8, int32),
+                        result,
+                    )
+
+        return builder.load(result)
+
+    return sig, codegen
+
+
+def _utf8_stringdtype_search_sliced_na_data(
+        typingctx, value_data, start_index, end_index, start_offset,
+        end_offset, slice_valid, pattern_data, pattern_index,
+        pattern_allocator, pattern_na_kind, pattern_na_size, pattern_na_buffer,
+        pattern_empty_null, mode):
+    if value_data != types.voidptr \
+            or not isinstance(start_index, types.Integer) \
+            or not isinstance(end_index, types.Integer) \
+            or not isinstance(start_offset, types.Integer) \
+            or not isinstance(end_offset, types.Integer) \
+            or not isinstance(slice_valid, types.Boolean) \
+            or pattern_data != types.voidptr \
+            or not isinstance(pattern_index, types.Integer) \
+            or pattern_allocator != types.voidptr \
+            or not isinstance(pattern_na_kind, types.Integer) \
+            or not isinstance(pattern_na_size, types.Integer) \
+            or pattern_na_buffer != types.voidptr \
+            or not isinstance(pattern_empty_null, types.Boolean):
+        return None
+
+    sig = signature(types.intp, value_data, types.intp, types.intp,
+                    types.intp, types.intp, types.boolean, pattern_data,
+                    types.intp, pattern_allocator, types.int32, types.intp,
+                    pattern_na_buffer, types.boolean)
+
+    def codegen(context, builder, signature, args):
+        value_data, start_index, end_index, start_offset, end_offset, \
+            slice_valid, pattern_data, pattern_index_value, \
+            pattern_allocator, pattern_na_kind, pattern_na_size, \
+            pattern_na_buffer, pattern_empty_null = args
+
+        int8 = ir.IntType(8)
+        int32 = ir.IntType(32)
+        intp = context.get_value_type(types.intp)
+        byte_ptr = int8.as_pointer()
+        pattern_packed = _packed_string_ptr_from_data(
+            builder, pattern_data, pattern_index_value, intp)
+        pattern_status, pattern_size, pattern_buffer = _load_string(
+            builder, pattern_allocator, pattern_packed, intp, byte_ptr)
+
+        pattern_null = builder.icmp_signed('==', pattern_status,
+                                           ir.Constant(int32, 1))
+        pattern_string = builder.icmp_signed('==', pattern_na_kind,
+                                             ir.Constant(int32, _NA_STRING))
+        pattern_error = builder.and_(
+            builder.and_(pattern_null, builder.not_(pattern_empty_null)),
+            builder.not_(pattern_string),
+        )
+
+        result = cgutils.alloca_once(builder, intp)
+        if mode == 'count':
+            builder.store(ir.Constant(intp, 0), result)
+        else:
+            builder.store(ir.Constant(intp, -1), result)
+        with builder.if_else(pattern_error) as (error_path, search_path):
+            with error_path:
+                builder.store(ir.Constant(intp, STRINGDTYPE_SEARCH_ERROR),
+                              result)
+            with search_path:
+                pattern_status, pattern_size, pattern_buffer = \
+                    _resolve_stringdtype_pattern_na_value(
+                        builder, pattern_status, pattern_size, pattern_buffer,
+                        pattern_na_kind, pattern_na_size, pattern_na_buffer,
+                        pattern_empty_null, int32, intp, int8)
+                pattern_valid = builder.icmp_signed(
+                    '==', pattern_status, ir.Constant(int32, 0))
+                with builder.if_then(pattern_valid):
+                    pattern_effective_size = _trimmed_size(
+                        builder, pattern_size, pattern_buffer, intp, int8)
+                    builder.store(
+                        _stringdtype_byte_search_sliced(
+                            builder, value_data, start_index, end_index,
+                            start_offset, end_offset, slice_valid,
+                            pattern_effective_size,
+                            _stringdtype_pattern_match_size(
+                                builder, pattern_size, pattern_effective_size,
+                                mode, intp),
+                            pattern_buffer, mode, intp, int8, int32),
+                        result,
+                    )
+
+        return builder.load(result)
+
+    return sig, codegen
+
+
 @intrinsic
 def stringdtype_find_data(typingctx, value_data, value_index, value_allocator,
                           pattern_data, pattern_index, pattern_allocator,
@@ -3719,6 +4434,126 @@ def utf8_count_stringdtype_sliced_data(
         typingctx, value_data, start_index, end_index, start_offset,
         end_offset, slice_valid, pattern_data, pattern_index,
         pattern_allocator, 'count',
+    )
+
+
+@intrinsic
+def stringdtype_find_na_data(
+        typingctx, value_data, value_index, value_allocator, value_na_kind,
+        value_na_size, value_na_buffer, pattern_data, pattern_index,
+        pattern_allocator, pattern_na_kind, pattern_na_size, pattern_na_buffer,
+        pattern_empty_null, start, end):
+    return _stringdtype_search_na_data(
+        typingctx, value_data, value_index, value_allocator, value_na_kind,
+        value_na_size, value_na_buffer, pattern_data, pattern_index,
+        pattern_allocator, pattern_na_kind, pattern_na_size, pattern_na_buffer,
+        pattern_empty_null, start, end, 'find',
+    )
+
+
+@intrinsic
+def stringdtype_rfind_na_data(
+        typingctx, value_data, value_index, value_allocator, value_na_kind,
+        value_na_size, value_na_buffer, pattern_data, pattern_index,
+        pattern_allocator, pattern_na_kind, pattern_na_size, pattern_na_buffer,
+        pattern_empty_null, start, end):
+    return _stringdtype_search_na_data(
+        typingctx, value_data, value_index, value_allocator, value_na_kind,
+        value_na_size, value_na_buffer, pattern_data, pattern_index,
+        pattern_allocator, pattern_na_kind, pattern_na_size, pattern_na_buffer,
+        pattern_empty_null, start, end, 'rfind',
+    )
+
+
+@intrinsic
+def stringdtype_count_na_data(
+        typingctx, value_data, value_index, value_allocator, value_na_kind,
+        value_na_size, value_na_buffer, pattern_data, pattern_index,
+        pattern_allocator, pattern_na_kind, pattern_na_size, pattern_na_buffer,
+        pattern_empty_null, start, end):
+    return _stringdtype_search_na_data(
+        typingctx, value_data, value_index, value_allocator, value_na_kind,
+        value_na_size, value_na_buffer, pattern_data, pattern_index,
+        pattern_allocator, pattern_na_kind, pattern_na_size, pattern_na_buffer,
+        pattern_empty_null, start, end, 'count',
+    )
+
+
+@intrinsic
+def stringdtype_find_unicode_na_data(
+        typingctx, value_data, value_index, value_allocator, value_na_kind,
+        value_na_size, value_na_buffer, pattern, pattern_length, pattern_size,
+        start, end):
+    return _stringdtype_unicode_search_na_data(
+        typingctx, value_data, value_index, value_allocator, value_na_kind,
+        value_na_size, value_na_buffer, pattern, pattern_length, pattern_size,
+        start, end, 'find',
+    )
+
+
+@intrinsic
+def stringdtype_rfind_unicode_na_data(
+        typingctx, value_data, value_index, value_allocator, value_na_kind,
+        value_na_size, value_na_buffer, pattern, pattern_length, pattern_size,
+        start, end):
+    return _stringdtype_unicode_search_na_data(
+        typingctx, value_data, value_index, value_allocator, value_na_kind,
+        value_na_size, value_na_buffer, pattern, pattern_length, pattern_size,
+        start, end, 'rfind',
+    )
+
+
+@intrinsic
+def stringdtype_count_unicode_na_data(
+        typingctx, value_data, value_index, value_allocator, value_na_kind,
+        value_na_size, value_na_buffer, pattern, pattern_length, pattern_size,
+        start, end):
+    return _stringdtype_unicode_search_na_data(
+        typingctx, value_data, value_index, value_allocator, value_na_kind,
+        value_na_size, value_na_buffer, pattern, pattern_length, pattern_size,
+        start, end, 'count',
+    )
+
+
+@intrinsic
+def utf8_find_stringdtype_sliced_na_data(
+        typingctx, value_data, start_index, end_index, start_offset,
+        end_offset, slice_valid, pattern_data, pattern_index,
+        pattern_allocator, pattern_na_kind, pattern_na_size, pattern_na_buffer,
+        pattern_empty_null):
+    return _utf8_stringdtype_search_sliced_na_data(
+        typingctx, value_data, start_index, end_index, start_offset,
+        end_offset, slice_valid, pattern_data, pattern_index,
+        pattern_allocator, pattern_na_kind, pattern_na_size, pattern_na_buffer,
+        pattern_empty_null, 'find',
+    )
+
+
+@intrinsic
+def utf8_rfind_stringdtype_sliced_na_data(
+        typingctx, value_data, start_index, end_index, start_offset,
+        end_offset, slice_valid, pattern_data, pattern_index,
+        pattern_allocator, pattern_na_kind, pattern_na_size, pattern_na_buffer,
+        pattern_empty_null):
+    return _utf8_stringdtype_search_sliced_na_data(
+        typingctx, value_data, start_index, end_index, start_offset,
+        end_offset, slice_valid, pattern_data, pattern_index,
+        pattern_allocator, pattern_na_kind, pattern_na_size, pattern_na_buffer,
+        pattern_empty_null, 'rfind',
+    )
+
+
+@intrinsic
+def utf8_count_stringdtype_sliced_na_data(
+        typingctx, value_data, start_index, end_index, start_offset,
+        end_offset, slice_valid, pattern_data, pattern_index,
+        pattern_allocator, pattern_na_kind, pattern_na_size, pattern_na_buffer,
+        pattern_empty_null):
+    return _utf8_stringdtype_search_sliced_na_data(
+        typingctx, value_data, start_index, end_index, start_offset,
+        end_offset, slice_valid, pattern_data, pattern_index,
+        pattern_allocator, pattern_na_kind, pattern_na_size, pattern_na_buffer,
+        pattern_empty_null, 'count',
     )
 
 
