@@ -33,6 +33,14 @@ def _ensure_comparison_shape(len_chr, len_cmp):
 
 
 @register_jitable(**JIT_OPTIONS)
+def _ensure_binary_shape(len_chr, len_sub):
+    """Ensure two fixed-width operands can broadcast to one result length."""
+    if len_chr > 1 and len_sub > 1 and len_chr != len_sub:
+        raise ValueError('shape mismatch: objects cannot be broadcast to a '
+                         'single shape.  Mismatch is between arg 0 and arg 1.')
+
+
+@register_jitable(**JIT_OPTIONS)
 def _rstrip_ord(chr_ord):
     return chr_ord == 0 or 9 <= chr_ord <= 13 or chr_ord == 32
 
@@ -741,6 +749,7 @@ def _get_sub_indices(chr_lens, len_chr, sub_lens, len_sub, start, end, i):
 def count(chr_array, len_chr, size_chr,
           sub_array, len_sub, size_sub, start, end):
     """Native Implementation of np.char.count"""
+    _ensure_binary_shape(len_chr, len_sub)
     start, end = _init_sub_indices(start, end, size_chr)
     if start > size_chr or start > end + size_chr:
         return np.zeros(max(len_chr, len_sub), 'int64')
@@ -830,6 +839,7 @@ def endswith(chr_array, len_chr, size_chr,
              sub_array, len_sub, size_sub,
              start, end):
     """Native Implementation of np.char.endswith"""
+    _ensure_binary_shape(len_chr, len_sub)
     start, end = _init_sub_indices(start, end, size_chr)
     if start > size_chr or start > end + size_chr:
         return np.zeros(max(len_chr, len_sub), 'bool')
@@ -902,6 +912,7 @@ def startswith(chr_array, len_chr, size_chr,
                sub_array, len_sub, size_sub,
                start, end):
     """Native Implementation of np.char.startswith"""
+    _ensure_binary_shape(len_chr, len_sub)
     start, end = _init_sub_indices(start, end, size_chr)
     if start > size_chr or start > end + size_chr:
         return np.zeros(max(len_chr, len_sub), 'bool')
@@ -964,6 +975,7 @@ def _startswith_scalar_default(chr_array, len_chr, size_chr,
 def find(chr_array, len_chr, size_chr,
          sub_array, len_sub, size_sub, start, end):
     """Native Implementation of np.char.find"""
+    _ensure_binary_shape(len_chr, len_sub)
     start, end = _init_sub_indices(start, end, size_chr)
     if start > size_chr or start > end + size_chr:
         return -np.ones(max(len_chr, len_sub), 'int64')
@@ -1004,6 +1016,7 @@ def rfind(chr_array, len_chr, size_chr,
           sub_array, len_sub, size_sub,
           start, end):
     """Native Implementation of np.char.rfind"""
+    _ensure_binary_shape(len_chr, len_sub)
     start, end = _init_sub_indices(start, end, size_chr)
     if start > size_chr or start > end + size_chr:
         return -np.ones(max(len_chr, len_sub), 'int64')
@@ -1085,6 +1098,7 @@ def index(chr_array, len_chr, size_chr,
           sub_array, len_sub, size_sub,
           start, end):
     """Native Implementation of np.char.index"""
+    _ensure_binary_shape(len_chr, len_sub)
     start, end = _init_sub_indices(start, end, size_chr)
     if start > size_chr or start > end + size_chr:
         raise ValueError('substring not found')
@@ -1129,6 +1143,7 @@ def rindex(chr_array, len_chr, size_chr,
            sub_array, len_sub, size_sub,
            start, end):
     """Native Implementation of np.char.rindex"""
+    _ensure_binary_shape(len_chr, len_sub)
     start, end = _init_sub_indices(start, end, size_chr)
     if start > size_chr or start > end + size_chr:
         raise ValueError('substring not found')

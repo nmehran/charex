@@ -142,6 +142,20 @@ def test_strings_index_not_found_matches_numpy(_, impl_name, baseline, args):
     assert_same_exception(getattr(strings, impl_name), baseline, *args)
 
 
+@pytest.mark.parametrize('_, impl_name, baseline',
+                         OCCURRENCE_FUNCS + INDEX_FUNCS)
+@pytest.mark.parametrize('args', [
+    (np.array(['abc', 'def', 'ghi'], dtype='U3'),
+     np.array(['a', 'd'], dtype='U1')),
+    (np.array([b'abc', b'def', b'ghi'], dtype='S3'),
+     np.array([b'a', b'd'], dtype='S1')),
+])
+def test_strings_occurrence_shape_mismatch_matches_numpy(
+        _, impl_name, baseline, args):
+    strings = StringsInformation()
+    assert_same_exception(getattr(strings, impl_name), baseline, *args)
+
+
 @pytest.mark.parametrize('_, impl_name, baseline', PROPERTY_FUNCS)
 @pytest.mark.parametrize('values', [PROPERTY_UNICODE, PROPERTY_BYTES])
 def test_strings_properties_match_numpy(_, impl_name, baseline, values):

@@ -16,7 +16,7 @@ python docs/exploration/string_array_shape_audit.py --methods all
 
 The script writes `docs/exploration/string_array_shape_audit.csv`.
 
-## Initial Audit
+## Current Audit
 
 Environment:
 
@@ -27,10 +27,10 @@ Environment:
 Full matrix:
 
 - rows: 1702
-- matching rows: 1056
-- mismatches: 646
+- matching rows: 1080
+- mismatches: 622
 - NumPy accepts but charex currently rejects: 558
-- NumPy raises but charex currently returns a value: 24
+- NumPy raises but charex currently returns a value: 0
 - both raise but with different error type/status: 64
 - successful value mismatches: 0
 
@@ -46,16 +46,10 @@ still scalar or one-dimensional C-contiguous only.
 paths are covered. Remaining `StringDType` shape gaps are N-D same-shape and
 N-D broadcasting.
 
-There is also an existing fixed-width shape-mismatch correctness bug in
-occurrence methods. For 1-D mismatched fixed-width arrays, NumPy raises a
-broadcast `ValueError`, but charex currently returns a result for:
-
-- `count`
-- `find`
-- `rfind`
-- `index` / `rindex` through `np.strings`
-- `startswith`
-- `endswith`
+The first correctness fix on this branch closed an existing fixed-width
+shape-mismatch bug in occurrence methods. For 1-D mismatched fixed-width
+arrays, NumPy raises a broadcast `ValueError`; charex now raises instead of
+returning a result.
 
 Byte-only Unicode predicates need a separate error-shape decision. NumPy raises
 `UFuncTypeError` for bytes with `isdecimal` and `isnumeric`; charex raises a
@@ -64,19 +58,16 @@ should remain visible in the parity matrix.
 
 ## Next Iteration
 
-1. Fix fixed-width 1-D shape mismatch for occurrence methods.
-   This is a correctness bug and should be smaller than general broadcasting.
-
-2. Add fixed-width 1-D strided support for `np.char` and `np.strings`.
+1. Add fixed-width 1-D strided support for `np.char` and `np.strings`.
    Preserve the current C-contiguous fast path and add a stride-aware fixed-width
    access path at the registration boundary.
 
-3. Add fixed-width N-D same-shape support.
+2. Add fixed-width N-D same-shape support.
    Do this before general broadcasting so the index mapping stays reviewable.
 
-4. Add broadcast-compatible shape support for fixed-width and `StringDType`.
+3. Add broadcast-compatible shape support for fixed-width and `StringDType`.
    General broadcasting should be a separate path and should not slow the
    scalar/0-D/1-D fast paths.
 
-5. Re-run the full audit matrix after each tranche and use the CSV diff to
+4. Re-run the full audit matrix after each tranche and use the CSV diff to
    decide the next smallest correctness slice.
