@@ -757,6 +757,28 @@ def _resolve_stringdtype_pattern_na_value(builder, status, size, buffer,
     return status, size, buffer
 
 
+def _stringdtype_affix_na_flags(builder, status, na_kind, empty_null, int32):
+    is_null = builder.icmp_signed('==', status, ir.Constant(int32, 1))
+    is_string = builder.icmp_signed('==', na_kind,
+                                    ir.Constant(int32, _NA_STRING))
+    is_nan = builder.icmp_signed('==', na_kind, ir.Constant(int32, _NA_NAN))
+    checked_null = builder.and_(is_null, builder.not_(empty_null))
+    error = builder.and_(
+        checked_null, builder.not_(builder.or_(is_string, is_nan)))
+    false_result = builder.and_(checked_null, is_nan)
+    return error, false_result
+
+
+def _stringdtype_search_na_error(builder, status, na_kind, empty_null, int32):
+    is_null = builder.icmp_signed('==', status, ir.Constant(int32, 1))
+    is_string = builder.icmp_signed('==', na_kind,
+                                    ir.Constant(int32, _NA_STRING))
+    return builder.and_(
+        builder.and_(is_null, builder.not_(empty_null)),
+        builder.not_(is_string),
+    )
+
+
 def _stringdtype_bool(builder, value, int8):
     return builder.select(value, ir.Constant(int8, STRINGDTYPE_BOOL_TRUE),
                           ir.Constant(int8, STRINGDTYPE_BOOL_FALSE))
@@ -3147,29 +3169,12 @@ def _stringdtype_affix_na_data(
         pattern_status, pattern_size, pattern_buffer = _load_string(
             builder, pattern_allocator, pattern_packed, intp, byte_ptr)
 
-        value_null = builder.icmp_signed('==', value_status,
-                                         ir.Constant(int32, 1))
-        pattern_null = builder.icmp_signed('==', pattern_status,
-                                           ir.Constant(int32, 1))
-        value_string = builder.icmp_signed('==', value_na_kind,
-                                           ir.Constant(int32, _NA_STRING))
-        pattern_string = builder.icmp_signed('==', pattern_na_kind,
-                                             ir.Constant(int32, _NA_STRING))
-        value_nan = builder.icmp_signed('==', value_na_kind,
-                                        ir.Constant(int32, _NA_NAN))
-        pattern_nan = builder.icmp_signed('==', pattern_na_kind,
-                                          ir.Constant(int32, _NA_NAN))
-        value_error = builder.and_(
-            value_null, builder.not_(builder.or_(value_string, value_nan)))
-        pattern_error = builder.and_(
-            builder.and_(pattern_null, builder.not_(pattern_empty_null)),
-            builder.not_(builder.or_(pattern_string, pattern_nan)),
-        )
-        false_result = builder.or_(
-            builder.and_(value_null, value_nan),
-            builder.and_(builder.and_(pattern_null, pattern_nan),
-                         builder.not_(pattern_empty_null)),
-        )
+        value_error, value_false = _stringdtype_affix_na_flags(
+            builder, value_status, value_na_kind, cgutils.false_bit, int32)
+        pattern_error, pattern_false = _stringdtype_affix_na_flags(
+            builder, pattern_status, pattern_na_kind, pattern_empty_null,
+            int32)
+        false_result = builder.or_(value_false, pattern_false)
 
         result = cgutils.alloca_once(builder, int8)
         builder.store(ir.Constant(int8, STRINGDTYPE_BOOL_FALSE), result)
@@ -3256,15 +3261,8 @@ def _stringdtype_unicode_affix_na_data(
         value_status, value_size, value_buffer = _load_string(
             builder, value_allocator, value_packed, intp, byte_ptr)
 
-        value_null = builder.icmp_signed('==', value_status,
-                                         ir.Constant(int32, 1))
-        value_string = builder.icmp_signed('==', value_na_kind,
-                                           ir.Constant(int32, _NA_STRING))
-        value_nan = builder.icmp_signed('==', value_na_kind,
-                                        ir.Constant(int32, _NA_NAN))
-        value_error = builder.and_(
-            value_null, builder.not_(builder.or_(value_string, value_nan)))
-        value_false = builder.and_(value_null, value_nan)
+        value_error, value_false = _stringdtype_affix_na_flags(
+            builder, value_status, value_na_kind, cgutils.false_bit, int32)
 
         result = cgutils.alloca_once(builder, int8)
         builder.store(ir.Constant(int8, STRINGDTYPE_BOOL_FALSE), result)
@@ -3364,20 +3362,9 @@ def _utf8_stringdtype_sliced_affix_na_data(
         pattern_status, pattern_size, pattern_buffer = _load_string(
             builder, pattern_allocator, pattern_packed, intp, byte_ptr)
 
-        pattern_null = builder.icmp_signed('==', pattern_status,
-                                           ir.Constant(int32, 1))
-        pattern_string = builder.icmp_signed('==', pattern_na_kind,
-                                             ir.Constant(int32, _NA_STRING))
-        pattern_nan = builder.icmp_signed('==', pattern_na_kind,
-                                          ir.Constant(int32, _NA_NAN))
-        pattern_error = builder.and_(
-            builder.and_(pattern_null, builder.not_(pattern_empty_null)),
-            builder.not_(builder.or_(pattern_string, pattern_nan)),
-        )
-        pattern_false = builder.and_(
-            builder.and_(pattern_null, pattern_nan),
-            builder.not_(pattern_empty_null),
-        )
+        pattern_error, pattern_false = _stringdtype_affix_na_flags(
+            builder, pattern_status, pattern_na_kind, pattern_empty_null,
+            int32)
 
         result = cgutils.alloca_once(builder, int8)
         builder.store(ir.Constant(int8, STRINGDTYPE_BOOL_FALSE), result)
@@ -4023,19 +4010,11 @@ def _stringdtype_search_na_data(
         pattern_status, pattern_size, pattern_buffer = _load_string(
             builder, pattern_allocator, pattern_packed, intp, byte_ptr)
 
-        value_null = builder.icmp_signed('==', value_status,
-                                         ir.Constant(int32, 1))
-        pattern_null = builder.icmp_signed('==', pattern_status,
-                                           ir.Constant(int32, 1))
-        value_string = builder.icmp_signed('==', value_na_kind,
-                                           ir.Constant(int32, _NA_STRING))
-        pattern_string = builder.icmp_signed('==', pattern_na_kind,
-                                             ir.Constant(int32, _NA_STRING))
-        value_error = builder.and_(value_null, builder.not_(value_string))
-        pattern_error = builder.and_(
-            builder.and_(pattern_null, builder.not_(pattern_empty_null)),
-            builder.not_(pattern_string),
-        )
+        value_error = _stringdtype_search_na_error(
+            builder, value_status, value_na_kind, cgutils.false_bit, int32)
+        pattern_error = _stringdtype_search_na_error(
+            builder, pattern_status, pattern_na_kind, pattern_empty_null,
+            int32)
 
         result = cgutils.alloca_once(builder, intp)
         if mode == 'count':
@@ -4121,11 +4100,8 @@ def _stringdtype_unicode_search_na_data(
         value_status, value_size, value_buffer = _load_string(
             builder, value_allocator, value_packed, intp, byte_ptr)
 
-        value_null = builder.icmp_signed('==', value_status,
-                                         ir.Constant(int32, 1))
-        value_string = builder.icmp_signed('==', value_na_kind,
-                                           ir.Constant(int32, _NA_STRING))
-        value_error = builder.and_(value_null, builder.not_(value_string))
+        value_error = _stringdtype_search_na_error(
+            builder, value_status, value_na_kind, cgutils.false_bit, int32)
 
         result = cgutils.alloca_once(builder, intp)
         if mode == 'count':
@@ -4196,14 +4172,9 @@ def _utf8_stringdtype_search_sliced_na_data(
         pattern_status, pattern_size, pattern_buffer = _load_string(
             builder, pattern_allocator, pattern_packed, intp, byte_ptr)
 
-        pattern_null = builder.icmp_signed('==', pattern_status,
-                                           ir.Constant(int32, 1))
-        pattern_string = builder.icmp_signed('==', pattern_na_kind,
-                                             ir.Constant(int32, _NA_STRING))
-        pattern_error = builder.and_(
-            builder.and_(pattern_null, builder.not_(pattern_empty_null)),
-            builder.not_(pattern_string),
-        )
+        pattern_error = _stringdtype_search_na_error(
+            builder, pattern_status, pattern_na_kind, pattern_empty_null,
+            int32)
 
         result = cgutils.alloca_once(builder, intp)
         if mode == 'count':
