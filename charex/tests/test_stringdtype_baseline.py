@@ -565,6 +565,7 @@ def test_stringdtype_na_object_variants_are_typed(na_object):
 
 
 @pytest.mark.parametrize('left,right', [
+    ('', 'MISSING'),
     ('MISSING', 'NA'),
     ('é', '🙂'),
 ])
@@ -707,10 +708,21 @@ def test_stringdtype_incompatible_na_object_comparisons_match_numpy(
     ('strings_not_equal', STRINGS.not_equal),
     *STRINGDTYPE_ORDER_COMPARISONS,
 ])
-def test_stringdtype_compatible_false_zero_na_object_comparisons_match_numpy(
-        impl_name, baseline):
-    left = np.array(['a', 0, ''], dtype=STRING_DTYPE(na_object=0))
-    right = np.array(['a', False, ''], dtype=STRING_DTYPE(na_object=False))
+@pytest.mark.parametrize('left_na, right_na', [
+    (0, False),
+    (0, np.int64(0)),
+    (False, np.bool_(False)),
+    (1, np.int64(1)),
+    (1, 1.0),
+    (1, complex(1, 0)),
+    (np.inf, np.float64(np.inf)),
+    (complex(np.inf, 0), np.complex128(complex(np.inf, 0))),
+    (np.nan, np.float64(np.nan)),
+])
+def test_stringdtype_compatible_numeric_na_object_comparisons_match_numpy(
+        impl_name, baseline, left_na, right_na):
+    left = np.array(['a', left_na, ''], dtype=STRING_DTYPE(na_object=left_na))
+    right = np.array(['a', right_na, ''], dtype=STRING_DTYPE(na_object=right_na))
 
     assert_same_outcome(strings_impl(impl_name), baseline, left, right)
 

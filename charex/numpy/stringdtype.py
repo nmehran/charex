@@ -38,7 +38,7 @@ class StringDTypePacket(types.Type):
         self.na_name = na_name
         if na_kind == 0:
             name = 'StringDTypePacket'
-        elif na_name:
+        elif na_kind == _NA_STRING or na_name:
             name = f'StringDTypePacket(na_kind={na_kind}, na_name={na_name!r})'
         else:
             name = f'StringDTypePacket(na_kind={na_kind})'
@@ -155,9 +155,42 @@ def has_stringdtype_na_object(dtype):
     return True
 
 
-def _stringdtype_na_token(na_object):
+def _numeric_na_token(na_object):
+    def part_token(value):
+        if not np.isfinite(value):
+            return repr(value), '1'
+        numerator, denominator = value.as_integer_ratio()
+        return str(numerator), str(denominator)
+
     if isinstance(na_object, (bool, np.bool_)):
-        return str(int(na_object)).encode('utf-8')
+        real = (str(int(na_object)), '1')
+        imag = ('0', '1')
+    elif isinstance(na_object, (int, np.integer)):
+        real = (str(int(na_object)), '1')
+        imag = ('0', '1')
+    elif isinstance(na_object, (float, np.floating)):
+        real = part_token(float(na_object))
+        imag = ('0', '1')
+    elif isinstance(na_object, (complex, np.complexfloating)):
+        value = complex(na_object)
+        real = part_token(value.real)
+        imag = part_token(value.imag)
+    else:
+        return None
+    return f'{real[0]}/{real[1]}:{imag[0]}/{imag[1]}'.encode('ascii')
+
+
+def _stringdtype_na_token(na_object):
+    try:
+        if np.isnan(na_object):
+            if isinstance(na_object, float):
+                return b'nan'
+            return repr(na_object).encode('utf-8')
+    except (TypeError, ValueError):
+        pass
+    numeric = _numeric_na_token(na_object)
+    if numeric is not None:
+        return numeric
     return repr(na_object).encode('utf-8')
 
 
