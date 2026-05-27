@@ -1194,7 +1194,7 @@ Prototype checkpoint:
    - multidimensional arrays and NumPy-compatible broadcasting;
    - keep the one-dimensional contiguous fast path intact.
   - Current prototype supports one-dimensional strided `StringDType` arrays,
-    including positive and negative strides, for the supported operation
+    including positive, negative, and zero strides, for the supported operation
     families.
 9. Full catalog:
    - transformation methods such as replace/case conversion/padding;

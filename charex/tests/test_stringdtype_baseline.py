@@ -162,6 +162,16 @@ def test_charex_registers_stringdtype_strided_array_type():
     assert value_type.dtype.name == 'StringDTypePacket'
 
 
+def test_charex_registers_stringdtype_zero_stride_array_type():
+    values = np.broadcast_to(stringdtype_array(['abc']), (3,))
+
+    value_type = typeof(values)
+
+    assert value_type.ndim == 1
+    assert value_type.layout == 'A'
+    assert value_type.dtype.name == 'StringDTypePacket'
+
+
 def test_stringdtype_shape_metadata_compiles():
     values = stringdtype_array(['a', 'é', '🙂'])
 
@@ -586,6 +596,20 @@ def test_stringdtype_array_predicates_noncontiguous_arrays_match_numpy(
     ])[::-2]
     baseline = dict(STRINGDTYPE_PREDICATES)[impl_name]
 
+    assert_same_view(getattr(strings, impl_name), baseline, values)
+
+
+@pytest.mark.parametrize('impl_name, baseline', [
+    ('strings_str_len', STRINGS.str_len),
+    ('strings_isalpha', STRINGS.isalpha),
+])
+def test_stringdtype_unary_readonly_zero_stride_views_match_numpy(
+        impl_name, baseline):
+    strings = StringsInformation()
+    values = np.broadcast_to(stringdtype_array(['alpha']), (4,))
+
+    assert not values.flags.writeable
+    assert values.strides == (0,)
     assert_same_view(getattr(strings, impl_name), baseline, values)
 
 
@@ -1185,6 +1209,29 @@ def test_stringdtype_array_equal_noncontiguous_arrays_match_numpy(
     assert_same_view(getattr(strings, impl_name), baseline, left, right)
 
 
+@pytest.mark.parametrize('impl_name, baseline', [
+    ('strings_equal', STRINGS.equal),
+    ('strings_not_equal', STRINGS.not_equal),
+    *STRINGDTYPE_ORDER_COMPARISONS,
+    ('strings_startswith', STRINGS.startswith),
+    ('strings_endswith', STRINGS.endswith),
+    ('strings_find', STRINGS.find),
+    ('strings_rfind', STRINGS.rfind),
+    ('strings_count', STRINGS.count),
+    ('strings_index', STRINGS.index),
+    ('strings_rindex', STRINGS.rindex),
+])
+def test_stringdtype_zero_stride_binary_views_match_numpy(
+        impl_name, baseline):
+    implementation = strings_impl(impl_name)
+    values = np.broadcast_to(stringdtype_array(['abcabc']), (4,))
+    patterns = np.broadcast_to(stringdtype_array(['a']), (4,))
+
+    assert values.strides == (0,)
+    assert patterns.strides == (0,)
+    assert_same_view_outcome(implementation, baseline, values, patterns)
+
+
 @pytest.mark.parametrize('impl_name', [
     name for name, _ in STRINGDTYPE_ORDER_COMPARISONS
 ])
@@ -1423,6 +1470,18 @@ def test_stringdtype_array_affix_noncontiguous_arrays_match_numpy(impl_name):
     baseline = STRINGS.startswith if impl_name == 'strings_startswith' \
         else STRINGS.endswith
 
+    assert_same_view(getattr(strings, impl_name), baseline, values, patterns)
+
+
+@pytest.mark.parametrize('impl_name, baseline', STRINGDTYPE_AFFIX_METHODS)
+def test_stringdtype_array_affix_empty_strided_views_match_numpy(
+        impl_name, baseline):
+    strings = StringsInformation()
+    values = stringdtype_array(['abc', 'x'])[:0:2]
+    patterns = stringdtype_array(['a', 'x'])[:0:2]
+
+    assert values.size == 0
+    assert patterns.size == 0
     assert_same_view(getattr(strings, impl_name), baseline, values, patterns)
 
 
@@ -1737,6 +1796,18 @@ def test_stringdtype_array_search_noncontiguous_arrays_match_numpy(impl_name):
     patterns = stringdtype_array(['z', '🙂', 'y', 'é', 'x', 'bc'])[::-2]
     baseline = dict(STRINGDTYPE_SEARCH_METHODS)[impl_name]
 
+    assert_same_view(getattr(strings, impl_name), baseline, values, patterns)
+
+
+@pytest.mark.parametrize('impl_name, baseline', STRINGDTYPE_SEARCH_METHODS)
+def test_stringdtype_array_search_empty_strided_views_match_numpy(
+        impl_name, baseline):
+    strings = StringsInformation()
+    values = stringdtype_array(['abc', 'x'])[:0:2]
+    patterns = stringdtype_array(['a', 'x'])[:0:2]
+
+    assert values.size == 0
+    assert patterns.size == 0
     assert_same_view(getattr(strings, impl_name), baseline, values, patterns)
 
 
