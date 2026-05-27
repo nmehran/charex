@@ -11,7 +11,9 @@ from numba.core.errors import TypingError
 from charex.tests.definitions import (
     StringsComparisonOperators, StringsInformation,
 )
-from charex.tests.support import assert_same, assert_same_exception
+from charex.tests.support import (
+    assert_same, assert_same_exception, copy_args,
+)
 
 
 STRINGS = getattr(np, 'strings', None)
@@ -74,6 +76,15 @@ def strings_impl(impl_name):
     if impl_name in STRINGDTYPE_COMPARISON_METHODS:
         return getattr(StringsComparisonOperators(), impl_name)
     return getattr(StringsInformation(), impl_name)
+
+
+def assert_same_outcome(implementation, baseline, *args):
+    try:
+        baseline(*copy_args(args))
+    except Exception:
+        assert_same_exception(implementation, baseline, *args)
+    else:
+        assert_same(implementation, baseline, *args)
 
 
 def test_charex_registers_stringdtype_array_type():
@@ -622,7 +633,7 @@ def test_stringdtype_predicate_na_object_variants_match_numpy(
 
 
 @pytest.mark.parametrize('impl_name', [
-    'strings_equal', 'strings_greater', 'strings_startswith', 'strings_find',
+    'strings_startswith', 'strings_find',
 ])
 @pytest.mark.parametrize('na_object', NA_OBJECT_VARIANTS)
 def test_stringdtype_na_object_binary_operations_remain_explicitly_rejected(
@@ -633,6 +644,116 @@ def test_stringdtype_na_object_binary_operations_remain_explicitly_rejected(
 
     with pytest.raises(TypingError, match='na_object support'):
         implementation(values, values)
+
+
+@pytest.mark.parametrize('impl_name, baseline', [
+    ('strings_equal', STRINGS.equal),
+    ('strings_not_equal', STRINGS.not_equal),
+    *STRINGDTYPE_ORDER_COMPARISONS,
+])
+@pytest.mark.parametrize('na_object', NA_OBJECT_VARIANTS)
+def test_stringdtype_na_object_array_comparisons_match_numpy(
+        impl_name, baseline, na_object):
+    values = np.array(['a', na_object, '', 'MISSING', 'aa'],
+                      dtype=STRING_DTYPE(na_object=na_object))
+    patterns = np.array(['a', 'a', na_object, '', 'z'],
+                        dtype=STRING_DTYPE(na_object=na_object))
+    implementation = strings_impl(impl_name)
+
+    assert_same_outcome(implementation, baseline, values, values)
+    assert_same_outcome(implementation, baseline, values, patterns)
+
+
+@pytest.mark.parametrize('impl_name, baseline', [
+    ('strings_equal', STRINGS.equal),
+    ('strings_not_equal', STRINGS.not_equal),
+    *STRINGDTYPE_ORDER_COMPARISONS,
+])
+@pytest.mark.parametrize('na_object', NA_OBJECT_VARIANTS)
+def test_stringdtype_na_object_mixed_default_array_comparisons_match_numpy(
+        impl_name, baseline, na_object):
+    default = stringdtype_array(['a', 'x', '', 'MISSING', 'aa'])
+    sentinel = np.array(['a', na_object, '', 'MISSING', 'aa'],
+                        dtype=STRING_DTYPE(na_object=na_object))
+    implementation = strings_impl(impl_name)
+
+    assert_same_outcome(implementation, baseline, default, sentinel)
+    assert_same_outcome(implementation, baseline, sentinel, default)
+
+
+@pytest.mark.parametrize('impl_name, baseline', [
+    ('strings_equal', STRINGS.equal),
+    ('strings_not_equal', STRINGS.not_equal),
+    *STRINGDTYPE_ORDER_COMPARISONS,
+])
+@pytest.mark.parametrize('left_na, right_na', [
+    (None, np.nan),
+    (np.nan, np.float32(np.nan)),
+    (np.nan, complex(np.nan, 0)),
+    ('', 'MISSING'),
+    ('é', 'MISSING'),
+    (None, 0),
+])
+def test_stringdtype_incompatible_na_object_comparisons_match_numpy(
+        impl_name, baseline, left_na, right_na):
+    left = np.array(['a', left_na], dtype=STRING_DTYPE(na_object=left_na))
+    right = np.array(['a', right_na], dtype=STRING_DTYPE(na_object=right_na))
+
+    assert_same_exception(strings_impl(impl_name), baseline, left, right)
+
+
+@pytest.mark.parametrize('impl_name, baseline', [
+    ('strings_equal', STRINGS.equal),
+    ('strings_not_equal', STRINGS.not_equal),
+    *STRINGDTYPE_ORDER_COMPARISONS,
+])
+def test_stringdtype_compatible_false_zero_na_object_comparisons_match_numpy(
+        impl_name, baseline):
+    left = np.array(['a', 0, ''], dtype=STRING_DTYPE(na_object=0))
+    right = np.array(['a', False, ''], dtype=STRING_DTYPE(na_object=False))
+
+    assert_same_outcome(strings_impl(impl_name), baseline, left, right)
+
+
+@pytest.mark.parametrize('impl_name, baseline', [
+    ('strings_equal', STRINGS.equal),
+    ('strings_not_equal', STRINGS.not_equal),
+    *STRINGDTYPE_ORDER_COMPARISONS,
+])
+@pytest.mark.parametrize('na_object', NA_OBJECT_VARIANTS)
+def test_stringdtype_na_object_mixed_unicode_array_comparisons_match_numpy(
+        impl_name, baseline, na_object):
+    sentinel = np.array(['a', na_object, '', 'MISSING', 'aa'],
+                        dtype=STRING_DTYPE(na_object=na_object))
+    unicode = np.array(['a', 'a', '', 'MISSING', 'z'], dtype='U16')
+    implementation = strings_impl(impl_name)
+
+    assert_same_outcome(implementation, baseline, sentinel, unicode)
+    assert_same_outcome(implementation, baseline, unicode, sentinel)
+
+
+@pytest.mark.parametrize('impl_name, baseline', [
+    ('strings_equal', STRINGS.equal),
+    ('strings_not_equal', STRINGS.not_equal),
+    *STRINGDTYPE_ORDER_COMPARISONS,
+])
+@pytest.mark.parametrize('na_object', NA_OBJECT_VARIANTS)
+@pytest.mark.parametrize('scalar', ['', 'a', 'MISSING', 'é'])
+@pytest.mark.parametrize('scalar_factory', [
+    pytest.param(lambda value: value, id='python-str'),
+    pytest.param(np.str_, id='numpy-str-scalar'),
+    pytest.param(lambda value: np.array(value, dtype='U16'),
+                 id='zero-dimensional-unicode-array'),
+])
+def test_stringdtype_na_object_unicode_scalar_comparisons_match_numpy(
+        impl_name, baseline, na_object, scalar, scalar_factory):
+    values = np.array(['a', na_object, '', 'MISSING', 'aa'],
+                      dtype=STRING_DTYPE(na_object=na_object))
+    scalar = scalar_factory(scalar)
+    implementation = strings_impl(impl_name)
+
+    assert_same_outcome(implementation, baseline, values, scalar)
+    assert_same_outcome(implementation, baseline, scalar, values)
 
 
 def test_stringdtype_requires_native_helper():

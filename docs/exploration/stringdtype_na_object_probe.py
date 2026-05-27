@@ -83,6 +83,8 @@ def array_for(na_object, values):
 
 
 def print_operation_truth_tables():
+    default_values = np.array(["a", "x", "", "MISSING", "aa"],
+                              dtype=StringDType())
     for na_object in NA_OBJECTS:
         dtype = StringDType(na_object=na_object)
         values = array_for(na_object, ["a", na_object, "", "MISSING", "aa"])
@@ -100,9 +102,21 @@ def print_operation_truth_tables():
         for name, op in BINARY_OPS:
             print(f"{name:14} {call_repr(op, values, values)}")
 
+        print("\n### binary patterns")
+        for name, op in BINARY_OPS:
+            print(f"{name:14} {call_repr(op, values, patterns)}")
+
         print("\n### binary scalar 'a'")
         for name, op in BINARY_OPS:
             print(f"{name:14} {call_repr(op, values, 'a')}")
+
+        print("\n### binary default left")
+        for name, op in BINARY_OPS:
+            print(f"{name:14} {call_repr(op, default_values, values)}")
+
+        print("\n### binary default right")
+        for name, op in BINARY_OPS:
+            print(f"{name:14} {call_repr(op, values, default_values)}")
 
         print("\n### affix scalar 'a'")
         for name, op in AFFIX_OPS:

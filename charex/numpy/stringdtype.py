@@ -26,6 +26,8 @@ _PACKED_STRING_SIZE = 16
 _NA_NONE = 1
 _NA_NAN = 2
 _NA_STRING = 3
+STRINGDTYPE_ORDER_ERROR = -2147483648
+STRINGDTYPE_ORDER_FALSE = -2147483647
 
 
 class StringDTypePacket(types.Type):
@@ -36,7 +38,7 @@ class StringDTypePacket(types.Type):
         self.na_name = na_name
         if na_kind == 0:
             name = 'StringDTypePacket'
-        elif na_kind == _NA_STRING:
+        elif na_name:
             name = f'StringDTypePacket(na_kind={na_kind}, na_name={na_name!r})'
         else:
             name = f'StringDTypePacket(na_kind={na_kind})'
@@ -153,6 +155,12 @@ def has_stringdtype_na_object(dtype):
     return True
 
 
+def _stringdtype_na_token(na_object):
+    if isinstance(na_object, (bool, np.bool_)):
+        return str(int(na_object)).encode('utf-8')
+    return repr(na_object).encode('utf-8')
+
+
 def _stringdtype_packet_type(dtype):
     if not has_stringdtype_na_object(dtype):
         return stringdtype_packet
@@ -165,10 +173,11 @@ def _stringdtype_packet_type(dtype):
         )
     try:
         if np.isnan(na_object):
-            return StringDTypePacket(_NA_NAN)
+            return StringDTypePacket(_NA_NAN,
+                                     _stringdtype_na_token(na_object))
     except TypeError:
         pass
-    return StringDTypePacket(_NA_NONE)
+    return StringDTypePacket(_NA_NONE, _stringdtype_na_token(na_object))
 
 
 def is_stringdtype_array_type(value):
@@ -573,6 +582,119 @@ def _memcmp_equal(builder, left, right, size, int8, int32):
         '==', builder.call(memcmp, [left, right, size]),
         ir.Constant(int32, 0),
     )
+
+
+def _stringdtype_binary_equal(builder, left_size, left_buffer, right_size,
+                              right_buffer, intp, int8, int32):
+    result = cgutils.alloca_once(builder, ir.IntType(1))
+    builder.store(cgutils.false_bit, result)
+    same_size = builder.icmp_unsigned('==', left_size, right_size)
+
+    with builder.if_then(same_size):
+        empty = builder.icmp_unsigned('==', left_size, ir.Constant(intp, 0))
+        with builder.if_else(empty) as (empty_path, nonempty_path):
+            with empty_path:
+                builder.store(cgutils.true_bit, result)
+            with nonempty_path:
+                memchr_type = ir.FunctionType(
+                    int8.as_pointer(), [int8.as_pointer(), int32, intp])
+                memcmp_type = ir.FunctionType(
+                    int32, [int8.as_pointer(), int8.as_pointer(), intp])
+                memchr = cgutils.get_or_insert_function(
+                    builder.module, memchr_type, 'memchr',
+                )
+                memcmp = cgutils.get_or_insert_function(
+                    builder.module, memcmp_type, 'memcmp',
+                )
+                full_cmp = builder.call(
+                    memcmp, [left_buffer, right_buffer, left_size],
+                )
+                full_equal = builder.icmp_signed(
+                    '==', full_cmp, ir.Constant(int32, 0))
+                builder.store(full_equal, result)
+                with builder.if_then(builder.not_(full_equal)):
+                    nul_ptr = builder.call(
+                        memchr,
+                        [left_buffer, ir.Constant(int32, 0), left_size],
+                    )
+                    found_nul = builder.icmp_unsigned(
+                        '!=', nul_ptr, ir.Constant(int8.as_pointer(), None),
+                    )
+                    with builder.if_then(found_nul):
+                        left_addr = builder.ptrtoint(left_buffer, intp)
+                        nul_addr = builder.ptrtoint(nul_ptr, intp)
+                        compare_size = builder.add(
+                            builder.sub(nul_addr, left_addr),
+                            ir.Constant(intp, 1),
+                        )
+                        nul_cmp = builder.call(
+                            memcmp,
+                            [left_buffer, right_buffer, compare_size],
+                        )
+                        builder.store(
+                            builder.icmp_signed('==', nul_cmp,
+                                                ir.Constant(int32, 0)),
+                            result,
+                        )
+
+    return builder.load(result)
+
+
+def _stringdtype_byte_compare_safe(builder, left_size, left_buffer,
+                                   right_size, right_buffer, intp, int8,
+                                   int32):
+    compare_size = builder.select(
+        builder.icmp_unsigned('<', left_size, right_size),
+        left_size,
+        right_size,
+    )
+    result = cgutils.alloca_once(builder, int32)
+    with builder.if_else(builder.icmp_unsigned('==', compare_size,
+                                               ir.Constant(intp, 0))) \
+            as (empty, nonempty):
+        with empty:
+            builder.store(
+                _stringdtype_size_compare(builder, left_size, right_size,
+                                          int32),
+                result,
+            )
+        with nonempty:
+            builder.store(
+                _stringdtype_byte_compare(
+                    builder, left_size, left_buffer, right_size,
+                    right_buffer, intp, int8, int32,
+                ),
+                result,
+            )
+    return builder.load(result)
+
+
+def _resolve_binary_na_value(builder, status, size, buffer, na_kind, na_size,
+                             na_buffer, empty_null, int32, intp, int8):
+    is_null = builder.icmp_signed('==', status, ir.Constant(int32, 1))
+    is_string = builder.icmp_signed('==', na_kind,
+                                    ir.Constant(int32, _NA_STRING))
+    is_none = builder.icmp_signed('==', na_kind,
+                                  ir.Constant(int32, _NA_NONE))
+    is_nan = builder.icmp_signed('==', na_kind, ir.Constant(int32, _NA_NAN))
+    use_name = builder.and_(builder.and_(is_null, is_string),
+                            builder.not_(empty_null))
+    use_empty = builder.and_(
+        is_null,
+        builder.or_(empty_null, builder.or_(is_none, is_nan)),
+    )
+    resolved = builder.or_(use_name, use_empty)
+    status = builder.select(resolved, ir.Constant(int32, 0), status)
+    size = builder.select(
+        use_name, na_size,
+        builder.select(use_empty, ir.Constant(intp, 0), size),
+    )
+    buffer = builder.select(
+        use_name, na_buffer,
+        builder.select(use_empty, ir.Constant(int8.as_pointer(), None),
+                       buffer),
+    )
+    return status, size, buffer
 
 
 def _store_byte_affix_result(builder, result, value_buffer, start_offset,
@@ -1964,42 +2086,13 @@ def stringdtype_equal_data(typingctx, left_data, left_index, left_allocator,
         same_size = builder.icmp_unsigned('==', left_size, right_size)
 
         with builder.if_then(builder.and_(both_valid, same_size)):
-            memchr_type = ir.FunctionType(byte_ptr, [byte_ptr, int32, intp])
-            memcmp_type = ir.FunctionType(int32, [byte_ptr, byte_ptr, intp])
-            memchr = cgutils.get_or_insert_function(
-                builder.module, memchr_type, 'memchr',
+            builder.store(
+                _stringdtype_binary_equal(
+                    builder, left_size, left_buffer, right_size,
+                    right_buffer, intp, int8, int32,
+                ),
+                result,
             )
-            memcmp = cgutils.get_or_insert_function(
-                builder.module, memcmp_type, 'memcmp',
-            )
-            full_cmp = builder.call(
-                memcmp, [left_buffer, right_buffer, left_size],
-            )
-            full_equal = builder.icmp_signed(
-                '==', full_cmp, ir.Constant(int32, 0))
-            builder.store(full_equal, result)
-            with builder.if_then(builder.not_(full_equal)):
-                nul_ptr = builder.call(
-                    memchr, [left_buffer, ir.Constant(int32, 0), left_size],
-                )
-                found_nul = builder.icmp_unsigned(
-                    '!=', nul_ptr, ir.Constant(byte_ptr, None),
-                )
-                with builder.if_then(found_nul):
-                    left_addr = builder.ptrtoint(left_buffer, intp)
-                    nul_addr = builder.ptrtoint(nul_ptr, intp)
-                    compare_size = builder.add(
-                        builder.sub(nul_addr, left_addr),
-                        ir.Constant(intp, 1),
-                    )
-                    nul_cmp = builder.call(
-                        memcmp, [left_buffer, right_buffer, compare_size],
-                    )
-                    builder.store(
-                        builder.icmp_signed('==', nul_cmp,
-                                            ir.Constant(int32, 0)),
-                        result,
-                    )
 
         return builder.load(result)
 
@@ -2052,6 +2145,235 @@ def stringdtype_compare_data(typingctx, left_data, left_index, left_allocator,
                 ),
                 result,
             )
+
+        return builder.load(result)
+
+    return sig, codegen
+
+
+def _stringdtype_equal_na_data(
+        typingctx, left_data, left_index, left_allocator, left_na_kind,
+        left_na_size, left_na_buffer, right_data, right_index,
+        right_allocator, right_na_kind, right_na_size, right_na_buffer,
+        invert):
+    if left_data != types.voidptr \
+            or not isinstance(left_index, types.Integer) \
+            or left_allocator != types.voidptr \
+            or not isinstance(left_na_kind, types.Integer) \
+            or not isinstance(left_na_size, types.Integer) \
+            or left_na_buffer != types.voidptr \
+            or right_data != types.voidptr \
+            or not isinstance(right_index, types.Integer) \
+            or right_allocator != types.voidptr \
+            or not isinstance(right_na_kind, types.Integer) \
+            or not isinstance(right_na_size, types.Integer) \
+            or right_na_buffer != types.voidptr:
+        return None
+
+    sig = signature(
+        types.boolean,
+        left_data, types.intp, left_allocator, types.int32, types.intp,
+        left_na_buffer, right_data, types.intp, right_allocator, types.int32,
+        types.intp, right_na_buffer,
+    )
+
+    def codegen(context, builder, signature, args):
+        left_data, left_index_value, left_allocator, left_na_kind, \
+            left_na_size, left_na_buffer, right_data, right_index_value, \
+            right_allocator, right_na_kind, right_na_size, right_na_buffer = \
+            args
+
+        int8 = ir.IntType(8)
+        int32 = ir.IntType(32)
+        intp = context.get_value_type(types.intp)
+        byte_ptr = int8.as_pointer()
+        left_packed = _packed_string_ptr_from_data(
+            builder, left_data, left_index_value, intp)
+        right_packed = _packed_string_ptr_from_data(
+            builder, right_data, right_index_value, intp)
+        left_status, left_size, left_buffer = _load_string(
+            builder, left_allocator, left_packed, intp, byte_ptr)
+        right_status, right_size, right_buffer = _load_string(
+            builder, right_allocator, right_packed, intp, byte_ptr)
+
+        left_null = builder.icmp_signed('==', left_status,
+                                        ir.Constant(int32, 1))
+        right_null = builder.icmp_signed('==', right_status,
+                                         ir.Constant(int32, 1))
+        left_nan = builder.icmp_signed('==', left_na_kind,
+                                       ir.Constant(int32, _NA_NAN))
+        right_nan = builder.icmp_signed('==', right_na_kind,
+                                        ir.Constant(int32, _NA_NAN))
+        left_default = builder.icmp_signed('==', left_na_kind,
+                                           ir.Constant(int32, 0))
+        nan_forces_false = builder.or_(
+            builder.and_(left_null, left_nan),
+            builder.and_(builder.and_(right_null, right_nan),
+                         builder.not_(left_default)),
+        )
+
+        result = cgutils.alloca_once(builder, ir.IntType(1))
+        builder.store(cgutils.false_bit, result)
+
+        with builder.if_then(builder.not_(nan_forces_false)):
+            right_empty = left_default
+            left_status, left_size, left_buffer = _resolve_binary_na_value(
+                builder, left_status, left_size, left_buffer, left_na_kind,
+                left_na_size, left_na_buffer, cgutils.false_bit, int32, intp,
+                int8)
+            right_status, right_size, right_buffer = _resolve_binary_na_value(
+                builder, right_status, right_size, right_buffer,
+                right_na_kind, right_na_size, right_na_buffer,
+                right_empty, int32, intp, int8)
+            left_valid = builder.icmp_signed('==', left_status,
+                                             ir.Constant(int32, 0))
+            right_valid = builder.icmp_signed('==', right_status,
+                                              ir.Constant(int32, 0))
+            with builder.if_then(builder.and_(left_valid, right_valid)):
+                equal_result = _stringdtype_binary_equal(
+                    builder, left_size, left_buffer, right_size,
+                    right_buffer, intp, int8, int32)
+                if invert:
+                    equal_result = builder.not_(equal_result)
+                builder.store(equal_result, result)
+
+        return builder.load(result)
+
+    return sig, codegen
+
+
+@intrinsic
+def stringdtype_equal_na_data(
+        typingctx, left_data, left_index, left_allocator, left_na_kind,
+        left_na_size, left_na_buffer, right_data, right_index,
+        right_allocator, right_na_kind, right_na_size, right_na_buffer):
+    return _stringdtype_equal_na_data(
+        typingctx, left_data, left_index, left_allocator, left_na_kind,
+        left_na_size, left_na_buffer, right_data, right_index,
+        right_allocator, right_na_kind, right_na_size, right_na_buffer, False)
+
+
+@intrinsic
+def stringdtype_not_equal_na_data(
+        typingctx, left_data, left_index, left_allocator, left_na_kind,
+        left_na_size, left_na_buffer, right_data, right_index,
+        right_allocator, right_na_kind, right_na_size, right_na_buffer):
+    return _stringdtype_equal_na_data(
+        typingctx, left_data, left_index, left_allocator, left_na_kind,
+        left_na_size, left_na_buffer, right_data, right_index,
+        right_allocator, right_na_kind, right_na_size, right_na_buffer, True)
+
+
+@intrinsic
+def stringdtype_compare_na_data(
+        typingctx, left_data, left_index, left_allocator, left_na_kind,
+        left_na_size, left_na_buffer, right_data, right_index,
+        right_allocator, right_na_kind, right_na_size, right_na_buffer):
+    if left_data != types.voidptr \
+            or not isinstance(left_index, types.Integer) \
+            or left_allocator != types.voidptr \
+            or not isinstance(left_na_kind, types.Integer) \
+            or not isinstance(left_na_size, types.Integer) \
+            or left_na_buffer != types.voidptr \
+            or right_data != types.voidptr \
+            or not isinstance(right_index, types.Integer) \
+            or right_allocator != types.voidptr \
+            or not isinstance(right_na_kind, types.Integer) \
+            or not isinstance(right_na_size, types.Integer) \
+            or right_na_buffer != types.voidptr:
+        return None
+
+    sig = signature(
+        types.int32,
+        left_data, types.intp, left_allocator, types.int32, types.intp,
+        left_na_buffer, right_data, types.intp, right_allocator, types.int32,
+        types.intp, right_na_buffer,
+    )
+
+    def codegen(context, builder, signature, args):
+        left_data, left_index_value, left_allocator, left_na_kind, \
+            left_na_size, left_na_buffer, right_data, right_index_value, \
+            right_allocator, right_na_kind, right_na_size, right_na_buffer = \
+            args
+
+        int8 = ir.IntType(8)
+        int32 = ir.IntType(32)
+        intp = context.get_value_type(types.intp)
+        byte_ptr = int8.as_pointer()
+        left_packed = _packed_string_ptr_from_data(
+            builder, left_data, left_index_value, intp)
+        right_packed = _packed_string_ptr_from_data(
+            builder, right_data, right_index_value, intp)
+        left_status, left_size, left_buffer = _load_string(
+            builder, left_allocator, left_packed, intp, byte_ptr)
+        right_status, right_size, right_buffer = _load_string(
+            builder, right_allocator, right_packed, intp, byte_ptr)
+
+        left_null = builder.icmp_signed('==', left_status,
+                                        ir.Constant(int32, 1))
+        right_null = builder.icmp_signed('==', right_status,
+                                         ir.Constant(int32, 1))
+        left_none = builder.icmp_signed('==', left_na_kind,
+                                        ir.Constant(int32, _NA_NONE))
+        right_none = builder.icmp_signed('==', right_na_kind,
+                                         ir.Constant(int32, _NA_NONE))
+        left_nan = builder.icmp_signed('==', left_na_kind,
+                                       ir.Constant(int32, _NA_NAN))
+        right_nan = builder.icmp_signed('==', right_na_kind,
+                                        ir.Constant(int32, _NA_NAN))
+        left_default = builder.icmp_signed('==', left_na_kind,
+                                           ir.Constant(int32, 0))
+        none_error = builder.or_(
+            builder.and_(left_null, left_none),
+            builder.and_(builder.and_(right_null, right_none),
+                         builder.not_(left_default)),
+        )
+        nan_false = builder.or_(
+            builder.and_(left_null, left_nan),
+            builder.and_(builder.and_(right_null, right_nan),
+                         builder.not_(left_default)),
+        )
+
+        result = cgutils.alloca_once(builder, int32)
+        builder.store(ir.Constant(int32, 0), result)
+        with builder.if_else(none_error) as (error, no_error):
+            with error:
+                builder.store(ir.Constant(int32, STRINGDTYPE_ORDER_ERROR),
+                              result)
+            with no_error:
+                with builder.if_else(nan_false) as (false_path, compare_path):
+                    with false_path:
+                        builder.store(
+                            ir.Constant(int32, STRINGDTYPE_ORDER_FALSE),
+                            result,
+                        )
+                    with compare_path:
+                        right_empty = left_default
+                        left_status, left_size, left_buffer = \
+                            _resolve_binary_na_value(
+                                builder, left_status, left_size, left_buffer,
+                                left_na_kind, left_na_size, left_na_buffer,
+                                cgutils.false_bit, int32, intp, int8)
+                        right_status, right_size, right_buffer = \
+                            _resolve_binary_na_value(
+                                builder, right_status, right_size,
+                                right_buffer, right_na_kind, right_na_size,
+                                right_na_buffer, right_empty, int32, intp,
+                                int8)
+                        left_valid = builder.icmp_signed(
+                            '==', left_status, ir.Constant(int32, 0))
+                        right_valid = builder.icmp_signed(
+                            '==', right_status, ir.Constant(int32, 0))
+                        with builder.if_then(builder.and_(left_valid,
+                                                          right_valid)):
+                            builder.store(
+                                _stringdtype_byte_compare_safe(
+                                    builder, left_size, left_buffer,
+                                    right_size, right_buffer, intp, int8,
+                                    int32,
+                                ),
+                                result,
+                            )
 
         return builder.load(result)
 
@@ -2264,6 +2586,158 @@ def stringdtype_compare_unicode_data(typingctx, data, index, allocator, value,
                     context, intp, int8, int32),
                 result,
             )
+
+        return builder.load(result)
+
+    return sig, codegen
+
+
+def _stringdtype_equal_unicode_na_data(
+        typingctx, data, index, allocator, na_kind, na_size, na_buffer, value,
+        value_length, value_size, empty_null, invert):
+    if data != types.voidptr \
+            or not isinstance(index, types.Integer) \
+            or allocator != types.voidptr \
+            or not isinstance(na_kind, types.Integer) \
+            or not isinstance(na_size, types.Integer) \
+            or na_buffer != types.voidptr \
+            or not isinstance(value, types.UnicodeType) \
+            or not isinstance(value_length, types.Integer) \
+            or not isinstance(value_size, types.Integer) \
+            or not isinstance(empty_null, types.Boolean):
+        return None
+
+    sig = signature(types.boolean, data, types.intp, allocator, types.int32,
+                    types.intp, na_buffer, value, types.intp, types.intp,
+                    types.boolean)
+
+    def codegen(context, builder, signature, args):
+        data, index_value, allocator, na_kind, na_size, na_buffer, value, \
+            value_length, value_size, empty_null = args
+
+        int8 = ir.IntType(8)
+        int32 = ir.IntType(32)
+        intp = context.get_value_type(types.intp)
+        byte_ptr = int8.as_pointer()
+        packed = _packed_string_ptr_from_data(builder, data, index_value, intp)
+        status, size, buffer = _load_string(builder, allocator, packed, intp,
+                                            byte_ptr)
+
+        is_null = builder.icmp_signed('==', status, ir.Constant(int32, 1))
+        is_nan = builder.icmp_signed('==', na_kind,
+                                     ir.Constant(int32, _NA_NAN))
+        nan_forces_false = builder.and_(builder.and_(is_null, is_nan),
+                                        builder.not_(empty_null))
+
+        result = cgutils.alloca_once(builder, ir.IntType(1))
+        builder.store(cgutils.false_bit, result)
+        with builder.if_then(builder.not_(nan_forces_false)):
+            status, size, buffer = _resolve_binary_na_value(
+                builder, status, size, buffer, na_kind, na_size, na_buffer,
+                empty_null, int32, intp, int8)
+            valid = builder.icmp_signed('==', status, ir.Constant(int32, 0))
+            with builder.if_then(valid):
+                equal_result = _stringdtype_unicode_equal(
+                    builder, size, buffer, value, value_length, value_size,
+                    context, intp, int8, int32)
+                if invert:
+                    equal_result = builder.not_(equal_result)
+                builder.store(equal_result, result)
+
+        return builder.load(result)
+
+    return sig, codegen
+
+
+@intrinsic
+def stringdtype_equal_unicode_na_data(
+        typingctx, data, index, allocator, na_kind, na_size, na_buffer, value,
+        value_length, value_size, empty_null):
+    return _stringdtype_equal_unicode_na_data(
+        typingctx, data, index, allocator, na_kind, na_size, na_buffer, value,
+        value_length, value_size, empty_null, False)
+
+
+@intrinsic
+def stringdtype_not_equal_unicode_na_data(
+        typingctx, data, index, allocator, na_kind, na_size, na_buffer, value,
+        value_length, value_size, empty_null):
+    return _stringdtype_equal_unicode_na_data(
+        typingctx, data, index, allocator, na_kind, na_size, na_buffer, value,
+        value_length, value_size, empty_null, True)
+
+
+@intrinsic
+def stringdtype_compare_unicode_na_data(
+        typingctx, data, index, allocator, na_kind, na_size, na_buffer, value,
+        value_length, value_size, empty_null):
+    if data != types.voidptr \
+            or not isinstance(index, types.Integer) \
+            or allocator != types.voidptr \
+            or not isinstance(na_kind, types.Integer) \
+            or not isinstance(na_size, types.Integer) \
+            or na_buffer != types.voidptr \
+            or not isinstance(value, types.UnicodeType) \
+            or not isinstance(value_length, types.Integer) \
+            or not isinstance(value_size, types.Integer) \
+            or not isinstance(empty_null, types.Boolean):
+        return None
+
+    sig = signature(types.int32, data, types.intp, allocator, types.int32,
+                    types.intp, na_buffer, value, types.intp, types.intp,
+                    types.boolean)
+
+    def codegen(context, builder, signature, args):
+        data, index_value, allocator, na_kind, na_size, na_buffer, value, \
+            value_length, value_size, empty_null = args
+
+        int8 = ir.IntType(8)
+        int32 = ir.IntType(32)
+        intp = context.get_value_type(types.intp)
+        byte_ptr = int8.as_pointer()
+        packed = _packed_string_ptr_from_data(builder, data, index_value, intp)
+        status, size, buffer = _load_string(builder, allocator, packed, intp,
+                                            byte_ptr)
+
+        is_null = builder.icmp_signed('==', status, ir.Constant(int32, 1))
+        is_none = builder.icmp_signed('==', na_kind,
+                                      ir.Constant(int32, _NA_NONE))
+        is_nan = builder.icmp_signed('==', na_kind,
+                                     ir.Constant(int32, _NA_NAN))
+        none_error = builder.and_(builder.and_(is_null, is_none),
+                                  builder.not_(empty_null))
+        nan_false = builder.and_(builder.and_(is_null, is_nan),
+                                 builder.not_(empty_null))
+
+        result = cgutils.alloca_once(builder, int32)
+        builder.store(ir.Constant(int32, 0), result)
+        with builder.if_else(none_error) as (error, no_error):
+            with error:
+                builder.store(ir.Constant(int32, STRINGDTYPE_ORDER_ERROR),
+                              result)
+            with no_error:
+                with builder.if_else(nan_false) as (false_path,
+                                                    compare_path):
+                    with false_path:
+                        builder.store(
+                            ir.Constant(int32, STRINGDTYPE_ORDER_FALSE),
+                            result,
+                        )
+                    with compare_path:
+                        status, size, buffer = _resolve_binary_na_value(
+                            builder, status, size, buffer, na_kind, na_size,
+                            na_buffer, empty_null, int32, intp, int8)
+                        valid = builder.icmp_signed(
+                            '==', status, ir.Constant(int32, 0))
+                        with builder.if_then(valid):
+                            builder.store(
+                                _stringdtype_unicode_compare(
+                                    builder, size, buffer, value,
+                                    value_length, value_size, context, intp,
+                                    int8, int32,
+                                ),
+                                result,
+                            )
 
         return builder.load(result)
 

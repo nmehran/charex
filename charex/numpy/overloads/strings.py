@@ -7,14 +7,18 @@ from charex.numpy.overloads._shared import (
 )
 from charex.numpy.stringdtype import (
     _PACKED_STRING_SIZE, is_stringdtype_array_type,
+    STRINGDTYPE_ORDER_ERROR, STRINGDTYPE_ORDER_FALSE,
     stringdtype_acquire_allocator, stringdtype_acquire_allocators,
     stringdtype_codepoint_len_data, stringdtype_compare_data,
-    stringdtype_compare_unicode_data, stringdtype_compare_utf8_data,
+    stringdtype_compare_na_data,
+    stringdtype_compare_unicode_data, stringdtype_compare_unicode_na_data,
+    stringdtype_compare_utf8_data,
     stringdtype_count_data, stringdtype_count_unicode_data,
     stringdtype_count_utf8_data,
     stringdtype_data_ptr, stringdtype_endswith_data,
     stringdtype_endswith_unicode_data, stringdtype_endswith_utf8_data,
-    stringdtype_equal_data, stringdtype_equal_unicode_data,
+    stringdtype_equal_data, stringdtype_equal_na_data,
+    stringdtype_equal_unicode_data, stringdtype_equal_unicode_na_data,
     stringdtype_equal_utf8_data,
     stringdtype_find_data, stringdtype_find_unicode_data,
     stringdtype_find_utf8_data,
@@ -28,7 +32,9 @@ from charex.numpy.stringdtype import (
     stringdtype_isspace_data, stringdtype_isspace_na_data,
     stringdtype_istitle_data, stringdtype_istitle_na_data,
     stringdtype_isupper_data, stringdtype_isupper_na_data,
-    stringdtype_na_name, stringdtype_release_allocator,
+    stringdtype_na_name, stringdtype_not_equal_na_data,
+    stringdtype_not_equal_unicode_na_data,
+    stringdtype_release_allocator,
     stringdtype_release_allocators, stringdtype_rfind_data,
     stringdtype_rfind_unicode_data, stringdtype_rfind_utf8_data,
     stringdtype_startswith_data,
@@ -105,6 +111,21 @@ def _stringdtype_na_kind(value):
     if is_stringdtype_array_type(value):
         return value.dtype.na_kind
     return 0
+
+
+def _stringdtype_na_name_type(value):
+    if is_stringdtype_array_type(value):
+        return value.dtype.na_name
+    return b''
+
+
+def _compatible_stringdtype_na(left, right):
+    left_kind = _stringdtype_na_kind(left)
+    right_kind = _stringdtype_na_kind(right)
+    if left_kind == 0 or right_kind == 0:
+        return True
+    return left_kind == right_kind \
+        and _stringdtype_na_name_type(left) == _stringdtype_na_name_type(right)
 
 
 def _has_stringdtype_na(*values):
@@ -189,6 +210,16 @@ def _order_result(cmp_result, op_code):
     if op_code == 2:
         return cmp_result < 0
     return cmp_result <= 0
+
+
+@register_jitable(**JIT_OPTIONS)
+def _stringdtype_order_result(cmp_result, op_code):
+    if cmp_result == STRINGDTYPE_ORDER_ERROR:
+        raise ValueError(
+            'StringDType ordering is not supported for this null value')
+    if cmp_result == STRINGDTYPE_ORDER_FALSE:
+        return False
+    return _order_result(cmp_result, op_code)
 
 
 @register_jitable(**JIT_OPTIONS)
@@ -277,11 +308,18 @@ def _overload_equal(left, right, invert):
     left_stringdtype = is_stringdtype_array_type(left)
     right_stringdtype = is_stringdtype_array_type(right)
     if left_stringdtype or right_stringdtype:
-        if _has_stringdtype_na(left, right):
-            _reject_stringdtype_na('comparisons')
+        use_na = _has_stringdtype_na(left, right)
+        if use_na and left_stringdtype and right_stringdtype:
+            if not _compatible_stringdtype_na(left, right):
+                def impl(left, right):
+                    raise TypeError(
+                        'Cannot find a compatible null string value')
+
+                return impl
 
         if left_stringdtype and _is_unicode_scalar_like(right):
             _validate_stringdtype_array(left)
+            left_na_kind = _stringdtype_na_kind(left)
             if left.ndim == 0:
                 def impl(left, right):
                     right_value = _unicode_scalar_value(right)
@@ -289,7 +327,21 @@ def _overload_equal(left, right, invert):
                         raise TypeError('Invalid unicode code point found')
                     right_parts = stringdtype_unicode_parts(right_value)
                     allocator = stringdtype_acquire_allocator(left)
-                    if right_parts[1] > _PACKED_STRING_SIZE:
+                    if use_na:
+                        left_na = stringdtype_na_name(left)
+                        if invert:
+                            result = stringdtype_not_equal_unicode_na_data(
+                                stringdtype_data_ptr(left), 0, allocator,
+                                left_na_kind, left_na[0], left_na[1],
+                                right_value, right_parts[0], right_parts[1],
+                                False)
+                        else:
+                            result = stringdtype_equal_unicode_na_data(
+                                stringdtype_data_ptr(left), 0, allocator,
+                                left_na_kind, left_na[0], left_na[1],
+                                right_value, right_parts[0], right_parts[1],
+                                False)
+                    elif right_parts[1] > _PACKED_STRING_SIZE:
                         right_span = stringdtype_unicode_utf8_span(
                             right_value, right_parts[0], right_parts[1])
                         result = stringdtype_equal_utf8_data(
@@ -302,7 +354,8 @@ def _overload_equal(left, right, invert):
                             stringdtype_data_ptr(left), 0, allocator,
                             right_value, right_parts[0], right_parts[1])
                     stringdtype_release_allocator(allocator)
-                    return not result if invert else result
+                    return result if use_na else (
+                        not result if invert else result)
 
                 return impl
 
@@ -316,7 +369,20 @@ def _overload_equal(left, right, invert):
                     return ~result if invert else result
                 allocator = stringdtype_acquire_allocator(left)
                 data = stringdtype_data_ptr(left)
-                if right_parts[1] > _PACKED_STRING_SIZE:
+                if use_na:
+                    left_na = stringdtype_na_name(left)
+                    for i in range(left.size):
+                        if invert:
+                            result[i] = stringdtype_not_equal_unicode_na_data(
+                                data, i, allocator, left_na_kind, left_na[0],
+                                left_na[1], right_value, right_parts[0],
+                                right_parts[1], False)
+                        else:
+                            result[i] = stringdtype_equal_unicode_na_data(
+                                data, i, allocator, left_na_kind, left_na[0],
+                                left_na[1], right_value, right_parts[0],
+                                right_parts[1], False)
+                elif right_parts[1] > _PACKED_STRING_SIZE:
                     right_span = stringdtype_unicode_utf8_span(
                         right_value, right_parts[0], right_parts[1])
                     for i in range(left.size):
@@ -330,12 +396,13 @@ def _overload_equal(left, right, invert):
                             data, i, allocator, right_value, right_parts[0],
                             right_parts[1])
                 stringdtype_release_allocator(allocator)
-                return ~result if invert else result
+                return result if use_na else (~result if invert else result)
 
             return impl
 
         if _is_unicode_scalar_like(left) and right_stringdtype:
             _validate_stringdtype_array(right)
+            right_na_kind = _stringdtype_na_kind(right)
             if right.ndim == 0:
                 def impl(left, right):
                     left_value = _unicode_scalar_value(left)
@@ -343,7 +410,21 @@ def _overload_equal(left, right, invert):
                         raise TypeError('Invalid unicode code point found')
                     left_parts = stringdtype_unicode_parts(left_value)
                     allocator = stringdtype_acquire_allocator(right)
-                    if left_parts[1] > _PACKED_STRING_SIZE:
+                    if use_na:
+                        right_na = stringdtype_na_name(right)
+                        if invert:
+                            result = stringdtype_not_equal_unicode_na_data(
+                                stringdtype_data_ptr(right), 0, allocator,
+                                right_na_kind, right_na[0], right_na[1],
+                                left_value, left_parts[0], left_parts[1],
+                                True)
+                        else:
+                            result = stringdtype_equal_unicode_na_data(
+                                stringdtype_data_ptr(right), 0, allocator,
+                                right_na_kind, right_na[0], right_na[1],
+                                left_value, left_parts[0], left_parts[1],
+                                True)
+                    elif left_parts[1] > _PACKED_STRING_SIZE:
                         left_span = stringdtype_unicode_utf8_span(
                             left_value, left_parts[0], left_parts[1])
                         result = stringdtype_equal_utf8_data(
@@ -356,7 +437,8 @@ def _overload_equal(left, right, invert):
                             stringdtype_data_ptr(right), 0, allocator,
                             left_value, left_parts[0], left_parts[1])
                     stringdtype_release_allocator(allocator)
-                    return not result if invert else result
+                    return result if use_na else (
+                        not result if invert else result)
 
                 return impl
 
@@ -370,7 +452,20 @@ def _overload_equal(left, right, invert):
                     return ~result if invert else result
                 allocator = stringdtype_acquire_allocator(right)
                 data = stringdtype_data_ptr(right)
-                if left_parts[1] > _PACKED_STRING_SIZE:
+                if use_na:
+                    right_na = stringdtype_na_name(right)
+                    for i in range(right.size):
+                        if invert:
+                            result[i] = stringdtype_not_equal_unicode_na_data(
+                                data, i, allocator, right_na_kind,
+                                right_na[0], right_na[1], left_value,
+                                left_parts[0], left_parts[1], True)
+                        else:
+                            result[i] = stringdtype_equal_unicode_na_data(
+                                data, i, allocator, right_na_kind,
+                                right_na[0], right_na[1], left_value,
+                                left_parts[0], left_parts[1], True)
+                elif left_parts[1] > _PACKED_STRING_SIZE:
                     left_span = stringdtype_unicode_utf8_span(
                         left_value, left_parts[0], left_parts[1])
                     for i in range(right.size):
@@ -383,7 +478,7 @@ def _overload_equal(left, right, invert):
                             data, i, allocator, left_value, left_parts[0],
                             left_parts[1])
                 stringdtype_release_allocator(allocator)
-                return ~result if invert else result
+                return result if use_na else (~result if invert else result)
 
             return impl
 
@@ -391,6 +486,7 @@ def _overload_equal(left, right, invert):
             _validate_stringdtype_array(left)
             _validate_unicode_array(right)
             left_scalar = left.ndim == 0
+            left_na_kind = _stringdtype_na_kind(left)
 
             def impl(left, right):
                 if not left_scalar and left.size != right.size:
@@ -402,17 +498,33 @@ def _overload_equal(left, right, invert):
                     return ~result if invert else result
                 allocator = stringdtype_acquire_allocator(left)
                 data = stringdtype_data_ptr(left)
+                if use_na:
+                    left_na = stringdtype_na_name(left)
                 for i in range(size):
                     right_value = _unicode_scalar_value(right[i])
                     if not stringdtype_unicode_valid(right_value):
                         stringdtype_release_allocator(allocator)
                         raise TypeError('Invalid unicode code point found')
                     right_parts = stringdtype_unicode_parts(right_value)
-                    result[i] = stringdtype_equal_unicode_data(
-                        data, 0 if left_scalar else i, allocator,
-                        right_value, right_parts[0], right_parts[1])
+                    if use_na:
+                        if invert:
+                            result[i] = stringdtype_not_equal_unicode_na_data(
+                                data, 0 if left_scalar else i, allocator,
+                                left_na_kind, left_na[0], left_na[1],
+                                right_value, right_parts[0], right_parts[1],
+                                False)
+                        else:
+                            result[i] = stringdtype_equal_unicode_na_data(
+                                data, 0 if left_scalar else i, allocator,
+                                left_na_kind, left_na[0], left_na[1],
+                                right_value, right_parts[0], right_parts[1],
+                                False)
+                    else:
+                        result[i] = stringdtype_equal_unicode_data(
+                            data, 0 if left_scalar else i, allocator,
+                            right_value, right_parts[0], right_parts[1])
                 stringdtype_release_allocator(allocator)
-                return ~result if invert else result
+                return result if use_na else (~result if invert else result)
 
             return impl
 
@@ -420,6 +532,7 @@ def _overload_equal(left, right, invert):
             _validate_unicode_array(left)
             _validate_stringdtype_array(right)
             right_scalar = right.ndim == 0
+            right_na_kind = _stringdtype_na_kind(right)
 
             def impl(left, right):
                 if not right_scalar and left.size != right.size:
@@ -431,17 +544,33 @@ def _overload_equal(left, right, invert):
                     return ~result if invert else result
                 allocator = stringdtype_acquire_allocator(right)
                 data = stringdtype_data_ptr(right)
+                if use_na:
+                    right_na = stringdtype_na_name(right)
                 for i in range(size):
                     left_value = _unicode_scalar_value(left[i])
                     if not stringdtype_unicode_valid(left_value):
                         stringdtype_release_allocator(allocator)
                         raise TypeError('Invalid unicode code point found')
                     left_parts = stringdtype_unicode_parts(left_value)
-                    result[i] = stringdtype_equal_unicode_data(
-                        data, 0 if right_scalar else i, allocator,
-                        left_value, left_parts[0], left_parts[1])
+                    if use_na:
+                        if invert:
+                            result[i] = stringdtype_not_equal_unicode_na_data(
+                                data, 0 if right_scalar else i, allocator,
+                                right_na_kind, right_na[0], right_na[1],
+                                left_value, left_parts[0], left_parts[1],
+                                True)
+                        else:
+                            result[i] = stringdtype_equal_unicode_na_data(
+                                data, 0 if right_scalar else i, allocator,
+                                right_na_kind, right_na[0], right_na[1],
+                                left_value, left_parts[0], left_parts[1],
+                                True)
+                    else:
+                        result[i] = stringdtype_equal_unicode_data(
+                            data, 0 if right_scalar else i, allocator,
+                            left_value, left_parts[0], left_parts[1])
                 stringdtype_release_allocator(allocator)
-                return ~result if invert else result
+                return result if use_na else (~result if invert else result)
 
             return impl
 
@@ -482,16 +611,37 @@ def _overload_equal(left, right, invert):
                                   'two StringDType arrays')
         _validate_stringdtype_array(left)
         _validate_stringdtype_array(right)
+        left_na_kind = _stringdtype_na_kind(left)
+        right_na_kind = _stringdtype_na_kind(right)
 
         if left.ndim == 0 and right.ndim == 0:
             def impl(left, right):
                 allocators = stringdtype_acquire_allocators(left, right)
-                equal_result = stringdtype_equal_data(
-                    stringdtype_data_ptr(left), 0, allocators[0],
-                    stringdtype_data_ptr(right), 0, allocators[1],
-                )
+                if use_na:
+                    left_na = stringdtype_na_name(left)
+                    right_na = stringdtype_na_name(right)
+                    if invert:
+                        equal_result = stringdtype_not_equal_na_data(
+                            stringdtype_data_ptr(left), 0, allocators[0],
+                            left_na_kind, left_na[0], left_na[1],
+                            stringdtype_data_ptr(right), 0, allocators[1],
+                            right_na_kind, right_na[0], right_na[1],
+                        )
+                    else:
+                        equal_result = stringdtype_equal_na_data(
+                            stringdtype_data_ptr(left), 0, allocators[0],
+                            left_na_kind, left_na[0], left_na[1],
+                            stringdtype_data_ptr(right), 0, allocators[1],
+                            right_na_kind, right_na[0], right_na[1],
+                        )
+                else:
+                    equal_result = stringdtype_equal_data(
+                        stringdtype_data_ptr(left), 0, allocators[0],
+                        stringdtype_data_ptr(right), 0, allocators[1],
+                    )
                 stringdtype_release_allocators(allocators)
-                return not equal_result if invert else equal_result
+                return equal_result if use_na \
+                    else (not equal_result if invert else equal_result)
 
             return impl
 
@@ -511,13 +661,35 @@ def _overload_equal(left, right, invert):
             right_allocator = allocators[1]
             left_data = stringdtype_data_ptr(left)
             right_data = stringdtype_data_ptr(right)
+            if use_na:
+                left_na = stringdtype_na_name(left)
+                right_na = stringdtype_na_name(right)
             for i in range(size):
-                result[i] = stringdtype_equal_data(
-                    left_data, 0 if left_scalar else i, left_allocator,
-                    right_data, 0 if right_scalar else i, right_allocator,
-                )
+                if use_na:
+                    if invert:
+                        result[i] = stringdtype_not_equal_na_data(
+                            left_data, 0 if left_scalar else i,
+                            left_allocator, left_na_kind, left_na[0],
+                            left_na[1], right_data,
+                            0 if right_scalar else i, right_allocator,
+                            right_na_kind, right_na[0], right_na[1],
+                        )
+                    else:
+                        result[i] = stringdtype_equal_na_data(
+                            left_data, 0 if left_scalar else i,
+                            left_allocator, left_na_kind, left_na[0],
+                            left_na[1], right_data,
+                            0 if right_scalar else i, right_allocator,
+                            right_na_kind, right_na[0], right_na[1],
+                        )
+                else:
+                    result[i] = stringdtype_equal_data(
+                        left_data, 0 if left_scalar else i, left_allocator,
+                        right_data, 0 if right_scalar else i,
+                        right_allocator,
+                    )
             stringdtype_release_allocators(allocators)
-            return ~result if invert else result
+            return result if use_na else (~result if invert else result)
 
         return impl
 
@@ -538,8 +710,14 @@ def _overload_order(left, right, op):
     left_stringdtype = is_stringdtype_array_type(left)
     right_stringdtype = is_stringdtype_array_type(right)
     if left_stringdtype or right_stringdtype:
-        if _has_stringdtype_na(left, right):
-            _reject_stringdtype_na('comparisons')
+        use_na = _has_stringdtype_na(left, right)
+        if use_na and left_stringdtype and right_stringdtype:
+            if not _compatible_stringdtype_na(left, right):
+                def impl(left, right):
+                    raise TypeError(
+                        'Cannot find a compatible null string value')
+
+                return impl
 
         if op == 'greater':
             op_code = 0
@@ -552,6 +730,7 @@ def _overload_order(left, right, op):
 
         if left_stringdtype and _is_unicode_scalar_like(right):
             _validate_stringdtype_array(left)
+            left_na_kind = _stringdtype_na_kind(left)
             if left.ndim == 0:
                 def impl(left, right):
                     right_value = _unicode_scalar_value(right)
@@ -559,7 +738,14 @@ def _overload_order(left, right, op):
                         raise TypeError('Invalid unicode code point found')
                     right_parts = stringdtype_unicode_parts(right_value)
                     allocator = stringdtype_acquire_allocator(left)
-                    if right_parts[1] > _PACKED_STRING_SIZE:
+                    if use_na:
+                        left_na = stringdtype_na_name(left)
+                        cmp_result = stringdtype_compare_unicode_na_data(
+                            stringdtype_data_ptr(left), 0, allocator,
+                            left_na_kind, left_na[0], left_na[1],
+                            right_value, right_parts[0], right_parts[1],
+                            False)
+                    elif right_parts[1] > _PACKED_STRING_SIZE:
                         right_span = stringdtype_unicode_utf8_span(
                             right_value, right_parts[0], right_parts[1])
                         cmp_result = stringdtype_compare_utf8_data(
@@ -572,7 +758,8 @@ def _overload_order(left, right, op):
                             stringdtype_data_ptr(left), 0, allocator,
                             right_value, right_parts[0], right_parts[1])
                     stringdtype_release_allocator(allocator)
-                    return _order_result(cmp_result, op_code)
+                    return _stringdtype_order_result(cmp_result, op_code) \
+                        if use_na else _order_result(cmp_result, op_code)
 
                 return impl
 
@@ -586,7 +773,22 @@ def _overload_order(left, right, op):
                     return result
                 allocator = stringdtype_acquire_allocator(left)
                 data = stringdtype_data_ptr(left)
-                if right_parts[1] > _PACKED_STRING_SIZE:
+                bad_order = False
+                if use_na:
+                    left_na = stringdtype_na_name(left)
+                    for i in range(left.size):
+                        cmp_result = stringdtype_compare_unicode_na_data(
+                            data, i, allocator, left_na_kind, left_na[0],
+                            left_na[1], right_value, right_parts[0],
+                            right_parts[1], False)
+                        if cmp_result == STRINGDTYPE_ORDER_ERROR:
+                            bad_order = True
+                            break
+                        if cmp_result == STRINGDTYPE_ORDER_FALSE:
+                            result[i] = False
+                        else:
+                            result[i] = _order_result(cmp_result, op_code)
+                elif right_parts[1] > _PACKED_STRING_SIZE:
                     right_span = stringdtype_unicode_utf8_span(
                         right_value, right_parts[0], right_parts[1])
                     for i in range(left.size):
@@ -602,12 +804,17 @@ def _overload_order(left, right, op):
                             right_parts[1])
                         result[i] = _order_result(cmp_result, op_code)
                 stringdtype_release_allocator(allocator)
+                if use_na and bad_order:
+                    raise ValueError(
+                        'StringDType ordering is not supported for this null '
+                        'value')
                 return result
 
             return impl
 
         if _is_unicode_scalar_like(left) and right_stringdtype:
             _validate_stringdtype_array(right)
+            right_na_kind = _stringdtype_na_kind(right)
             if right.ndim == 0:
                 def impl(left, right):
                     left_value = _unicode_scalar_value(left)
@@ -615,7 +822,16 @@ def _overload_order(left, right, op):
                         raise TypeError('Invalid unicode code point found')
                     left_parts = stringdtype_unicode_parts(left_value)
                     allocator = stringdtype_acquire_allocator(right)
-                    if left_parts[1] > _PACKED_STRING_SIZE:
+                    if use_na:
+                        right_na = stringdtype_na_name(right)
+                        cmp_result = stringdtype_compare_unicode_na_data(
+                            stringdtype_data_ptr(right), 0, allocator,
+                            right_na_kind, right_na[0], right_na[1],
+                            left_value, left_parts[0], left_parts[1], True)
+                        if cmp_result != STRINGDTYPE_ORDER_ERROR \
+                                and cmp_result != STRINGDTYPE_ORDER_FALSE:
+                            cmp_result = -cmp_result
+                    elif left_parts[1] > _PACKED_STRING_SIZE:
                         left_span = stringdtype_unicode_utf8_span(
                             left_value, left_parts[0], left_parts[1])
                         cmp_result = -stringdtype_compare_utf8_data(
@@ -628,7 +844,8 @@ def _overload_order(left, right, op):
                             stringdtype_data_ptr(right), 0, allocator,
                             left_value, left_parts[0], left_parts[1])
                     stringdtype_release_allocator(allocator)
-                    return _order_result(cmp_result, op_code)
+                    return _stringdtype_order_result(cmp_result, op_code) \
+                        if use_na else _order_result(cmp_result, op_code)
 
                 return impl
 
@@ -642,7 +859,22 @@ def _overload_order(left, right, op):
                     return result
                 allocator = stringdtype_acquire_allocator(right)
                 data = stringdtype_data_ptr(right)
-                if left_parts[1] > _PACKED_STRING_SIZE:
+                bad_order = False
+                if use_na:
+                    right_na = stringdtype_na_name(right)
+                    for i in range(right.size):
+                        cmp_result = stringdtype_compare_unicode_na_data(
+                            data, i, allocator, right_na_kind, right_na[0],
+                            right_na[1], left_value, left_parts[0],
+                            left_parts[1], True)
+                        if cmp_result == STRINGDTYPE_ORDER_ERROR:
+                            bad_order = True
+                            break
+                        if cmp_result == STRINGDTYPE_ORDER_FALSE:
+                            result[i] = False
+                        else:
+                            result[i] = _order_result(-cmp_result, op_code)
+                elif left_parts[1] > _PACKED_STRING_SIZE:
                     left_span = stringdtype_unicode_utf8_span(
                         left_value, left_parts[0], left_parts[1])
                     for i in range(right.size):
@@ -665,6 +897,7 @@ def _overload_order(left, right, op):
             _validate_stringdtype_array(left)
             _validate_unicode_array(right)
             left_scalar = left.ndim == 0
+            left_na_kind = _stringdtype_na_kind(left)
 
             def impl(left, right):
                 if not left_scalar and left.size != right.size:
@@ -676,17 +909,38 @@ def _overload_order(left, right, op):
                     return result
                 allocator = stringdtype_acquire_allocator(left)
                 data = stringdtype_data_ptr(left)
+                bad_order = False
+                if use_na:
+                    left_na = stringdtype_na_name(left)
                 for i in range(size):
                     right_value = _unicode_scalar_value(right[i])
                     if not stringdtype_unicode_valid(right_value):
                         stringdtype_release_allocator(allocator)
                         raise TypeError('Invalid unicode code point found')
                     right_parts = stringdtype_unicode_parts(right_value)
-                    cmp_result = stringdtype_compare_unicode_data(
-                        data, 0 if left_scalar else i, allocator,
-                        right_value, right_parts[0], right_parts[1])
-                    result[i] = _order_result(cmp_result, op_code)
+                    if use_na:
+                        cmp_result = stringdtype_compare_unicode_na_data(
+                            data, 0 if left_scalar else i, allocator,
+                            left_na_kind, left_na[0], left_na[1],
+                            right_value, right_parts[0], right_parts[1],
+                            False)
+                        if cmp_result == STRINGDTYPE_ORDER_ERROR:
+                            bad_order = True
+                            break
+                        if cmp_result == STRINGDTYPE_ORDER_FALSE:
+                            result[i] = False
+                        else:
+                            result[i] = _order_result(cmp_result, op_code)
+                    else:
+                        cmp_result = stringdtype_compare_unicode_data(
+                            data, 0 if left_scalar else i, allocator,
+                            right_value, right_parts[0], right_parts[1])
+                        result[i] = _order_result(cmp_result, op_code)
                 stringdtype_release_allocator(allocator)
+                if use_na and bad_order:
+                    raise ValueError(
+                        'StringDType ordering is not supported for this null '
+                        'value')
                 return result
 
             return impl
@@ -695,6 +949,7 @@ def _overload_order(left, right, op):
             _validate_unicode_array(left)
             _validate_stringdtype_array(right)
             right_scalar = right.ndim == 0
+            right_na_kind = _stringdtype_na_kind(right)
 
             def impl(left, right):
                 if not right_scalar and left.size != right.size:
@@ -706,17 +961,37 @@ def _overload_order(left, right, op):
                     return result
                 allocator = stringdtype_acquire_allocator(right)
                 data = stringdtype_data_ptr(right)
+                bad_order = False
+                if use_na:
+                    right_na = stringdtype_na_name(right)
                 for i in range(size):
                     left_value = _unicode_scalar_value(left[i])
                     if not stringdtype_unicode_valid(left_value):
                         stringdtype_release_allocator(allocator)
                         raise TypeError('Invalid unicode code point found')
                     left_parts = stringdtype_unicode_parts(left_value)
-                    cmp_result = -stringdtype_compare_unicode_data(
-                        data, 0 if right_scalar else i, allocator,
-                        left_value, left_parts[0], left_parts[1])
-                    result[i] = _order_result(cmp_result, op_code)
+                    if use_na:
+                        cmp_result = stringdtype_compare_unicode_na_data(
+                            data, 0 if right_scalar else i, allocator,
+                            right_na_kind, right_na[0], right_na[1],
+                            left_value, left_parts[0], left_parts[1], True)
+                        if cmp_result == STRINGDTYPE_ORDER_ERROR:
+                            bad_order = True
+                            break
+                        if cmp_result == STRINGDTYPE_ORDER_FALSE:
+                            result[i] = False
+                        else:
+                            result[i] = _order_result(-cmp_result, op_code)
+                    else:
+                        cmp_result = -stringdtype_compare_unicode_data(
+                            data, 0 if right_scalar else i, allocator,
+                            left_value, left_parts[0], left_parts[1])
+                        result[i] = _order_result(cmp_result, op_code)
                 stringdtype_release_allocator(allocator)
+                if use_na and bad_order:
+                    raise ValueError(
+                        'StringDType ordering is not supported for this null '
+                        'value')
                 return result
 
             return impl
@@ -726,16 +1001,29 @@ def _overload_order(left, right, op):
                                   'two StringDType arrays')
         _validate_stringdtype_array(left)
         _validate_stringdtype_array(right)
+        left_na_kind = _stringdtype_na_kind(left)
+        right_na_kind = _stringdtype_na_kind(right)
 
         if left.ndim == 0 and right.ndim == 0:
             def impl(left, right):
                 allocators = stringdtype_acquire_allocators(left, right)
-                cmp_result = stringdtype_compare_data(
-                    stringdtype_data_ptr(left), 0, allocators[0],
-                    stringdtype_data_ptr(right), 0, allocators[1],
-                )
+                if use_na:
+                    left_na = stringdtype_na_name(left)
+                    right_na = stringdtype_na_name(right)
+                    cmp_result = stringdtype_compare_na_data(
+                        stringdtype_data_ptr(left), 0, allocators[0],
+                        left_na_kind, left_na[0], left_na[1],
+                        stringdtype_data_ptr(right), 0, allocators[1],
+                        right_na_kind, right_na[0], right_na[1],
+                    )
+                else:
+                    cmp_result = stringdtype_compare_data(
+                        stringdtype_data_ptr(left), 0, allocators[0],
+                        stringdtype_data_ptr(right), 0, allocators[1],
+                    )
                 stringdtype_release_allocators(allocators)
-                return _order_result(cmp_result, op_code)
+                return _stringdtype_order_result(cmp_result, op_code) \
+                    if use_na else _order_result(cmp_result, op_code)
 
             return impl
 
@@ -755,13 +1043,37 @@ def _overload_order(left, right, op):
             right_allocator = allocators[1]
             left_data = stringdtype_data_ptr(left)
             right_data = stringdtype_data_ptr(right)
+            bad_order = False
+            if use_na:
+                left_na = stringdtype_na_name(left)
+                right_na = stringdtype_na_name(right)
             for i in range(size):
-                cmp_result = stringdtype_compare_data(
-                    left_data, 0 if left_scalar else i, left_allocator,
-                    right_data, 0 if right_scalar else i, right_allocator,
-                )
-                result[i] = _order_result(cmp_result, op_code)
+                if use_na:
+                    cmp_result = stringdtype_compare_na_data(
+                        left_data, 0 if left_scalar else i, left_allocator,
+                        left_na_kind, left_na[0], left_na[1],
+                        right_data, 0 if right_scalar else i,
+                        right_allocator, right_na_kind, right_na[0],
+                        right_na[1],
+                    )
+                    if cmp_result == STRINGDTYPE_ORDER_ERROR:
+                        bad_order = True
+                        break
+                    if cmp_result == STRINGDTYPE_ORDER_FALSE:
+                        result[i] = False
+                    else:
+                        result[i] = _order_result(cmp_result, op_code)
+                else:
+                    cmp_result = stringdtype_compare_data(
+                        left_data, 0 if left_scalar else i, left_allocator,
+                        right_data, 0 if right_scalar else i,
+                        right_allocator,
+                    )
+                    result[i] = _order_result(cmp_result, op_code)
             stringdtype_release_allocators(allocators)
+            if use_na and bad_order:
+                raise ValueError(
+                    'StringDType ordering is not supported for this null value')
             return result
 
         return impl
