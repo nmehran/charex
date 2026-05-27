@@ -12,7 +12,7 @@ from charex.tests.definitions import (
     StringsComparisonOperators, StringsInformation,
 )
 from charex.tests.support import (
-    assert_same, assert_same_exception, copy_args,
+    assert_arrays_unchanged, assert_same, assert_same_exception, copy_args,
 )
 
 
@@ -108,6 +108,40 @@ def assert_same_outcome(implementation, baseline, *args):
         assert_same(implementation, baseline, *args)
 
 
+def assert_same_view(implementation, baseline, *args):
+    before = copy_args(args)
+
+    expected = baseline(*args)
+    actual = implementation(*args)
+
+    assert isinstance(actual, np.ndarray) is isinstance(expected, np.ndarray)
+    actual = np.asarray(actual)
+    expected = np.asarray(expected)
+    assert actual.dtype == expected.dtype
+    assert actual.shape == expected.shape
+    np.testing.assert_array_equal(actual, expected)
+    assert_arrays_unchanged(args, before)
+
+
+def assert_same_view_exception(implementation, baseline, *args):
+    before = copy_args(args)
+
+    with pytest.raises(Exception) as expected:
+        baseline(*args)
+    with pytest.raises(type(expected.value)):
+        implementation(*args)
+    assert_arrays_unchanged(args, before)
+
+
+def assert_same_view_outcome(implementation, baseline, *args):
+    try:
+        baseline(*args)
+    except Exception:
+        assert_same_view_exception(implementation, baseline, *args)
+    else:
+        assert_same_view(implementation, baseline, *args)
+
+
 def test_charex_registers_stringdtype_array_type():
     values = stringdtype_array(['a', 'é', '🙂'])
 
@@ -115,6 +149,16 @@ def test_charex_registers_stringdtype_array_type():
 
     assert value_type.ndim == 1
     assert value_type.layout == 'C'
+    assert value_type.dtype.name == 'StringDTypePacket'
+
+
+def test_charex_registers_stringdtype_strided_array_type():
+    values = stringdtype_array(['a', 'x', 'é', 'y', '🙂'])[::2]
+
+    value_type = typeof(values)
+
+    assert value_type.ndim == 1
+    assert value_type.layout == 'A'
     assert value_type.dtype.name == 'StringDTypePacket'
 
 
@@ -534,12 +578,15 @@ def test_stringdtype_array_predicates_embedded_nul_matches_numpy(
 @pytest.mark.parametrize('impl_name', [
     name for name, _ in STRINGDTYPE_PREDICATES
 ])
-def test_stringdtype_array_predicates_reject_noncontiguous_arrays(impl_name):
+def test_stringdtype_array_predicates_noncontiguous_arrays_match_numpy(
+        impl_name):
     strings = StringsInformation()
-    values = stringdtype_array(['a', 'b', 'c', 'd'])
+    values = stringdtype_array([
+        'x', '🙂', 'z', '', 'y', 'é', 'w', 'alpha',
+    ])[::-2]
+    baseline = dict(STRINGDTYPE_PREDICATES)[impl_name]
 
-    with pytest.raises(TypingError, match='C-contiguous'):
-        getattr(strings, impl_name)(values[::2])
+    assert_same_view(getattr(strings, impl_name), baseline, values)
 
 
 @pytest.mark.parametrize('impl_name', [
@@ -791,6 +838,44 @@ def test_stringdtype_na_object_affix_search_slices_match_numpy(
     implementation = strings_impl(impl_name)
 
     assert_same_outcome(implementation, baseline, values, patterns, 1, 4)
+
+
+@pytest.mark.parametrize('impl_name, baseline', [
+    ('strings_str_len', STRINGS.str_len),
+    ('strings_isalpha', STRINGS.isalpha),
+])
+@pytest.mark.parametrize('na_object', [None, np.nan, 'MISSING', 0])
+def test_stringdtype_na_object_strided_unary_matches_numpy(
+        impl_name, baseline, na_object):
+    values = np.array(
+        ['a', 'x', na_object, 'y', 'MISSING', 'z', 'aa'],
+        dtype=STRING_DTYPE(na_object=na_object),
+    )[::-2]
+    implementation = strings_impl(impl_name)
+
+    assert_same_view_outcome(implementation, baseline, values)
+
+
+@pytest.mark.parametrize('impl_name, baseline', [
+    ('strings_equal', STRINGS.equal),
+    ('strings_not_equal', STRINGS.not_equal),
+    *STRINGDTYPE_ORDER_COMPARISONS,
+    *STRINGDTYPE_AFFIX_SEARCH_METHODS,
+])
+@pytest.mark.parametrize('na_object', [None, np.nan, 'MISSING', 0])
+def test_stringdtype_na_object_strided_binary_matches_numpy(
+        impl_name, baseline, na_object):
+    values = np.array(
+        ['a', 'x', na_object, 'y', 'MISSING', 'z', 'aa'],
+        dtype=STRING_DTYPE(na_object=na_object),
+    )[::2]
+    patterns = np.array(
+        ['aa', 'z', '', 'y', na_object, 'x', 'a'],
+        dtype=STRING_DTYPE(na_object=na_object),
+    )[::-2]
+    implementation = strings_impl(impl_name)
+
+    assert_same_view_outcome(implementation, baseline, values, patterns)
 
 
 @pytest.mark.parametrize('impl_name, baseline', [
@@ -1087,23 +1172,46 @@ def test_stringdtype_array_order_shape_mismatch(impl_name):
         getattr(strings, impl_name)(left, right)
 
 
-def test_stringdtype_array_equal_rejects_noncontiguous_arrays():
+@pytest.mark.parametrize('impl_name, baseline', [
+    ('strings_equal', STRINGS.equal),
+    ('strings_not_equal', STRINGS.not_equal),
+])
+def test_stringdtype_array_equal_noncontiguous_arrays_match_numpy(
+        impl_name, baseline):
     strings = StringsComparisonOperators()
-    values = stringdtype_array(['a', 'b', 'c', 'd'])
+    left = stringdtype_array(['a', 'x', 'é', 'y', '🙂', 'z'])[::2]
+    right = stringdtype_array(['z', '🙂', 'y', 'e', 'x', 'a'])[::-2]
 
-    with pytest.raises(TypingError, match='C-contiguous'):
-        strings.strings_equal(values[::2], values[::2])
+    assert_same_view(getattr(strings, impl_name), baseline, left, right)
 
 
 @pytest.mark.parametrize('impl_name', [
     name for name, _ in STRINGDTYPE_ORDER_COMPARISONS
 ])
-def test_stringdtype_array_order_rejects_noncontiguous_arrays(impl_name):
+def test_stringdtype_array_order_noncontiguous_arrays_match_numpy(impl_name):
     strings = StringsComparisonOperators()
-    values = stringdtype_array(['a', 'b', 'c', 'd'])
+    left = stringdtype_array(['a', 'x', 'é', 'y', '🙂', 'z'])[::2]
+    right = stringdtype_array(['z', '🙂', 'y', 'e', 'x', 'b'])[::-2]
+    baseline = dict(STRINGDTYPE_ORDER_COMPARISONS)[impl_name]
 
-    with pytest.raises(TypingError, match='C-contiguous'):
-        getattr(strings, impl_name)(values[::2], values[::2])
+    assert_same_view(getattr(strings, impl_name), baseline, left, right)
+
+
+@pytest.mark.parametrize('impl_name, baseline', [
+    ('strings_equal', STRINGS.equal),
+    ('strings_not_equal', STRINGS.not_equal),
+    *STRINGDTYPE_ORDER_COMPARISONS,
+])
+@pytest.mark.parametrize('scalar', ['a', '', 'é', '🙂'])
+def test_stringdtype_noncontiguous_comparison_mixed_python_str_matches_numpy(
+        impl_name, baseline, scalar):
+    strings = StringsComparisonOperators()
+    values = stringdtype_array([
+        'x', '🙂', 'z', 'é', 'y', '', 'w', 'a',
+    ])[::-2]
+
+    assert_same_view(getattr(strings, impl_name), baseline, values, scalar)
+    assert_same_view(getattr(strings, impl_name), baseline, scalar, values)
 
 
 def test_stringdtype_array_equal_rejects_multidimensional_arrays():
@@ -1306,12 +1414,29 @@ def test_stringdtype_array_affix_shape_mismatch(impl_name):
     'strings_startswith',
     'strings_endswith',
 ])
-def test_stringdtype_array_affix_rejects_noncontiguous_arrays(impl_name):
+def test_stringdtype_array_affix_noncontiguous_arrays_match_numpy(impl_name):
     strings = StringsInformation()
-    values = stringdtype_array(['a', 'b', 'c', 'd'])
+    values = stringdtype_array([
+        'abc', 'x', 'éfg', 'y', '🙂abc', 'z',
+    ])[::2]
+    patterns = stringdtype_array(['z', '🙂', 'y', 'é', 'x', 'a'])[::-2]
+    baseline = STRINGS.startswith if impl_name == 'strings_startswith' \
+        else STRINGS.endswith
 
-    with pytest.raises(TypingError, match='C-contiguous'):
-        getattr(strings, impl_name)(values[::2], values[::2])
+    assert_same_view(getattr(strings, impl_name), baseline, values, patterns)
+
+
+@pytest.mark.parametrize('impl_name, baseline', STRINGDTYPE_AFFIX_METHODS)
+@pytest.mark.parametrize('scalar', ['a', '', 'é', '🙂'])
+def test_stringdtype_noncontiguous_affix_mixed_python_str_matches_numpy(
+        impl_name, baseline, scalar):
+    strings = StringsInformation()
+    values = stringdtype_array([
+        'x', '🙂abc', 'z', 'éfg', 'y', '', 'w', 'abc',
+    ])[::-2]
+
+    assert_same_view(getattr(strings, impl_name), baseline, values, scalar)
+    assert_same_view(getattr(strings, impl_name), baseline, scalar, values)
 
 
 @pytest.mark.parametrize('impl_name', [
@@ -1604,12 +1729,30 @@ def test_stringdtype_array_search_shape_mismatch(impl_name):
     'strings_index',
     'strings_rindex',
 ])
-def test_stringdtype_array_search_rejects_noncontiguous_arrays(impl_name):
+def test_stringdtype_array_search_noncontiguous_arrays_match_numpy(impl_name):
     strings = StringsInformation()
-    values = stringdtype_array(['a', 'b', 'c', 'd'])
+    values = stringdtype_array([
+        'abcabc', 'x', 'éfgé', 'y', '🙂a🙂', 'z',
+    ])[::2]
+    patterns = stringdtype_array(['z', '🙂', 'y', 'é', 'x', 'bc'])[::-2]
+    baseline = dict(STRINGDTYPE_SEARCH_METHODS)[impl_name]
 
-    with pytest.raises(TypingError, match='C-contiguous'):
-        getattr(strings, impl_name)(values[::2], values[::2])
+    assert_same_view(getattr(strings, impl_name), baseline, values, patterns)
+
+
+@pytest.mark.parametrize('impl_name, baseline', STRINGDTYPE_SEARCH_METHODS)
+@pytest.mark.parametrize('scalar', ['a', '', 'é', '🙂'])
+def test_stringdtype_noncontiguous_search_mixed_python_str_matches_numpy(
+        impl_name, baseline, scalar):
+    strings = StringsInformation()
+    values = stringdtype_array([
+        'x', '🙂a🙂', 'z', 'éfgé', 'y', '', 'w', 'abcabc',
+    ])[::-2]
+
+    assert_same_view_outcome(
+        getattr(strings, impl_name), baseline, values, scalar)
+    assert_same_view_outcome(
+        getattr(strings, impl_name), baseline, scalar, values)
 
 
 @pytest.mark.parametrize('impl_name', [

@@ -1190,9 +1190,12 @@ Prototype checkpoint:
    - preserve the default-`StringDType()` fast path;
    - support only after operation-specific NumPy behavior is fully mapped.
 8. Layout and dimensionality:
-   - non-contiguous arrays through strides;
+   - non-contiguous one-dimensional arrays through strides;
    - multidimensional arrays and NumPy-compatible broadcasting;
    - keep the one-dimensional contiguous fast path intact.
+  - Current prototype supports one-dimensional strided `StringDType` arrays,
+    including positive and negative strides, for the supported operation
+    families.
 9. Full catalog:
    - transformation methods such as replace/case conversion/padding;
    - exact output allocation, dtype sizing, and error behavior;
@@ -1214,9 +1217,12 @@ Prototype checkpoint:
   trimmed codepoint length plus UTF-8 byte size once per operation. Short
   scalars stay on the Unicode/codepoint bridge; longer scalars use a UTF-8
   span outside the element loop.
-- Keep `StringDType(na_object=...)` support operation-specific: unary
-  `str_len` and predicates are supported after audit; binary sentinel
-  operations still reject until their exact propagation tables are implemented.
+- Keep `StringDType(na_object=...)` support operation-specific. Unary,
+  comparison, affix, and search families are supported after audit; future
+  transformation methods still need separate sentinel truth tables.
+- Support one-dimensional strided `StringDType` arrays by applying the runtime
+  element stride at the packed-record access boundary. Continue to reject
+  multidimensional arrays until broadcasting is implemented deliberately.
 - Keep this in charex while prototyping. The dtype recognition and helper
   approach are enough for exploration; a future upstream Numba proposal can be
   cut from the distilled implementation if it proves generally useful.
@@ -1226,8 +1232,8 @@ Prototype checkpoint:
 - Whether the max-performance `str_len` path should add SWAR continuation
   counting or peeled-16 inline handling after portability, code-layout, and
   broader operation reuse are understood.
-- What exact propagation rules do missing sentinels require for the remaining
-  binary, affix, search, and transformation operations?
+- What exact propagation rules do missing sentinels require for transformation
+  operations?
 - How much of the access/helper layer should become reusable infrastructure
   across comparison, occurrence, predicate, and transformation kernels?
 - Whether Python string scalars should use a dedicated UTF-8 scalar bridge, a

@@ -84,9 +84,6 @@ def _validate_stringdtype_array(value):
     if value.ndim > 1:
         raise NumbaValueError('charex StringDType support currently '
                               'requires scalar or one-dimensional arrays')
-    if value.ndim == 1 and value.layout != 'C':
-        raise NumbaValueError('charex requires C-contiguous arrays; '
-                              'call numpy.ascontiguousarray')
 
 
 def _is_unicode_scalar(value):
@@ -204,6 +201,11 @@ def _numpy_fallback(op):
         def impl(left, right):
             return np.less_equal(left, right)
     return impl
+
+
+@register_jitable(**JIT_OPTIONS)
+def _stringdtype_step(value):
+    return value.strides[0] // _PACKED_STRING_SIZE
 
 
 @register_jitable(**JIT_OPTIONS)
@@ -392,32 +394,36 @@ def _overload_equal(left, right, invert):
                     return ~result if invert else result
                 allocator = stringdtype_acquire_allocator(left)
                 data = stringdtype_data_ptr(left)
+                step = _stringdtype_step(left)
                 if use_na:
                     left_na = stringdtype_na_name(left)
                     for i in range(left.size):
+                        index = i * step
                         if invert:
                             result[i] = stringdtype_not_equal_unicode_na_data(
-                                data, i, allocator, left_na_kind, left_na[0],
+                                data, index, allocator, left_na_kind, left_na[0],
                                 left_na[1], right_value, right_parts[0],
                                 right_parts[1], False)
                         else:
                             result[i] = stringdtype_equal_unicode_na_data(
-                                data, i, allocator, left_na_kind, left_na[0],
+                                data, index, allocator, left_na_kind, left_na[0],
                                 left_na[1], right_value, right_parts[0],
                                 right_parts[1], False)
                 elif right_parts[1] > _PACKED_STRING_SIZE:
                     right_span = stringdtype_unicode_utf8_span(
                         right_value, right_parts[0], right_parts[1])
                     for i in range(left.size):
+                        index = i * step
                         result[i] = stringdtype_equal_utf8_data(
-                            data, i, allocator, right_span[0],
+                            data, index, allocator, right_span[0],
                             right_span[1])
                     stringdtype_free_utf8_span(right_span[0], right_span[2])
                 else:
                     for i in range(left.size):
+                        index = i * step
                         result[i] = stringdtype_equal_unicode_data(
-                            data, i, allocator, right_value, right_parts[0],
-                            right_parts[1])
+                            data, index, allocator, right_value,
+                            right_parts[0], right_parts[1])
                 stringdtype_release_allocator(allocator)
                 return result if use_na else (~result if invert else result)
 
@@ -475,31 +481,35 @@ def _overload_equal(left, right, invert):
                     return ~result if invert else result
                 allocator = stringdtype_acquire_allocator(right)
                 data = stringdtype_data_ptr(right)
+                step = _stringdtype_step(right)
                 if use_na:
                     right_na = stringdtype_na_name(right)
                     for i in range(right.size):
+                        index = i * step
                         if invert:
                             result[i] = stringdtype_not_equal_unicode_na_data(
-                                data, i, allocator, right_na_kind,
+                                data, index, allocator, right_na_kind,
                                 right_na[0], right_na[1], left_value,
                                 left_parts[0], left_parts[1], True)
                         else:
                             result[i] = stringdtype_equal_unicode_na_data(
-                                data, i, allocator, right_na_kind,
+                                data, index, allocator, right_na_kind,
                                 right_na[0], right_na[1], left_value,
                                 left_parts[0], left_parts[1], True)
                 elif left_parts[1] > _PACKED_STRING_SIZE:
                     left_span = stringdtype_unicode_utf8_span(
                         left_value, left_parts[0], left_parts[1])
                     for i in range(right.size):
+                        index = i * step
                         result[i] = stringdtype_equal_utf8_data(
-                            data, i, allocator, left_span[0], left_span[1])
+                            data, index, allocator, left_span[0], left_span[1])
                     stringdtype_free_utf8_span(left_span[0], left_span[2])
                 else:
                     for i in range(right.size):
+                        index = i * step
                         result[i] = stringdtype_equal_unicode_data(
-                            data, i, allocator, left_value, left_parts[0],
-                            left_parts[1])
+                            data, index, allocator, left_value,
+                            left_parts[0], left_parts[1])
                 stringdtype_release_allocator(allocator)
                 return result if use_na else (~result if invert else result)
 
@@ -521,9 +531,11 @@ def _overload_equal(left, right, invert):
                     return ~result if invert else result
                 allocator = stringdtype_acquire_allocator(left)
                 data = stringdtype_data_ptr(left)
+                step = 1 if left_scalar else _stringdtype_step(left)
                 if use_na:
                     left_na = stringdtype_na_name(left)
                 for i in range(size):
+                    left_index = 0 if left_scalar else i * step
                     right_value = _unicode_scalar_value(right[i])
                     if not stringdtype_unicode_valid(right_value):
                         stringdtype_release_allocator(allocator)
@@ -532,20 +544,20 @@ def _overload_equal(left, right, invert):
                     if use_na:
                         if invert:
                             result[i] = stringdtype_not_equal_unicode_na_data(
-                                data, 0 if left_scalar else i, allocator,
+                                data, left_index, allocator,
                                 left_na_kind, left_na[0], left_na[1],
                                 right_value, right_parts[0], right_parts[1],
                                 False)
                         else:
                             result[i] = stringdtype_equal_unicode_na_data(
-                                data, 0 if left_scalar else i, allocator,
+                                data, left_index, allocator,
                                 left_na_kind, left_na[0], left_na[1],
                                 right_value, right_parts[0], right_parts[1],
                                 False)
                     else:
                         result[i] = stringdtype_equal_unicode_data(
-                            data, 0 if left_scalar else i, allocator,
-                            right_value, right_parts[0], right_parts[1])
+                            data, left_index, allocator, right_value,
+                            right_parts[0], right_parts[1])
                 stringdtype_release_allocator(allocator)
                 return result if use_na else (~result if invert else result)
 
@@ -567,9 +579,11 @@ def _overload_equal(left, right, invert):
                     return ~result if invert else result
                 allocator = stringdtype_acquire_allocator(right)
                 data = stringdtype_data_ptr(right)
+                step = 1 if right_scalar else _stringdtype_step(right)
                 if use_na:
                     right_na = stringdtype_na_name(right)
                 for i in range(size):
+                    right_index = 0 if right_scalar else i * step
                     left_value = _unicode_scalar_value(left[i])
                     if not stringdtype_unicode_valid(left_value):
                         stringdtype_release_allocator(allocator)
@@ -578,20 +592,20 @@ def _overload_equal(left, right, invert):
                     if use_na:
                         if invert:
                             result[i] = stringdtype_not_equal_unicode_na_data(
-                                data, 0 if right_scalar else i, allocator,
+                                data, right_index, allocator,
                                 right_na_kind, right_na[0], right_na[1],
                                 left_value, left_parts[0], left_parts[1],
                                 True)
                         else:
                             result[i] = stringdtype_equal_unicode_na_data(
-                                data, 0 if right_scalar else i, allocator,
+                                data, right_index, allocator,
                                 right_na_kind, right_na[0], right_na[1],
                                 left_value, left_parts[0], left_parts[1],
                                 True)
                     else:
                         result[i] = stringdtype_equal_unicode_data(
-                            data, 0 if right_scalar else i, allocator,
-                            left_value, left_parts[0], left_parts[1])
+                            data, right_index, allocator, left_value,
+                            left_parts[0], left_parts[1])
                 stringdtype_release_allocator(allocator)
                 return result if use_na else (~result if invert else result)
 
@@ -684,32 +698,35 @@ def _overload_equal(left, right, invert):
             right_allocator = allocators[1]
             left_data = stringdtype_data_ptr(left)
             right_data = stringdtype_data_ptr(right)
+            left_step = 1 if left_scalar else _stringdtype_step(left)
+            right_step = 1 if right_scalar else _stringdtype_step(right)
             if use_na:
                 left_na = stringdtype_na_name(left)
                 right_na = stringdtype_na_name(right)
             for i in range(size):
+                left_index = 0 if left_scalar else i * left_step
+                right_index = 0 if right_scalar else i * right_step
                 if use_na:
                     if invert:
                         result[i] = stringdtype_not_equal_na_data(
-                            left_data, 0 if left_scalar else i,
+                            left_data, left_index,
                             left_allocator, left_na_kind, left_na[0],
                             left_na[1], right_data,
-                            0 if right_scalar else i, right_allocator,
+                            right_index, right_allocator,
                             right_na_kind, right_na[0], right_na[1],
                         )
                     else:
                         result[i] = stringdtype_equal_na_data(
-                            left_data, 0 if left_scalar else i,
+                            left_data, left_index,
                             left_allocator, left_na_kind, left_na[0],
                             left_na[1], right_data,
-                            0 if right_scalar else i, right_allocator,
+                            right_index, right_allocator,
                             right_na_kind, right_na[0], right_na[1],
                         )
                 else:
                     result[i] = stringdtype_equal_data(
-                        left_data, 0 if left_scalar else i, left_allocator,
-                        right_data, 0 if right_scalar else i,
-                        right_allocator,
+                        left_data, left_index, left_allocator,
+                        right_data, right_index, right_allocator,
                     )
             stringdtype_release_allocators(allocators)
             return result if use_na else (~result if invert else result)
@@ -796,12 +813,14 @@ def _overload_order(left, right, op):
                     return result
                 allocator = stringdtype_acquire_allocator(left)
                 data = stringdtype_data_ptr(left)
+                step = _stringdtype_step(left)
                 bad_order = False
                 if use_na:
                     left_na = stringdtype_na_name(left)
                     for i in range(left.size):
+                        index = i * step
                         cmp_result = stringdtype_compare_unicode_na_data(
-                            data, i, allocator, left_na_kind, left_na[0],
+                            data, index, allocator, left_na_kind, left_na[0],
                             left_na[1], right_value, right_parts[0],
                             right_parts[1], False)
                         if cmp_result == STRINGDTYPE_ORDER_ERROR:
@@ -815,16 +834,18 @@ def _overload_order(left, right, op):
                     right_span = stringdtype_unicode_utf8_span(
                         right_value, right_parts[0], right_parts[1])
                     for i in range(left.size):
+                        index = i * step
                         cmp_result = stringdtype_compare_utf8_data(
-                            data, i, allocator, right_span[0],
+                            data, index, allocator, right_span[0],
                             right_span[1])
                         result[i] = _order_result(cmp_result, op_code)
                     stringdtype_free_utf8_span(right_span[0], right_span[2])
                 else:
                     for i in range(left.size):
+                        index = i * step
                         cmp_result = stringdtype_compare_unicode_data(
-                            data, i, allocator, right_value, right_parts[0],
-                            right_parts[1])
+                            data, index, allocator, right_value,
+                            right_parts[0], right_parts[1])
                         result[i] = _order_result(cmp_result, op_code)
                 stringdtype_release_allocator(allocator)
                 if use_na and bad_order:
@@ -882,12 +903,14 @@ def _overload_order(left, right, op):
                     return result
                 allocator = stringdtype_acquire_allocator(right)
                 data = stringdtype_data_ptr(right)
+                step = _stringdtype_step(right)
                 bad_order = False
                 if use_na:
                     right_na = stringdtype_na_name(right)
                     for i in range(right.size):
+                        index = i * step
                         cmp_result = stringdtype_compare_unicode_na_data(
-                            data, i, allocator, right_na_kind, right_na[0],
+                            data, index, allocator, right_na_kind, right_na[0],
                             right_na[1], left_value, left_parts[0],
                             left_parts[1], True)
                         if cmp_result == STRINGDTYPE_ORDER_ERROR:
@@ -901,15 +924,17 @@ def _overload_order(left, right, op):
                     left_span = stringdtype_unicode_utf8_span(
                         left_value, left_parts[0], left_parts[1])
                     for i in range(right.size):
+                        index = i * step
                         cmp_result = -stringdtype_compare_utf8_data(
-                            data, i, allocator, left_span[0], left_span[1])
+                            data, index, allocator, left_span[0], left_span[1])
                         result[i] = _order_result(cmp_result, op_code)
                     stringdtype_free_utf8_span(left_span[0], left_span[2])
                 else:
                     for i in range(right.size):
+                        index = i * step
                         cmp_result = -stringdtype_compare_unicode_data(
-                            data, i, allocator, left_value, left_parts[0],
-                            left_parts[1])
+                            data, index, allocator, left_value,
+                            left_parts[0], left_parts[1])
                         result[i] = _order_result(cmp_result, op_code)
                 stringdtype_release_allocator(allocator)
                 return result
@@ -932,10 +957,12 @@ def _overload_order(left, right, op):
                     return result
                 allocator = stringdtype_acquire_allocator(left)
                 data = stringdtype_data_ptr(left)
+                step = 1 if left_scalar else _stringdtype_step(left)
                 bad_order = False
                 if use_na:
                     left_na = stringdtype_na_name(left)
                 for i in range(size):
+                    left_index = 0 if left_scalar else i * step
                     right_value = _unicode_scalar_value(right[i])
                     if not stringdtype_unicode_valid(right_value):
                         stringdtype_release_allocator(allocator)
@@ -943,7 +970,7 @@ def _overload_order(left, right, op):
                     right_parts = stringdtype_unicode_parts(right_value)
                     if use_na:
                         cmp_result = stringdtype_compare_unicode_na_data(
-                            data, 0 if left_scalar else i, allocator,
+                            data, left_index, allocator,
                             left_na_kind, left_na[0], left_na[1],
                             right_value, right_parts[0], right_parts[1],
                             False)
@@ -956,7 +983,7 @@ def _overload_order(left, right, op):
                             result[i] = _order_result(cmp_result, op_code)
                     else:
                         cmp_result = stringdtype_compare_unicode_data(
-                            data, 0 if left_scalar else i, allocator,
+                            data, left_index, allocator,
                             right_value, right_parts[0], right_parts[1])
                         result[i] = _order_result(cmp_result, op_code)
                 stringdtype_release_allocator(allocator)
@@ -984,10 +1011,12 @@ def _overload_order(left, right, op):
                     return result
                 allocator = stringdtype_acquire_allocator(right)
                 data = stringdtype_data_ptr(right)
+                step = 1 if right_scalar else _stringdtype_step(right)
                 bad_order = False
                 if use_na:
                     right_na = stringdtype_na_name(right)
                 for i in range(size):
+                    right_index = 0 if right_scalar else i * step
                     left_value = _unicode_scalar_value(left[i])
                     if not stringdtype_unicode_valid(left_value):
                         stringdtype_release_allocator(allocator)
@@ -995,7 +1024,7 @@ def _overload_order(left, right, op):
                     left_parts = stringdtype_unicode_parts(left_value)
                     if use_na:
                         cmp_result = stringdtype_compare_unicode_na_data(
-                            data, 0 if right_scalar else i, allocator,
+                            data, right_index, allocator,
                             right_na_kind, right_na[0], right_na[1],
                             left_value, left_parts[0], left_parts[1], True)
                         if cmp_result == STRINGDTYPE_ORDER_ERROR:
@@ -1007,7 +1036,7 @@ def _overload_order(left, right, op):
                             result[i] = _order_result(-cmp_result, op_code)
                     else:
                         cmp_result = -stringdtype_compare_unicode_data(
-                            data, 0 if right_scalar else i, allocator,
+                            data, right_index, allocator,
                             left_value, left_parts[0], left_parts[1])
                         result[i] = _order_result(cmp_result, op_code)
                 stringdtype_release_allocator(allocator)
@@ -1066,18 +1095,21 @@ def _overload_order(left, right, op):
             right_allocator = allocators[1]
             left_data = stringdtype_data_ptr(left)
             right_data = stringdtype_data_ptr(right)
+            left_step = 1 if left_scalar else _stringdtype_step(left)
+            right_step = 1 if right_scalar else _stringdtype_step(right)
             bad_order = False
             if use_na:
                 left_na = stringdtype_na_name(left)
                 right_na = stringdtype_na_name(right)
             for i in range(size):
+                left_index = 0 if left_scalar else i * left_step
+                right_index = 0 if right_scalar else i * right_step
                 if use_na:
                     cmp_result = stringdtype_compare_na_data(
-                        left_data, 0 if left_scalar else i, left_allocator,
+                        left_data, left_index, left_allocator,
                         left_na_kind, left_na[0], left_na[1],
-                        right_data, 0 if right_scalar else i,
-                        right_allocator, right_na_kind, right_na[0],
-                        right_na[1],
+                        right_data, right_index, right_allocator,
+                        right_na_kind, right_na[0], right_na[1],
                     )
                     if cmp_result == STRINGDTYPE_ORDER_ERROR:
                         bad_order = True
@@ -1088,9 +1120,8 @@ def _overload_order(left, right, op):
                         result[i] = _order_result(cmp_result, op_code)
                 else:
                     cmp_result = stringdtype_compare_data(
-                        left_data, 0 if left_scalar else i, left_allocator,
-                        right_data, 0 if right_scalar else i,
-                        right_allocator,
+                        left_data, left_index, left_allocator,
+                        right_data, right_index, right_allocator,
                     )
                     result[i] = _order_result(cmp_result, op_code)
             stringdtype_release_allocators(allocators)
@@ -1183,18 +1214,20 @@ def _overload_affix(value, pattern, start, end, suffix):
                     return result
                 allocator = stringdtype_acquire_allocator(value)
                 data = stringdtype_data_ptr(value)
+                step = _stringdtype_step(value)
                 bad_null = False
                 if use_na:
                     value_na = stringdtype_na_name(value)
                     for i in range(value.size):
+                        index = i * step
                         found = stringdtype_endswith_unicode_na_data(
-                            data, i, allocator, value_na_kind, value_na[0],
+                            data, index, allocator, value_na_kind, value_na[0],
                             value_na[1], pattern_value, pattern_parts[0],
                             pattern_parts[1], start, end) if suffix \
                             else stringdtype_startswith_unicode_na_data(
-                                data, i, allocator, value_na_kind, value_na[0],
-                                value_na[1], pattern_value, pattern_parts[0],
-                                pattern_parts[1], start, end)
+                                data, index, allocator, value_na_kind,
+                                value_na[0], value_na[1], pattern_value,
+                                pattern_parts[0], pattern_parts[1], start, end)
                         if found == STRINGDTYPE_BOOL_ERROR:
                             bad_null = True
                             break
@@ -1203,15 +1236,17 @@ def _overload_affix(value, pattern, start, end, suffix):
                     pattern_span = stringdtype_unicode_utf8_span(
                         pattern_value, pattern_parts[0], pattern_parts[1])
                     for i in range(value.size):
+                        index = i * step
                         result[i] = _stringdtype_utf8_affix(
-                            data, i, allocator, pattern_span[0],
+                            data, index, allocator, pattern_span[0],
                             pattern_span[1], start, end, suffix)
                     stringdtype_free_utf8_span(pattern_span[0],
                                                pattern_span[2])
                 else:
                     for i in range(value.size):
+                        index = i * step
                         result[i] = _stringdtype_unicode_affix(
-                            data, i, allocator, pattern_value,
+                            data, index, allocator, pattern_value,
                             pattern_parts[0], pattern_parts[1], start, end,
                             suffix)
                 stringdtype_release_allocator(allocator)
@@ -1280,19 +1315,21 @@ def _overload_affix(value, pattern, start, end, suffix):
                     value_span[0], value_span[1], start, end)
                 allocator = stringdtype_acquire_allocator(pattern)
                 data = stringdtype_data_ptr(pattern)
+                step = _stringdtype_step(pattern)
                 bad_null = False
                 if use_na:
                     pattern_na = stringdtype_na_name(pattern)
                 for i in range(pattern.size):
+                    index = i * step
                     if use_na:
                         found = utf8_endswith_stringdtype_sliced_na_data(
                             value_span[0], slice_parts[0], slice_parts[1],
-                            slice_parts[2], data, i, allocator,
+                            slice_parts[2], data, index, allocator,
                             pattern_na_kind, pattern_na[0], pattern_na[1],
                             True) if suffix \
                             else utf8_startswith_stringdtype_sliced_na_data(
                                 value_span[0], slice_parts[0], slice_parts[1],
-                                slice_parts[2], data, i, allocator,
+                                slice_parts[2], data, index, allocator,
                                 pattern_na_kind, pattern_na[0], pattern_na[1],
                                 True)
                         if found == STRINGDTYPE_BOOL_ERROR:
@@ -1302,7 +1339,7 @@ def _overload_affix(value, pattern, start, end, suffix):
                     else:
                         result[i] = _utf8_stringdtype_affix(
                             value_span[0], slice_parts[0], slice_parts[1],
-                            slice_parts[2], data, i, allocator, suffix)
+                            slice_parts[2], data, index, allocator, suffix)
                 stringdtype_release_allocator(allocator)
                 stringdtype_free_utf8_span(value_span[0], value_span[2])
                 if use_na and bad_null:
@@ -1332,10 +1369,12 @@ def _overload_affix(value, pattern, start, end, suffix):
                     return result
                 allocator = stringdtype_acquire_allocator(value)
                 data = stringdtype_data_ptr(value)
+                step = 1 if value_scalar else _stringdtype_step(value)
                 bad_null = False
                 if use_na:
                     value_na = stringdtype_na_name(value)
                 for i in range(size):
+                    value_index = 0 if value_scalar else i * step
                     pattern_value = _unicode_scalar_value(pattern[i])
                     if not stringdtype_unicode_valid(pattern_value):
                         stringdtype_release_allocator(allocator)
@@ -1343,12 +1382,12 @@ def _overload_affix(value, pattern, start, end, suffix):
                     pattern_parts = stringdtype_unicode_parts(pattern_value)
                     if use_na:
                         found = stringdtype_endswith_unicode_na_data(
-                            data, 0 if value_scalar else i, allocator,
+                            data, value_index, allocator,
                             value_na_kind, value_na[0], value_na[1],
                             pattern_value, pattern_parts[0], pattern_parts[1],
                             start, end) if suffix \
                             else stringdtype_startswith_unicode_na_data(
-                                data, 0 if value_scalar else i, allocator,
+                                data, value_index, allocator,
                                 value_na_kind, value_na[0], value_na[1],
                                 pattern_value, pattern_parts[0],
                                 pattern_parts[1], start, end)
@@ -1358,7 +1397,7 @@ def _overload_affix(value, pattern, start, end, suffix):
                         result[i] = found == STRINGDTYPE_BOOL_TRUE
                     else:
                         result[i] = _stringdtype_unicode_affix(
-                            data, 0 if value_scalar else i, allocator,
+                            data, value_index, allocator,
                             pattern_value, pattern_parts[0], pattern_parts[1],
                             start, end, suffix)
                 stringdtype_release_allocator(allocator)
@@ -1389,10 +1428,12 @@ def _overload_affix(value, pattern, start, end, suffix):
                     return result
                 allocator = stringdtype_acquire_allocator(pattern)
                 data = stringdtype_data_ptr(pattern)
+                step = 1 if pattern_scalar else _stringdtype_step(pattern)
                 bad_null = False
                 if use_na:
                     pattern_na = stringdtype_na_name(pattern)
                 for i in range(size):
+                    pattern_index = 0 if pattern_scalar else i * step
                     value_value = _unicode_scalar_value(value[i])
                     if not stringdtype_unicode_valid(value_value):
                         stringdtype_release_allocator(allocator)
@@ -1405,13 +1446,12 @@ def _overload_affix(value, pattern, start, end, suffix):
                     if use_na:
                         found = utf8_endswith_stringdtype_sliced_na_data(
                             value_span[0], slice_parts[0], slice_parts[1],
-                            slice_parts[2], data, 0 if pattern_scalar else i,
+                            slice_parts[2], data, pattern_index,
                             allocator, pattern_na_kind, pattern_na[0],
                             pattern_na[1], True) if suffix \
                             else utf8_startswith_stringdtype_sliced_na_data(
                                 value_span[0], slice_parts[0], slice_parts[1],
-                                slice_parts[2], data,
-                                0 if pattern_scalar else i, allocator,
+                                slice_parts[2], data, pattern_index, allocator,
                                 pattern_na_kind, pattern_na[0], pattern_na[1],
                                 True)
                         if found == STRINGDTYPE_BOOL_ERROR:
@@ -1423,7 +1463,7 @@ def _overload_affix(value, pattern, start, end, suffix):
                     else:
                         result[i] = _utf8_stringdtype_affix(
                             value_span[0], slice_parts[0], slice_parts[1],
-                            slice_parts[2], data, 0 if pattern_scalar else i,
+                            slice_parts[2], data, pattern_index,
                             allocator, suffix)
                     stringdtype_free_utf8_span(value_span[0], value_span[2])
                 stringdtype_release_allocator(allocator)
@@ -1502,23 +1542,27 @@ def _overload_affix(value, pattern, start, end, suffix):
             pattern_allocator = allocators[1]
             value_data = stringdtype_data_ptr(value)
             pattern_data = stringdtype_data_ptr(pattern)
+            value_step = 1 if value_scalar else _stringdtype_step(value)
+            pattern_step = 1 if pattern_scalar else _stringdtype_step(pattern)
             bad_null = False
             if use_na:
                 value_na = stringdtype_na_name(value)
                 pattern_na = stringdtype_na_name(pattern)
             for i in range(size):
+                value_index = 0 if value_scalar else i * value_step
+                pattern_index = 0 if pattern_scalar else i * pattern_step
                 if use_na:
                     found = stringdtype_endswith_na_data(
-                        value_data, 0 if value_scalar else i, value_allocator,
+                        value_data, value_index, value_allocator,
                         value_na_kind, value_na[0], value_na[1],
-                        pattern_data, 0 if pattern_scalar else i,
-                        pattern_allocator, pattern_na_kind, pattern_na[0],
-                        pattern_na[1], pattern_empty_null, start, end) \
+                        pattern_data, pattern_index, pattern_allocator,
+                        pattern_na_kind, pattern_na[0], pattern_na[1],
+                        pattern_empty_null, start, end) \
                         if suffix else stringdtype_startswith_na_data(
-                            value_data, 0 if value_scalar else i,
+                            value_data, value_index,
                             value_allocator, value_na_kind, value_na[0],
                             value_na[1], pattern_data,
-                            0 if pattern_scalar else i, pattern_allocator,
+                            pattern_index, pattern_allocator,
                             pattern_na_kind, pattern_na[0], pattern_na[1],
                             pattern_empty_null, start, end)
                     if found == STRINGDTYPE_BOOL_ERROR:
@@ -1527,16 +1571,14 @@ def _overload_affix(value, pattern, start, end, suffix):
                     result[i] = found == STRINGDTYPE_BOOL_TRUE
                 elif suffix:
                     result[i] = stringdtype_endswith_data(
-                        value_data, 0 if value_scalar else i, value_allocator,
-                        pattern_data, 0 if pattern_scalar else i,
-                        pattern_allocator,
+                        value_data, value_index, value_allocator,
+                        pattern_data, pattern_index, pattern_allocator,
                         start, end,
                     )
                 else:
                     result[i] = stringdtype_startswith_data(
-                        value_data, 0 if value_scalar else i, value_allocator,
-                        pattern_data, 0 if pattern_scalar else i,
-                        pattern_allocator,
+                        value_data, value_index, value_allocator,
+                        pattern_data, pattern_index, pattern_allocator,
                         start, end,
                     )
             stringdtype_release_allocators(allocators)
@@ -1633,24 +1675,29 @@ def _overload_search(value, pattern, start, end, op):
                     return result
                 allocator = stringdtype_acquire_allocator(value)
                 data = stringdtype_data_ptr(value)
+                step = _stringdtype_step(value)
                 not_found = False
                 bad_null = False
                 if use_na:
                     value_na = stringdtype_na_name(value)
                     for i in range(value.size):
+                        index = i * step
                         if forward:
                             found = stringdtype_find_unicode_na_data(
-                                data, i, allocator, value_na_kind, value_na[0],
+                                data, index, allocator, value_na_kind,
+                                value_na[0],
                                 value_na[1], pattern_value, pattern_parts[0],
                                 pattern_parts[1], start, end)
                         elif reverse:
                             found = stringdtype_rfind_unicode_na_data(
-                                data, i, allocator, value_na_kind, value_na[0],
+                                data, index, allocator, value_na_kind,
+                                value_na[0],
                                 value_na[1], pattern_value, pattern_parts[0],
                                 pattern_parts[1], start, end)
                         else:
                             found = stringdtype_count_unicode_na_data(
-                                data, i, allocator, value_na_kind, value_na[0],
+                                data, index, allocator, value_na_kind,
+                                value_na[0],
                                 value_na[1], pattern_value, pattern_parts[0],
                                 pattern_parts[1], start, end)
                         if found == STRINGDTYPE_SEARCH_ERROR:
@@ -1664,8 +1711,9 @@ def _overload_search(value, pattern, start, end, op):
                     pattern_span = stringdtype_unicode_utf8_span(
                         pattern_value, pattern_parts[0], pattern_parts[1])
                     for i in range(value.size):
+                        index = i * step
                         found = _stringdtype_utf8_search(
-                            data, i, allocator, pattern_span[0],
+                            data, index, allocator, pattern_span[0],
                             pattern_span[1], start, end, search_op)
                         if raise_not_found and found < 0:
                             not_found = True
@@ -1675,8 +1723,9 @@ def _overload_search(value, pattern, start, end, op):
                                                pattern_span[2])
                 else:
                     for i in range(value.size):
+                        index = i * step
                         found = _stringdtype_unicode_search(
-                            data, i, allocator, pattern_value,
+                            data, index, allocator, pattern_value,
                             pattern_parts[0], pattern_parts[1], start, end,
                             search_op)
                         if raise_not_found and found < 0:
@@ -1761,38 +1810,40 @@ def _overload_search(value, pattern, start, end, op):
                     value_span[0], value_span[1], start, end)
                 allocator = stringdtype_acquire_allocator(pattern)
                 data = stringdtype_data_ptr(pattern)
+                step = _stringdtype_step(pattern)
                 not_found = False
                 bad_null = False
                 if use_na:
                     pattern_na = stringdtype_na_name(pattern)
                 for i in range(pattern.size):
+                    index = i * step
                     if use_na:
                         if forward:
                             found = utf8_find_stringdtype_sliced_na_data(
                                 value_span[0], slice_parts[0], slice_parts[1],
                                 slice_parts[2], slice_parts[3],
-                                slice_parts[4], data, i, allocator,
+                                slice_parts[4], data, index, allocator,
                                 pattern_na_kind, pattern_na[0],
                                 pattern_na[1], True)
                         elif reverse:
                             found = utf8_rfind_stringdtype_sliced_na_data(
                                 value_span[0], slice_parts[0], slice_parts[1],
                                 slice_parts[2], slice_parts[3],
-                                slice_parts[4], data, i, allocator,
+                                slice_parts[4], data, index, allocator,
                                 pattern_na_kind, pattern_na[0],
                                 pattern_na[1], True)
                         else:
                             found = utf8_count_stringdtype_sliced_na_data(
                                 value_span[0], slice_parts[0], slice_parts[1],
                                 slice_parts[2], slice_parts[3],
-                                slice_parts[4], data, i, allocator,
+                                slice_parts[4], data, index, allocator,
                                 pattern_na_kind, pattern_na[0],
                                 pattern_na[1], True)
                     else:
                         found = _utf8_stringdtype_search(
                             value_span[0], slice_parts[0], slice_parts[1],
                             slice_parts[2], slice_parts[3], slice_parts[4],
-                            data, i, allocator, search_op)
+                            data, index, allocator, search_op)
                     if found == STRINGDTYPE_SEARCH_ERROR:
                         bad_null = True
                         break
@@ -1831,11 +1882,13 @@ def _overload_search(value, pattern, start, end, op):
                     return result
                 allocator = stringdtype_acquire_allocator(value)
                 data = stringdtype_data_ptr(value)
+                step = 1 if value_scalar else _stringdtype_step(value)
                 not_found = False
                 bad_null = False
                 if use_na:
                     value_na = stringdtype_na_name(value)
                 for i in range(size):
+                    value_index = 0 if value_scalar else i * step
                     pattern_value = _unicode_scalar_value(pattern[i])
                     if not stringdtype_unicode_valid(pattern_value):
                         stringdtype_release_allocator(allocator)
@@ -1844,25 +1897,25 @@ def _overload_search(value, pattern, start, end, op):
                     if use_na:
                         if forward:
                             found = stringdtype_find_unicode_na_data(
-                                data, 0 if value_scalar else i, allocator,
+                                data, value_index, allocator,
                                 value_na_kind, value_na[0], value_na[1],
                                 pattern_value, pattern_parts[0],
                                 pattern_parts[1], start, end)
                         elif reverse:
                             found = stringdtype_rfind_unicode_na_data(
-                                data, 0 if value_scalar else i, allocator,
+                                data, value_index, allocator,
                                 value_na_kind, value_na[0], value_na[1],
                                 pattern_value, pattern_parts[0],
                                 pattern_parts[1], start, end)
                         else:
                             found = stringdtype_count_unicode_na_data(
-                                data, 0 if value_scalar else i, allocator,
+                                data, value_index, allocator,
                                 value_na_kind, value_na[0], value_na[1],
                                 pattern_value, pattern_parts[0],
                                 pattern_parts[1], start, end)
                     else:
                         found = _stringdtype_unicode_search(
-                            data, 0 if value_scalar else i, allocator,
+                            data, value_index, allocator,
                             pattern_value, pattern_parts[0], pattern_parts[1],
                             start, end, search_op)
                     if found == STRINGDTYPE_SEARCH_ERROR:
@@ -1902,11 +1955,13 @@ def _overload_search(value, pattern, start, end, op):
                     return result
                 allocator = stringdtype_acquire_allocator(pattern)
                 data = stringdtype_data_ptr(pattern)
+                step = 1 if pattern_scalar else _stringdtype_step(pattern)
                 not_found = False
                 bad_null = False
                 if use_na:
                     pattern_na = stringdtype_na_name(pattern)
                 for i in range(size):
+                    pattern_index = 0 if pattern_scalar else i * step
                     value_value = _unicode_scalar_value(value[i])
                     if not stringdtype_unicode_valid(value_value):
                         stringdtype_release_allocator(allocator)
@@ -1921,32 +1976,28 @@ def _overload_search(value, pattern, start, end, op):
                             found = utf8_find_stringdtype_sliced_na_data(
                                 value_span[0], slice_parts[0], slice_parts[1],
                                 slice_parts[2], slice_parts[3],
-                                slice_parts[4], data,
-                                0 if pattern_scalar else i, allocator,
+                                slice_parts[4], data, pattern_index, allocator,
                                 pattern_na_kind, pattern_na[0], pattern_na[1],
                                 True)
                         elif reverse:
                             found = utf8_rfind_stringdtype_sliced_na_data(
                                 value_span[0], slice_parts[0], slice_parts[1],
                                 slice_parts[2], slice_parts[3],
-                                slice_parts[4], data,
-                                0 if pattern_scalar else i, allocator,
+                                slice_parts[4], data, pattern_index, allocator,
                                 pattern_na_kind, pattern_na[0], pattern_na[1],
                                 True)
                         else:
                             found = utf8_count_stringdtype_sliced_na_data(
                                 value_span[0], slice_parts[0], slice_parts[1],
                                 slice_parts[2], slice_parts[3],
-                                slice_parts[4], data,
-                                0 if pattern_scalar else i, allocator,
+                                slice_parts[4], data, pattern_index, allocator,
                                 pattern_na_kind, pattern_na[0], pattern_na[1],
                                 True)
                     else:
                         found = _utf8_stringdtype_search(
                             value_span[0], slice_parts[0], slice_parts[1],
                             slice_parts[2], slice_parts[3], slice_parts[4],
-                            data, 0 if pattern_scalar else i, allocator,
-                            search_op)
+                            data, pattern_index, allocator, search_op)
                     stringdtype_free_utf8_span(value_span[0], value_span[2])
                     if found == STRINGDTYPE_SEARCH_ERROR:
                         bad_null = True
@@ -2045,14 +2096,16 @@ def _overload_search(value, pattern, start, end, op):
             pattern_allocator = allocators[1]
             value_data = stringdtype_data_ptr(value)
             pattern_data = stringdtype_data_ptr(pattern)
+            value_step = 1 if value_scalar else _stringdtype_step(value)
+            pattern_step = 1 if pattern_scalar else _stringdtype_step(pattern)
             not_found = False
             bad_null = False
             if use_na:
                 value_na = stringdtype_na_name(value)
                 pattern_na = stringdtype_na_name(pattern)
             for i in range(size):
-                value_index = 0 if value_scalar else i
-                pattern_index = 0 if pattern_scalar else i
+                value_index = 0 if value_scalar else i * value_step
+                pattern_index = 0 if pattern_scalar else i * pattern_step
                 if use_na:
                     if forward:
                         found = stringdtype_find_na_data(
@@ -2217,36 +2270,47 @@ def _overload_predicate(value, op):
                 return result
             allocator = stringdtype_acquire_allocator(value)
             data = stringdtype_data_ptr(value)
+            step = _stringdtype_step(value)
             na_name = stringdtype_na_name(value)
             null_string = False
             for i in range(value.size):
+                index = i * step
                 if op == 'isalpha':
                     predicate = stringdtype_isalpha_na_data(
-                        data, i, allocator, na_kind, na_name[0], na_name[1])
+                        data, index, allocator, na_kind, na_name[0],
+                        na_name[1])
                 elif op == 'isalnum':
                     predicate = stringdtype_isalnum_na_data(
-                        data, i, allocator, na_kind, na_name[0], na_name[1])
+                        data, index, allocator, na_kind, na_name[0],
+                        na_name[1])
                 elif op == 'isdecimal':
                     predicate = stringdtype_isdecimal_na_data(
-                        data, i, allocator, na_kind, na_name[0], na_name[1])
+                        data, index, allocator, na_kind, na_name[0],
+                        na_name[1])
                 elif op == 'isdigit':
                     predicate = stringdtype_isdigit_na_data(
-                        data, i, allocator, na_kind, na_name[0], na_name[1])
+                        data, index, allocator, na_kind, na_name[0],
+                        na_name[1])
                 elif op == 'isnumeric':
                     predicate = stringdtype_isnumeric_na_data(
-                        data, i, allocator, na_kind, na_name[0], na_name[1])
+                        data, index, allocator, na_kind, na_name[0],
+                        na_name[1])
                 elif op == 'isspace':
                     predicate = stringdtype_isspace_na_data(
-                        data, i, allocator, na_kind, na_name[0], na_name[1])
+                        data, index, allocator, na_kind, na_name[0],
+                        na_name[1])
                 elif op == 'islower':
                     predicate = stringdtype_islower_na_data(
-                        data, i, allocator, na_kind, na_name[0], na_name[1])
+                        data, index, allocator, na_kind, na_name[0],
+                        na_name[1])
                 elif op == 'isupper':
                     predicate = stringdtype_isupper_na_data(
-                        data, i, allocator, na_kind, na_name[0], na_name[1])
+                        data, index, allocator, na_kind, na_name[0],
+                        na_name[1])
                 else:
                     predicate = stringdtype_istitle_na_data(
-                        data, i, allocator, na_kind, na_name[0], na_name[1])
+                        data, index, allocator, na_kind, na_name[0],
+                        na_name[1])
                 if predicate < 0:
                     null_string = True
                     predicate = 0
@@ -2266,25 +2330,27 @@ def _overload_predicate(value, op):
             return result
         allocator = stringdtype_acquire_allocator(value)
         data = stringdtype_data_ptr(value)
+        step = _stringdtype_step(value)
         for i in range(value.size):
+            index = i * step
             if op == 'isalpha':
-                result[i] = stringdtype_isalpha_data(data, i, allocator)
+                result[i] = stringdtype_isalpha_data(data, index, allocator)
             elif op == 'isalnum':
-                result[i] = stringdtype_isalnum_data(data, i, allocator)
+                result[i] = stringdtype_isalnum_data(data, index, allocator)
             elif op == 'isdecimal':
-                result[i] = stringdtype_isdecimal_data(data, i, allocator)
+                result[i] = stringdtype_isdecimal_data(data, index, allocator)
             elif op == 'isdigit':
-                result[i] = stringdtype_isdigit_data(data, i, allocator)
+                result[i] = stringdtype_isdigit_data(data, index, allocator)
             elif op == 'isnumeric':
-                result[i] = stringdtype_isnumeric_data(data, i, allocator)
+                result[i] = stringdtype_isnumeric_data(data, index, allocator)
             elif op == 'isspace':
-                result[i] = stringdtype_isspace_data(data, i, allocator)
+                result[i] = stringdtype_isspace_data(data, index, allocator)
             elif op == 'islower':
-                result[i] = stringdtype_islower_data(data, i, allocator)
+                result[i] = stringdtype_islower_data(data, index, allocator)
             elif op == 'isupper':
-                result[i] = stringdtype_isupper_data(data, i, allocator)
+                result[i] = stringdtype_isupper_data(data, index, allocator)
             else:
-                result[i] = stringdtype_istitle_data(data, i, allocator)
+                result[i] = stringdtype_istitle_data(data, index, allocator)
         stringdtype_release_allocator(allocator)
         return result
 
@@ -2489,11 +2555,14 @@ if _STRINGS is not None:
                 result = np.empty(value.size, np.int64)
                 allocator = stringdtype_acquire_allocator(value)
                 data = stringdtype_data_ptr(value)
+                step = _stringdtype_step(value)
                 na_name = stringdtype_na_name(value)
                 null_string = False
                 for i in range(value.size):
+                    index = i * step
                     length = stringdtype_codepoint_len_na_data(
-                        data, i, allocator, na_kind, na_name[0], na_name[1])
+                        data, index, allocator, na_kind, na_name[0],
+                        na_name[1])
                     if length < 0:
                         null_string = True
                         length = 0
@@ -2510,9 +2579,11 @@ if _STRINGS is not None:
             result = np.empty(value.size, np.int64)
             allocator = stringdtype_acquire_allocator(value)
             data = stringdtype_data_ptr(value)
+            step = _stringdtype_step(value)
             null_string = False
             for i in range(value.size):
-                length = stringdtype_codepoint_len_data(data, i, allocator)
+                length = stringdtype_codepoint_len_data(
+                    data, i * step, allocator)
                 if length < 0:
                     null_string = True
                     length = 0
