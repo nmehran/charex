@@ -27,20 +27,22 @@ Environment:
 Full matrix:
 
 - rows: 1702
-- matching rows: 1080
-- mismatches: 622
-- NumPy accepts but charex currently rejects: 558
+- matching rows: 1344
+- mismatches: 358
+- NumPy accepts but charex currently rejects: 294
 - NumPy raises but charex currently returns a value: 0
 - both raise but with different error type/status: 64
 - successful value mismatches: 0
 
 ## Findings
 
-The dominant gap is fixed-width array shape/layout support. NumPy accepts
-positive-stride, negative-stride, zero-stride, contiguous 2-D, and broadcasted
-2-D fixed-width `S`/`U` arrays for both `np.char` and `np.strings`. charex
-currently rejects these paths at typing because fixed-width registration is
-still scalar or one-dimensional C-contiguous only.
+The dominant remaining gap is N-D shape support. NumPy accepts contiguous 2-D
+and broadcasted 2-D fixed-width `S`/`U` arrays for both `np.char` and
+`np.strings`; charex still rejects these paths at typing.
+
+Fixed-width scalar, 0-D, 1-D contiguous, read-only, positive-stride,
+negative-stride, zero-stride, and empty strided views are now covered for the
+audited `np.char` and fixed-width `np.strings` operations.
 
 `StringDType` is in better shape: scalar, 0-D, 1-D contiguous, and 1-D strided
 paths are covered. Remaining `StringDType` shape gaps are N-D same-shape and
@@ -58,16 +60,12 @@ should remain visible in the parity matrix.
 
 ## Next Iteration
 
-1. Add fixed-width 1-D strided support for `np.char` and `np.strings`.
-   Preserve the current C-contiguous fast path and add a stride-aware fixed-width
-   access path at the registration boundary.
-
-2. Add fixed-width N-D same-shape support.
+1. Add fixed-width N-D same-shape support.
    Do this before general broadcasting so the index mapping stays reviewable.
 
-3. Add broadcast-compatible shape support for fixed-width and `StringDType`.
+2. Add broadcast-compatible shape support for fixed-width and `StringDType`.
    General broadcasting should be a separate path and should not slow the
    scalar/0-D/1-D fast paths.
 
-4. Re-run the full audit matrix after each tranche and use the CSV diff to
+3. Re-run the full audit matrix after each tranche and use the CSV diff to
    decide the next smallest correctness slice.

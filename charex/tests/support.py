@@ -52,3 +52,37 @@ def assert_same_exception(implementation, baseline, *args):
     with pytest.raises(type(expected.value)):
         implementation(*impl_args)
     assert_arrays_unchanged(impl_args, before)
+
+
+def assert_same_view(implementation, baseline, *args):
+    before = copy_args(args)
+
+    expected = baseline(*args)
+    actual = implementation(*args)
+
+    assert isinstance(actual, np.ndarray) is isinstance(expected, np.ndarray)
+    actual = np.asarray(actual)
+    expected = np.asarray(expected)
+    assert actual.dtype == expected.dtype
+    assert actual.shape == expected.shape
+    np.testing.assert_array_equal(actual, expected)
+    assert_arrays_unchanged(args, before)
+
+
+def assert_same_view_exception(implementation, baseline, *args):
+    before = copy_args(args)
+
+    with pytest.raises(Exception) as expected:
+        baseline(*args)
+    with pytest.raises(type(expected.value)):
+        implementation(*args)
+    assert_arrays_unchanged(args, before)
+
+
+def assert_same_view_outcome(implementation, baseline, *args):
+    try:
+        baseline(*args)
+    except Exception:
+        assert_same_view_exception(implementation, baseline, *args)
+    else:
+        assert_same_view(implementation, baseline, *args)

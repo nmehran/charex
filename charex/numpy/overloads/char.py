@@ -407,7 +407,7 @@ def ov_char_str_len(a):
     array_len = str_len_bytes if as_bytes else str_len
     width = a.dtype.count if isinstance(a, types.Array) else 0
 
-    if a_dim > 0 and width:
+    if a_dim > 0 and width and a.layout == 'C':
         if as_bytes:
             direct_len = _str_len_loop if width <= 8 else str_len_bytes
 

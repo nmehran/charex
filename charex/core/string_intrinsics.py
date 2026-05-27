@@ -1,6 +1,6 @@
 from charex.core import JIT_OPTIONS
 from numba.extending import register_jitable
-from numpy import dtype, empty, frombuffer
+from numpy import ascontiguousarray, dtype, empty, frombuffer
 
 
 # -----------------------------------------------------------------------------
@@ -13,6 +13,21 @@ def register_array_bytes(b, rstrip=True):
     len_chr = b.size
     size_chr = b.itemsize
     chr_array = frombuffer(b, 'uint8') if b.ndim == 0 else b.view(dtype('uint8'))
+    if rstrip:
+        return (
+            _rstrip_inner(chr_array.copy(), size_chr),
+            len_chr,
+            size_chr
+        )
+    return chr_array, len_chr, size_chr
+
+
+@register_jitable(**JIT_OPTIONS)
+def register_array_bytes_strided(b, rstrip=True):
+    """Expose a compact ordinal representation of strided ASCII bytes."""
+    len_chr = b.size
+    size_chr = b.itemsize
+    chr_array = ascontiguousarray(b).view(dtype('uint8'))
     if rstrip:
         return (
             _rstrip_inner(chr_array.copy(), size_chr),
@@ -45,6 +60,17 @@ def register_array_strings(s, rstrip=True):
     len_chr = s.size
     size_chr = s.itemsize // 4
     chr_array = frombuffer(s, 'int32') if s.ndim == 0 else s.view(dtype('int32'))
+    if rstrip:
+        return _rstrip_inner(chr_array.copy(), size_chr), len_chr, size_chr
+    return chr_array, len_chr, size_chr
+
+
+@register_jitable(**JIT_OPTIONS)
+def register_array_strings_strided(s, rstrip=True):
+    """Expose a compact ordinal representation of strided UTF-32 strings."""
+    len_chr = s.size
+    size_chr = s.itemsize // 4
+    chr_array = ascontiguousarray(s).view(dtype('int32'))
     if rstrip:
         return _rstrip_inner(chr_array.copy(), size_chr), len_chr, size_chr
     return chr_array, len_chr, size_chr

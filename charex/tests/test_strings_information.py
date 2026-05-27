@@ -4,7 +4,10 @@ import numpy as np
 import pytest
 
 from charex.tests.definitions import StringsInformation
-from charex.tests.support import assert_same, assert_same_exception
+from charex.tests.support import (
+    assert_same, assert_same_exception, assert_same_view,
+    assert_same_view_outcome,
+)
 
 
 STRINGS = getattr(np, 'strings', None)
@@ -103,11 +106,84 @@ NONE_START_CASES = [
 ]
 
 
+STRIDED_OCCURRENCE_CASES = [
+    (
+        np.array(['abcabc', 'skip', 'xabc', 'skip', 'abcx'], dtype='U6')[::2],
+        np.array(['abc', 'skip', 'x', 'skip', 'x'], dtype='U3')[::2],
+    ),
+    (
+        np.array([b'abcabc', b'skip', b'xabc', b'skip', b'abcx'],
+                 dtype='S6')[::2],
+        np.array([b'abc', b'skip', b'x', b'skip', b'x'],
+                 dtype='S3')[::2],
+    ),
+    (
+        np.array(['abcabc', 'skip', 'xabc', 'skip', 'abcx'],
+                 dtype='U6')[::-2],
+        np.array(['abc', 'skip', 'x', 'skip', 'x'], dtype='U3')[::-2],
+    ),
+    (
+        np.array([b'abcabc', b'skip', b'xabc', b'skip', b'abcx'],
+                 dtype='S6')[::-2],
+        np.array([b'abc', b'skip', b'x', b'skip', b'x'],
+                 dtype='S3')[::-2],
+    ),
+    (
+        np.broadcast_to(np.array(['abcabc'], dtype='U6'), (3,)),
+        np.broadcast_to(np.array(['abc'], dtype='U3'), (3,)),
+    ),
+    (
+        np.broadcast_to(np.array([b'abcabc'], dtype='S6'), (3,)),
+        np.broadcast_to(np.array([b'abc'], dtype='S3'), (3,)),
+    ),
+    (
+        np.array(['abcabc', 'skip', 'xabc', 'skip', 'abcx'], dtype='U6')[::2],
+        'abc',
+    ),
+    (
+        np.array([b'abcabc', b'skip', b'xabc', b'skip', b'abcx'],
+                 dtype='S6')[::2],
+        b'abc',
+    ),
+]
+
+
+STRIDED_PROPERTY_CASES = [
+    np.array(['Alpha', 'skip', 'abc\x00x', 'skip', ''], dtype='U6')[::2],
+    np.array([b'Alpha', b'skip', b'abc\x00x', b'skip', b''],
+             dtype='S6')[::2],
+    np.array(['Alpha', 'skip', 'abc\x00x', 'skip', ''], dtype='U6')[::-2],
+    np.array([b'Alpha', b'skip', b'abc\x00x', b'skip', b''],
+             dtype='S6')[::-2],
+    np.broadcast_to(np.array(['Alpha'], dtype='U6'), (3,)),
+    np.broadcast_to(np.array([b'Alpha'], dtype='S6'), (3,)),
+    np.array(['Alpha', 'skip'], dtype='U6')[:0:2],
+    np.array([b'Alpha', b'skip'], dtype='S6')[:0:2],
+]
+
+
+STRIDED_UNICODE_PROPERTY_CASES = [
+    np.array(['Alpha', 'skip', '١٢٣', 'skip', 'Ⅷ'], dtype='U6')[::2],
+    np.array(['Alpha', 'skip', '١٢٣', 'skip', 'Ⅷ'], dtype='U6')[::-2],
+    np.broadcast_to(np.array(['١٢٣'], dtype='U6'), (3,)),
+    np.array(['Alpha', 'skip'], dtype='U6')[:0:2],
+]
+
+
 @pytest.mark.parametrize('_, impl_name, baseline', OCCURRENCE_FUNCS)
 @pytest.mark.parametrize('args', OCCURRENCE_CASES)
 def test_strings_occurrence_matches_numpy(_, impl_name, baseline, args):
     strings = StringsInformation()
     assert_same(getattr(strings, impl_name), baseline, *args)
+
+
+@pytest.mark.parametrize('_, impl_name, baseline',
+                         OCCURRENCE_FUNCS + INDEX_FUNCS)
+@pytest.mark.parametrize('args', STRIDED_OCCURRENCE_CASES)
+def test_strings_occurrence_strided_arrays_match_numpy(
+        _, impl_name, baseline, args):
+    strings = StringsInformation()
+    assert_same_view_outcome(getattr(strings, impl_name), baseline, *args)
 
 
 @pytest.mark.parametrize('_, impl_name, baseline',
@@ -164,6 +240,14 @@ def test_strings_properties_match_numpy(_, impl_name, baseline, values):
 
 
 @pytest.mark.parametrize('_, impl_name, baseline', PROPERTY_FUNCS)
+@pytest.mark.parametrize('values', STRIDED_PROPERTY_CASES)
+def test_strings_properties_strided_arrays_match_numpy(
+        _, impl_name, baseline, values):
+    strings = StringsInformation()
+    assert_same_view(getattr(strings, impl_name), baseline, values)
+
+
+@pytest.mark.parametrize('_, impl_name, baseline', PROPERTY_FUNCS)
 @pytest.mark.parametrize('value', SCALAR_PROPERTIES)
 def test_strings_scalar_properties_match_numpy(_, impl_name, baseline, value):
     strings = StringsInformation()
@@ -190,6 +274,15 @@ def test_strings_unicode_only_properties_match_numpy(
         _, impl_name, baseline):
     strings = StringsInformation()
     assert_same(getattr(strings, impl_name), baseline, PROPERTY_UNICODE)
+
+
+@pytest.mark.parametrize('_, impl_name, baseline',
+                         UNICODE_ONLY_PROPERTY_FUNCS)
+@pytest.mark.parametrize('values', STRIDED_UNICODE_PROPERTY_CASES)
+def test_strings_unicode_only_properties_strided_arrays_match_numpy(
+        _, impl_name, baseline, values):
+    strings = StringsInformation()
+    assert_same_view(getattr(strings, impl_name), baseline, values)
 
 
 @pytest.mark.parametrize('_, impl_name, baseline',

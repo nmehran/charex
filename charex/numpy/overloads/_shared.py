@@ -1,8 +1,9 @@
 """Shared helpers for NumPy string overload registration."""
 
 from charex.core.string_intrinsics import (
-    register_array_bytes, register_scalar_bytes,
-    register_array_strings, register_scalar_strings,
+    register_array_bytes, register_array_bytes_strided,
+    register_scalar_bytes, register_array_strings,
+    register_array_strings_strided, register_scalar_strings,
 )
 from numba.core import types
 from numba.core.errors import (
@@ -38,9 +39,6 @@ def ensure_type(value, exception: NumbaError = None):
         if ndim > 1:
             raise NumbaValueError('charex supports only scalars and '
                                   'one-dimensional arrays')
-        if value.layout != 'C':
-            raise NumbaValueError('charex requires C-contiguous arrays; '
-                                  'call numpy.ascontiguousarray')
         value = value.dtype
         if not isinstance(value, (types.CharSeq,
                                   types.UnicodeCharSeq)) or not value.count:
@@ -70,6 +68,14 @@ def str_type(value, as_np=True):
     return f'like {value.name}'
 
 
+def _array_register(value, ndim, contiguous, strided, scalar):
+    if ndim < 0:
+        return scalar
+    if isinstance(value, types.Array) and value.layout != 'C':
+        return strided
+    return contiguous
+
+
 def register_pair(left, right, exception: (NumbaError, int) = None):
     """Choose ordinal registration functions for a pair of string operands."""
     error = exception or NumbaTypeError("comparison of non-string arrays")
@@ -81,16 +87,20 @@ def register_pair(left, right, exception: (NumbaError, int) = None):
 
     if isinstance(left_type, byte_types) \
             and isinstance(right_type, byte_types):
-        register_left = register_array_bytes if left_dim >= 0 \
-            else register_scalar_bytes
-        register_right = register_array_bytes if right_dim >= 0 \
-            else register_scalar_bytes
+        register_left = _array_register(
+            left, left_dim, register_array_bytes,
+            register_array_bytes_strided, register_scalar_bytes)
+        register_right = _array_register(
+            right, right_dim, register_array_bytes,
+            register_array_bytes_strided, register_scalar_bytes)
     elif isinstance(left_type, str_types) \
             and isinstance(right_type, str_types):
-        register_left = register_array_strings if left_dim >= 0 \
-            else register_scalar_strings
-        register_right = register_array_strings if right_dim >= 0 \
-            else register_scalar_strings
+        register_left = _array_register(
+            left, left_dim, register_array_strings,
+            register_array_strings_strided, register_scalar_strings)
+        register_right = _array_register(
+            right, right_dim, register_array_strings,
+            register_array_strings_strided, register_scalar_strings)
     else:
         if exception == 1:
             as_type = str_type(left, as_np=False)
@@ -116,9 +126,6 @@ def _string_type(value):
         if value.ndim > 1:
             raise NumbaValueError('charex supports only scalars and '
                                   'one-dimensional arrays')
-        if value.layout != 'C':
-            raise NumbaValueError('charex requires C-contiguous arrays; '
-                                  'call numpy.ascontiguousarray')
         return value_type, value.ndim
     if isinstance(value, (types.CharSeq, types.UnicodeCharSeq)):
         return value, -2
@@ -140,16 +147,20 @@ def try_register_pair(left, right):
 
     if isinstance(left_type, byte_types) \
             and isinstance(right_type, byte_types):
-        register_left = register_array_bytes if left_dim >= 0 \
-            else register_scalar_bytes
-        register_right = register_array_bytes if right_dim >= 0 \
-            else register_scalar_bytes
+        register_left = _array_register(
+            left, left_dim, register_array_bytes,
+            register_array_bytes_strided, register_scalar_bytes)
+        register_right = _array_register(
+            right, right_dim, register_array_bytes,
+            register_array_bytes_strided, register_scalar_bytes)
     elif isinstance(left_type, str_types) \
             and isinstance(right_type, str_types):
-        register_left = register_array_strings if left_dim >= 0 \
-            else register_scalar_strings
-        register_right = register_array_strings if right_dim >= 0 \
-            else register_scalar_strings
+        register_left = _array_register(
+            left, left_dim, register_array_strings,
+            register_array_strings_strided, register_scalar_strings)
+        register_right = _array_register(
+            right, right_dim, register_array_strings,
+            register_array_strings_strided, register_scalar_strings)
     else:
         return None
     return register_left, register_right, left_dim, right_dim
@@ -164,12 +175,14 @@ def register_single(value, exception: NumbaError = None):
     str_types = (types.UnicodeType, types.UnicodeCharSeq)
 
     if isinstance(value_type, byte_types):
-        register_value = register_array_bytes if value_dim >= 0 \
-            else register_scalar_bytes
+        register_value = _array_register(
+            value, value_dim, register_array_bytes,
+            register_array_bytes_strided, register_scalar_bytes)
         as_bytes = True
     elif isinstance(value_type, str_types):
-        register_value = register_array_strings if value_dim >= 0 \
-            else register_scalar_strings
+        register_value = _array_register(
+            value, value_dim, register_array_strings,
+            register_array_strings_strided, register_scalar_strings)
         as_bytes = False
     else:
         raise error

@@ -4,7 +4,7 @@ import numpy as np
 import pytest
 
 from charex.tests.definitions import ComparisonOperators
-from charex.tests.support import assert_same
+from charex.tests.support import assert_same, assert_same_view
 
 
 COMPARE_FUNCS = [
@@ -32,11 +32,61 @@ COMPARISON_CASES = [
 ]
 
 
+STRIDED_COMPARISON_CASES = [
+    (
+        np.array(['abc ', 'skip', 'abc\x00x', 'skip', 'abd'], dtype='U6')[::2],
+        np.array(['abc', 'skip', 'abc', 'skip', 'abc'], dtype='U6')[::2],
+    ),
+    (
+        np.array([b'abc ', b'skip', b'abc\x00x', b'skip', b'abd'],
+                 dtype='S6')[::2],
+        np.array([b'abc', b'skip', b'abc', b'skip', b'abc'],
+                 dtype='S6')[::2],
+    ),
+    (
+        np.array(['abc ', 'skip', 'abc\x00x', 'skip', 'abd'],
+                 dtype='U6')[::-2],
+        np.array(['abc', 'skip', 'abc', 'skip', 'abc'], dtype='U6')[::-2],
+    ),
+    (
+        np.array([b'abc ', b'skip', b'abc\x00x', b'skip', b'abd'],
+                 dtype='S6')[::-2],
+        np.array([b'abc', b'skip', b'abc', b'skip', b'abc'],
+                 dtype='S6')[::-2],
+    ),
+    (
+        np.broadcast_to(np.array(['abc\x00x'], dtype='U6'), (3,)),
+        np.broadcast_to(np.array(['abc'], dtype='U6'), (3,)),
+    ),
+    (
+        np.broadcast_to(np.array([b'abc\x00x'], dtype='S6'), (3,)),
+        np.broadcast_to(np.array([b'abc'], dtype='S6'), (3,)),
+    ),
+    (
+        np.array(['abc ', 'skip', 'abc\x00x', 'skip', 'abd'], dtype='U6')[::2],
+        'abc',
+    ),
+    (
+        np.array([b'abc ', b'skip', b'abc\x00x', b'skip', b'abd'],
+                 dtype='S6')[::2],
+        b'abc',
+    ),
+]
+
+
 @pytest.mark.parametrize('_, impl_name, baseline', COMPARE_FUNCS)
 @pytest.mark.parametrize('left, right', COMPARISON_CASES)
 def test_comparison_matches_numpy(_, impl_name, baseline, left, right):
     ch = ComparisonOperators()
     assert_same(getattr(ch, impl_name), baseline, left, right)
+
+
+@pytest.mark.parametrize('_, impl_name, baseline', COMPARE_FUNCS)
+@pytest.mark.parametrize('left, right', STRIDED_COMPARISON_CASES)
+def test_comparison_strided_arrays_match_numpy(
+        _, impl_name, baseline, left, right):
+    ch = ComparisonOperators()
+    assert_same_view(getattr(ch, impl_name), baseline, left, right)
 
 
 @pytest.mark.parametrize('_, impl_name, baseline', COMPARE_FUNCS)
@@ -117,6 +167,17 @@ def test_compare_chararrays_matches_numpy(left, right, cmp, rstrip):
     assert_same(ch.char_compare_chararrays,
                 np.char.compare_chararrays,
                 left, right, cmp, rstrip)
+
+
+@pytest.mark.parametrize('cmp', ['==', '!=', '>=', '>', '<', '<='])
+@pytest.mark.parametrize('rstrip', [True, False])
+@pytest.mark.parametrize('left, right', STRIDED_COMPARISON_CASES[:6])
+def test_compare_chararrays_strided_arrays_match_numpy(
+        left, right, cmp, rstrip):
+    ch = ComparisonOperators()
+    assert_same_view(ch.char_compare_chararrays,
+                     np.char.compare_chararrays,
+                     left, right, cmp, rstrip)
 
 
 @pytest.mark.parametrize('_, impl_name, baseline', COMPARE_FUNCS)
