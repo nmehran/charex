@@ -672,6 +672,23 @@ def test_stringdtype_na_object_affix_search_arrays_match_numpy(
 @pytest.mark.parametrize('impl_name, baseline',
                          STRINGDTYPE_AFFIX_SEARCH_METHODS)
 @pytest.mark.parametrize('na_object', NA_OBJECT_VARIANTS)
+def test_stringdtype_zero_dimensional_na_object_affix_search_match_numpy(
+        impl_name, baseline, na_object):
+    dtype = STRING_DTYPE(na_object=na_object)
+    value_null = np.array(na_object, dtype=dtype)
+    pattern_null = np.array(na_object, dtype=dtype)
+    value_text = np.array('abcabc', dtype=dtype)
+    pattern_text = np.array('a', dtype=dtype)
+    implementation = strings_impl(impl_name)
+
+    assert_same_outcome(implementation, baseline, value_null, pattern_text)
+    assert_same_outcome(implementation, baseline, value_text, pattern_null)
+    assert_same_outcome(implementation, baseline, value_null, pattern_null)
+
+
+@pytest.mark.parametrize('impl_name, baseline',
+                         STRINGDTYPE_AFFIX_SEARCH_METHODS)
+@pytest.mark.parametrize('na_object', NA_OBJECT_VARIANTS)
 def test_stringdtype_na_object_mixed_default_array_affix_search_match_numpy(
         impl_name, baseline, na_object):
     default = stringdtype_array(['a', 'x', '', 'MISSING', 'aa'])

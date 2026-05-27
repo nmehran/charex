@@ -3179,49 +3179,42 @@ def _stringdtype_affix_na_data(
                 builder.store(ir.Constant(int8, STRINGDTYPE_BOOL_ERROR),
                               result)
             with no_error:
-                with builder.if_else(false_result) as (false_path,
-                                                       compare_path):
-                    with false_path:
+                with builder.if_then(builder.not_(false_result)):
+                    value_status, value_size, value_buffer = \
+                        _resolve_string_na(
+                            builder, value_status, value_size, value_buffer,
+                            value_na_kind, value_na_size, value_na_buffer,
+                            int32)
+                    pattern_status, pattern_size, pattern_buffer = \
+                        _resolve_stringdtype_pattern_na_value(
+                            builder, pattern_status, pattern_size,
+                            pattern_buffer, pattern_na_kind, pattern_na_size,
+                            pattern_na_buffer, pattern_empty_null, int32, intp,
+                            int8)
+                    value_valid = builder.icmp_signed(
+                        '==', value_status, ir.Constant(int32, 0))
+                    pattern_valid = builder.icmp_signed(
+                        '==', pattern_status, ir.Constant(int32, 0))
+                    with builder.if_then(builder.and_(value_valid,
+                                                      pattern_valid)):
+                        _, _, start_offset, end_offset, slice_valid = \
+                            _normalise_slice(
+                                builder, value_size, value_buffer, start, end,
+                                intp, int8)
+                        pattern_effective_size = _trimmed_size(
+                            builder, pattern_size, pattern_buffer, intp, int8)
+                        bool_result = cgutils.alloca_once(
+                            builder, ir.IntType(1))
+                        builder.store(cgutils.false_bit, bool_result)
+                        _store_byte_affix_result(
+                            builder, bool_result, value_buffer, start_offset,
+                            end_offset, slice_valid, pattern_buffer,
+                            pattern_effective_size, suffix, intp, int8, int32)
                         builder.store(
-                            ir.Constant(int8, STRINGDTYPE_BOOL_FALSE), result)
-                    with compare_path:
-                        value_status, value_size, value_buffer = \
-                            _resolve_string_na(
-                                builder, value_status, value_size,
-                                value_buffer, value_na_kind, value_na_size,
-                                value_na_buffer, int32)
-                        pattern_status, pattern_size, pattern_buffer = \
-                            _resolve_stringdtype_pattern_na_value(
-                                builder, pattern_status, pattern_size,
-                                pattern_buffer, pattern_na_kind,
-                                pattern_na_size, pattern_na_buffer,
-                                pattern_empty_null, int32, intp, int8)
-                        value_valid = builder.icmp_signed(
-                            '==', value_status, ir.Constant(int32, 0))
-                        pattern_valid = builder.icmp_signed(
-                            '==', pattern_status, ir.Constant(int32, 0))
-                        with builder.if_then(builder.and_(value_valid,
-                                                          pattern_valid)):
-                            _, _, start_offset, end_offset, slice_valid = \
-                                _normalise_slice(
-                                    builder, value_size, value_buffer, start,
-                                    end, intp, int8)
-                            pattern_effective_size = _trimmed_size(
-                                builder, pattern_size, pattern_buffer, intp,
-                                int8)
-                            bool_result = cgutils.alloca_once(
-                                builder, ir.IntType(1))
-                            builder.store(cgutils.false_bit, bool_result)
-                            _store_byte_affix_result(
-                                builder, bool_result, value_buffer,
-                                start_offset, end_offset, slice_valid,
-                                pattern_buffer, pattern_effective_size, suffix,
-                                intp, int8, int32)
-                            builder.store(
-                                _stringdtype_bool(
-                                    builder, builder.load(bool_result), int8),
-                                result,
-                            )
+                            _stringdtype_bool(
+                                builder, builder.load(bool_result), int8),
+                            result,
+                        )
 
         return builder.load(result)
 
@@ -3280,60 +3273,55 @@ def _stringdtype_unicode_affix_na_data(
                 builder.store(ir.Constant(int8, STRINGDTYPE_BOOL_ERROR),
                               result)
             with no_error:
-                with builder.if_else(value_false) as (false_path,
-                                                      compare_path):
-                    with false_path:
+                with builder.if_then(builder.not_(value_false)):
+                    value_status, value_size, value_buffer = \
+                        _resolve_string_na(
+                            builder, value_status, value_size, value_buffer,
+                            value_na_kind, value_na_size, value_na_buffer,
+                            int32)
+                    valid = builder.icmp_signed(
+                        '==', value_status, ir.Constant(int32, 0))
+                    with builder.if_then(valid):
+                        unicode_struct, pattern_length, pattern_size = \
+                            _unicode_parts(
+                                context, builder, pattern, intp, int32,
+                                pattern_length, pattern_size)
+                        _, _, start_offset, end_offset, slice_valid = \
+                            _normalise_slice(
+                                builder, value_size, value_buffer, start, end,
+                                intp, int8)
+                        slice_size = builder.sub(end_offset, start_offset)
+                        empty_pattern = builder.icmp_unsigned(
+                            '==', pattern_size, ir.Constant(intp, 0))
+                        affix_result = cgutils.alloca_once(
+                            builder, ir.IntType(1))
                         builder.store(
-                            ir.Constant(int8, STRINGDTYPE_BOOL_FALSE), result)
-                    with compare_path:
-                        value_status, value_size, value_buffer = \
-                            _resolve_string_na(
-                                builder, value_status, value_size,
-                                value_buffer, value_na_kind, value_na_size,
-                                value_na_buffer, int32)
-                        valid = builder.icmp_signed(
-                            '==', value_status, ir.Constant(int32, 0))
-                        with builder.if_then(valid):
-                            unicode_struct, pattern_length, pattern_size = \
-                                _unicode_parts(
-                                    context, builder, pattern, intp, int32,
-                                    pattern_length, pattern_size)
-                            _, _, start_offset, end_offset, slice_valid = \
-                                _normalise_slice(
-                                    builder, value_size, value_buffer, start,
-                                    end, intp, int8)
-                            slice_size = builder.sub(end_offset, start_offset)
-                            empty_pattern = builder.icmp_unsigned(
-                                '==', pattern_size, ir.Constant(intp, 0))
-                            affix_result = cgutils.alloca_once(
-                                builder, ir.IntType(1))
+                            builder.and_(slice_valid, empty_pattern),
+                            affix_result)
+                        nonempty_pattern = builder.not_(empty_pattern)
+                        fits = builder.icmp_unsigned('<=', pattern_size,
+                                                     slice_size)
+                        with builder.if_then(
+                                builder.and_(
+                                    slice_valid,
+                                    builder.and_(nonempty_pattern, fits))):
+                            if suffix:
+                                compare_offset = builder.sub(
+                                    end_offset, pattern_size)
+                            else:
+                                compare_offset = start_offset
                             builder.store(
-                                builder.and_(slice_valid, empty_pattern),
-                                affix_result)
-                            nonempty_pattern = builder.not_(empty_pattern)
-                            fits = builder.icmp_unsigned('<=', pattern_size,
-                                                         slice_size)
-                            with builder.if_then(
-                                    builder.and_(
-                                        slice_valid,
-                                        builder.and_(nonempty_pattern, fits))):
-                                if suffix:
-                                    compare_offset = builder.sub(
-                                        end_offset, pattern_size)
-                                else:
-                                    compare_offset = start_offset
-                                builder.store(
-                                    _stringdtype_unicode_region_equal(
-                                        builder, value_buffer, compare_offset,
-                                        unicode_struct, ir.Constant(intp, 0),
-                                        pattern_length, intp, int8, int32),
-                                    affix_result,
-                                )
-                            builder.store(
-                                _stringdtype_bool(
-                                    builder, builder.load(affix_result), int8),
-                                result,
+                                _stringdtype_unicode_region_equal(
+                                    builder, value_buffer, compare_offset,
+                                    unicode_struct, ir.Constant(intp, 0),
+                                    pattern_length, intp, int8, int32),
+                                affix_result,
                             )
+                        builder.store(
+                            _stringdtype_bool(
+                                builder, builder.load(affix_result), int8),
+                            result,
+                        )
 
         return builder.load(result)
 
@@ -3398,37 +3386,30 @@ def _utf8_stringdtype_sliced_affix_na_data(
                 builder.store(ir.Constant(int8, STRINGDTYPE_BOOL_ERROR),
                               result)
             with no_error:
-                with builder.if_else(pattern_false) as (false_path,
-                                                        compare_path):
-                    with false_path:
+                with builder.if_then(builder.not_(pattern_false)):
+                    pattern_status, pattern_size, pattern_buffer = \
+                        _resolve_stringdtype_pattern_na_value(
+                            builder, pattern_status, pattern_size,
+                            pattern_buffer, pattern_na_kind, pattern_na_size,
+                            pattern_na_buffer, pattern_empty_null, int32, intp,
+                            int8)
+                    pattern_valid = builder.icmp_signed(
+                        '==', pattern_status, ir.Constant(int32, 0))
+                    with builder.if_then(pattern_valid):
+                        pattern_effective_size = _trimmed_size(
+                            builder, pattern_size, pattern_buffer, intp, int8)
+                        bool_result = cgutils.alloca_once(
+                            builder, ir.IntType(1))
+                        builder.store(cgutils.false_bit, bool_result)
+                        _store_byte_affix_result(
+                            builder, bool_result, value_data, start_offset,
+                            end_offset, slice_valid, pattern_buffer,
+                            pattern_effective_size, suffix, intp, int8, int32)
                         builder.store(
-                            ir.Constant(int8, STRINGDTYPE_BOOL_FALSE), result)
-                    with compare_path:
-                        pattern_status, pattern_size, pattern_buffer = \
-                            _resolve_stringdtype_pattern_na_value(
-                                builder, pattern_status, pattern_size,
-                                pattern_buffer, pattern_na_kind,
-                                pattern_na_size, pattern_na_buffer,
-                                pattern_empty_null, int32, intp, int8)
-                        pattern_valid = builder.icmp_signed(
-                            '==', pattern_status, ir.Constant(int32, 0))
-                        with builder.if_then(pattern_valid):
-                            pattern_effective_size = _trimmed_size(
-                                builder, pattern_size, pattern_buffer, intp,
-                                int8)
-                            bool_result = cgutils.alloca_once(
-                                builder, ir.IntType(1))
-                            builder.store(cgutils.false_bit, bool_result)
-                            _store_byte_affix_result(
-                                builder, bool_result, value_data,
-                                start_offset, end_offset, slice_valid,
-                                pattern_buffer, pattern_effective_size, suffix,
-                                intp, int8, int32)
-                            builder.store(
-                                _stringdtype_bool(
-                                    builder, builder.load(bool_result), int8),
-                                result,
-                            )
+                            _stringdtype_bool(
+                                builder, builder.load(bool_result), int8),
+                            result,
+                        )
 
         return builder.load(result)
 
