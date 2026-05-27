@@ -102,6 +102,16 @@ def _is_unicode_array(value):
         and value.dtype.count
 
 
+def _is_bytes_array(value):
+    return isinstance(value, types.Array) \
+        and isinstance(value.dtype, types.CharSeq) \
+        and value.dtype.count
+
+
+def _is_bytes_scalar(value):
+    return isinstance(value, (types.Bytes, types.CharSeq))
+
+
 def _is_none(value):
     return isinstance(value, types.NoneType)
 
@@ -201,6 +211,25 @@ def _numpy_fallback(op):
         def impl(left, right):
             return np.less_equal(left, right)
     return impl
+
+
+@register_jitable(**JIT_OPTIONS)
+def _bytes_equal_array_array(left, right, invert):
+    if left.size != right.size:
+        raise ValueError('shape mismatch: objects cannot be broadcast to a '
+                         'single shape.  Mismatch is between arg 0 and arg 1.')
+    result = np.empty(left.size, np.bool_)
+    for i in range(left.size):
+        result[i] = (left[i] == right[i]) != invert
+    return result
+
+
+@register_jitable(**JIT_OPTIONS)
+def _bytes_equal_array_scalar(values, value, invert):
+    result = np.empty(values.size, np.bool_)
+    for i in range(values.size):
+        result[i] = (values[i] == value) != invert
+    return result
 
 
 @register_jitable(**JIT_OPTIONS)
@@ -731,6 +760,22 @@ def _overload_equal(left, right, invert):
             stringdtype_release_allocators(allocators)
             return result if use_na else (~result if invert else result)
 
+        return impl
+
+    left_bytes_array = _is_bytes_array(left)
+    right_bytes_array = _is_bytes_array(right)
+    if left_bytes_array and right_bytes_array \
+            and left.ndim == right.ndim == 1:
+        def impl(left, right):
+            return _bytes_equal_array_array(left, right, invert)
+        return impl
+    if left_bytes_array and left.ndim == 1 and _is_bytes_scalar(right):
+        def impl(left, right):
+            return _bytes_equal_array_scalar(left, right, invert)
+        return impl
+    if right_bytes_array and right.ndim == 1 and _is_bytes_scalar(left):
+        def impl(left, right):
+            return _bytes_equal_array_scalar(right, left, invert)
         return impl
 
     registered = try_register_pair(left, right)
