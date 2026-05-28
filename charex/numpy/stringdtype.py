@@ -1,4 +1,4 @@
-"""Experimental NumPy StringDType typing support."""
+"""Numba typing and low-level access support for NumPy StringDType."""
 
 import ctypes
 import importlib
@@ -101,7 +101,7 @@ def _native_stringdtype_helper():
         return None, 0, 0, 0
 
 
-# Keep the CDLL object alive for the function address embedded in generated IR.
+# Keep the CDLL object alive for helper symbols used by generated IR.
 _NATIVE_LIBRARY, _NATIVE_ACQUIRE_ADDR, _NATIVE_ACQUIRE_TWO_ADDR, \
     _NATIVE_RELEASE_TWO_ADDR = _native_stringdtype_helper()
 
@@ -110,6 +110,15 @@ if _STRING_DTYPE is not None:
     _API_SLOTS = _numpy_api_slots()
     llvm.add_symbol('charex_NpyString_load', _API_SLOTS[313])
     llvm.add_symbol('charex_NpyString_release_allocator', _API_SLOTS[318])
+    if _NATIVE_ACQUIRE_ADDR:
+        llvm.add_symbol('charex_stringdtype_acquire_allocator',
+                        _NATIVE_ACQUIRE_ADDR)
+    if _NATIVE_ACQUIRE_TWO_ADDR:
+        llvm.add_symbol('charex_stringdtype_acquire_two_allocators',
+                        _NATIVE_ACQUIRE_TWO_ADDR)
+    if _NATIVE_RELEASE_TWO_ADDR:
+        llvm.add_symbol('charex_stringdtype_release_two_allocators',
+                        _NATIVE_RELEASE_TWO_ADDR)
 else:
     _API_SLOTS = None
 
@@ -1696,9 +1705,9 @@ def stringdtype_acquire_allocator(typingctx, array):
             context, builder, args[0],
         )
         acquire_type = ir.FunctionType(byte_ptr, [byte_ptr])
-        acquire_addr = context.get_constant(types.uintp, _NATIVE_ACQUIRE_ADDR)
-        acquire = builder.inttoptr(
-            acquire_addr, acquire_type.as_pointer(),
+        acquire = cgutils.get_or_insert_function(
+            builder.module, acquire_type,
+            'charex_stringdtype_acquire_allocator',
         )
         return builder.call(
             acquire, [builder.bitcast(array_struct.parent, byte_ptr)],
@@ -1747,10 +1756,9 @@ def stringdtype_acquire_allocators(typingctx, left, right):
         acquire_type = ir.FunctionType(
             ir.VoidType(), [byte_ptr, byte_ptr, byte_ptr.as_pointer()],
         )
-        acquire_addr = context.get_constant(types.uintp,
-                                            _NATIVE_ACQUIRE_TWO_ADDR)
-        acquire = builder.inttoptr(
-            acquire_addr, acquire_type.as_pointer(),
+        acquire = cgutils.get_or_insert_function(
+            builder.module, acquire_type,
+            'charex_stringdtype_acquire_two_allocators',
         )
         builder.call(
             acquire,
@@ -1798,10 +1806,9 @@ def stringdtype_release_allocators(typingctx, allocators):
         release_type = ir.FunctionType(
             ir.VoidType(), [byte_ptr.as_pointer()],
         )
-        release_addr = context.get_constant(types.uintp,
-                                            _NATIVE_RELEASE_TWO_ADDR)
-        release = builder.inttoptr(
-            release_addr, release_type.as_pointer(),
+        release = cgutils.get_or_insert_function(
+            builder.module, release_type,
+            'charex_stringdtype_release_two_allocators',
         )
         builder.call(release, [allocator_array])
 

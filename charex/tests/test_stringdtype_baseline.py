@@ -1,6 +1,7 @@
-"""Baseline tests for future NumPy StringDType support."""
+"""Tests for NumPy StringDType support."""
 
 import numpy as np
+import os
 import pytest
 import subprocess
 import sys
@@ -1060,6 +1061,43 @@ raise SystemExit(1)
     )
 
     assert result.returncode == 0, result.stdout + result.stderr
+
+
+def test_stringdtype_cache_true_reloads_native_helpers(tmp_path):
+    script = tmp_path / 'cached_stringdtype_equal.py'
+    script.write_text(textwrap.dedent(r'''
+        import charex
+        import numpy as np
+        from numba import njit
+
+
+        @njit(nogil=True, cache=True)
+        def equal(left, right):
+            return np.strings.equal(left, right)
+
+
+        values = np.array(['item%012d' % i for i in range(256)],
+                          dtype=np.dtypes.StringDType())
+        result = equal(values, values.copy())
+        if not result.all():
+            raise SystemExit(1)
+    '''), encoding='utf-8')
+
+    env = os.environ.copy()
+    path = os.getcwd()
+    if env.get('PYTHONPATH'):
+        path += os.pathsep + env['PYTHONPATH']
+    env['PYTHONPATH'] = path
+
+    for _ in range(2):
+        result = subprocess.run(
+            [sys.executable, str(script)],
+            check=False,
+            text=True,
+            capture_output=True,
+            env=env,
+        )
+        assert result.returncode == 0, result.stdout + result.stderr
 
 
 def test_stringdtype_array_equal_matches_numpy():
