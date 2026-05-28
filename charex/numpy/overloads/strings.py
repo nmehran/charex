@@ -420,7 +420,7 @@ def _overload_equal(left, right, invert):
                 right_parts = stringdtype_unicode_parts(right_value)
                 result = np.empty(left.size, np.bool_)
                 if left.size == 0:
-                    return ~result if invert else result
+                    return result
                 allocator = stringdtype_acquire_allocator(left)
                 data = stringdtype_data_ptr(left)
                 step = _stringdtype_step(left)
@@ -441,20 +441,34 @@ def _overload_equal(left, right, invert):
                 elif right_parts[1] > _PACKED_STRING_SIZE:
                     right_span = stringdtype_unicode_utf8_span(
                         right_value, right_parts[0], right_parts[1])
-                    for i in range(left.size):
-                        index = i * step
-                        result[i] = stringdtype_equal_utf8_data(
-                            data, index, allocator, right_span[0],
-                            right_span[1])
+                    if invert:
+                        for i in range(left.size):
+                            index = i * step
+                            result[i] = not stringdtype_equal_utf8_data(
+                                data, index, allocator, right_span[0],
+                                right_span[1])
+                    else:
+                        for i in range(left.size):
+                            index = i * step
+                            result[i] = stringdtype_equal_utf8_data(
+                                data, index, allocator, right_span[0],
+                                right_span[1])
                     stringdtype_free_utf8_span(right_span[0], right_span[2])
                 else:
-                    for i in range(left.size):
-                        index = i * step
-                        result[i] = stringdtype_equal_unicode_data(
-                            data, index, allocator, right_value,
-                            right_parts[0], right_parts[1])
+                    if invert:
+                        for i in range(left.size):
+                            index = i * step
+                            result[i] = not stringdtype_equal_unicode_data(
+                                data, index, allocator, right_value,
+                                right_parts[0], right_parts[1])
+                    else:
+                        for i in range(left.size):
+                            index = i * step
+                            result[i] = stringdtype_equal_unicode_data(
+                                data, index, allocator, right_value,
+                                right_parts[0], right_parts[1])
                 stringdtype_release_allocator(allocator)
-                return result if use_na else (~result if invert else result)
+                return result
 
             return impl
 
@@ -507,7 +521,7 @@ def _overload_equal(left, right, invert):
                 left_parts = stringdtype_unicode_parts(left_value)
                 result = np.empty(right.size, np.bool_)
                 if right.size == 0:
-                    return ~result if invert else result
+                    return result
                 allocator = stringdtype_acquire_allocator(right)
                 data = stringdtype_data_ptr(right)
                 step = _stringdtype_step(right)
@@ -528,19 +542,34 @@ def _overload_equal(left, right, invert):
                 elif left_parts[1] > _PACKED_STRING_SIZE:
                     left_span = stringdtype_unicode_utf8_span(
                         left_value, left_parts[0], left_parts[1])
-                    for i in range(right.size):
-                        index = i * step
-                        result[i] = stringdtype_equal_utf8_data(
-                            data, index, allocator, left_span[0], left_span[1])
+                    if invert:
+                        for i in range(right.size):
+                            index = i * step
+                            result[i] = not stringdtype_equal_utf8_data(
+                                data, index, allocator, left_span[0],
+                                left_span[1])
+                    else:
+                        for i in range(right.size):
+                            index = i * step
+                            result[i] = stringdtype_equal_utf8_data(
+                                data, index, allocator, left_span[0],
+                                left_span[1])
                     stringdtype_free_utf8_span(left_span[0], left_span[2])
                 else:
-                    for i in range(right.size):
-                        index = i * step
-                        result[i] = stringdtype_equal_unicode_data(
-                            data, index, allocator, left_value,
-                            left_parts[0], left_parts[1])
+                    if invert:
+                        for i in range(right.size):
+                            index = i * step
+                            result[i] = not stringdtype_equal_unicode_data(
+                                data, index, allocator, left_value,
+                                left_parts[0], left_parts[1])
+                    else:
+                        for i in range(right.size):
+                            index = i * step
+                            result[i] = stringdtype_equal_unicode_data(
+                                data, index, allocator, left_value,
+                                left_parts[0], left_parts[1])
                 stringdtype_release_allocator(allocator)
-                return result if use_na else (~result if invert else result)
+                return result
 
             return impl
 
@@ -557,20 +586,20 @@ def _overload_equal(left, right, invert):
                 size = right.size if left_scalar else left.size
                 result = np.empty(size, np.bool_)
                 if size == 0:
-                    return ~result if invert else result
+                    return result
                 allocator = stringdtype_acquire_allocator(left)
                 data = stringdtype_data_ptr(left)
                 step = 1 if left_scalar else _stringdtype_step(left)
                 if use_na:
                     left_na = stringdtype_na_name(left)
-                for i in range(size):
-                    left_index = 0 if left_scalar else i * step
-                    right_value = _unicode_scalar_value(right[i])
-                    if not stringdtype_unicode_valid(right_value):
-                        stringdtype_release_allocator(allocator)
-                        raise TypeError('Invalid unicode code point found')
-                    right_parts = stringdtype_unicode_parts(right_value)
-                    if use_na:
+                if use_na:
+                    for i in range(size):
+                        left_index = 0 if left_scalar else i * step
+                        right_value = _unicode_scalar_value(right[i])
+                        if not stringdtype_unicode_valid(right_value):
+                            stringdtype_release_allocator(allocator)
+                            raise TypeError('Invalid unicode code point found')
+                        right_parts = stringdtype_unicode_parts(right_value)
                         if invert:
                             result[i] = stringdtype_not_equal_unicode_na_data(
                                 data, left_index, allocator,
@@ -583,12 +612,30 @@ def _overload_equal(left, right, invert):
                                 left_na_kind, left_na[0], left_na[1],
                                 right_value, right_parts[0], right_parts[1],
                                 False)
-                    else:
+                elif invert:
+                    for i in range(size):
+                        left_index = 0 if left_scalar else i * step
+                        right_value = _unicode_scalar_value(right[i])
+                        if not stringdtype_unicode_valid(right_value):
+                            stringdtype_release_allocator(allocator)
+                            raise TypeError('Invalid unicode code point found')
+                        right_parts = stringdtype_unicode_parts(right_value)
+                        result[i] = not stringdtype_equal_unicode_data(
+                            data, left_index, allocator, right_value,
+                            right_parts[0], right_parts[1])
+                else:
+                    for i in range(size):
+                        left_index = 0 if left_scalar else i * step
+                        right_value = _unicode_scalar_value(right[i])
+                        if not stringdtype_unicode_valid(right_value):
+                            stringdtype_release_allocator(allocator)
+                            raise TypeError('Invalid unicode code point found')
+                        right_parts = stringdtype_unicode_parts(right_value)
                         result[i] = stringdtype_equal_unicode_data(
                             data, left_index, allocator, right_value,
                             right_parts[0], right_parts[1])
                 stringdtype_release_allocator(allocator)
-                return result if use_na else (~result if invert else result)
+                return result
 
             return impl
 
@@ -605,20 +652,20 @@ def _overload_equal(left, right, invert):
                 size = left.size
                 result = np.empty(size, np.bool_)
                 if size == 0:
-                    return ~result if invert else result
+                    return result
                 allocator = stringdtype_acquire_allocator(right)
                 data = stringdtype_data_ptr(right)
                 step = 1 if right_scalar else _stringdtype_step(right)
                 if use_na:
                     right_na = stringdtype_na_name(right)
-                for i in range(size):
-                    right_index = 0 if right_scalar else i * step
-                    left_value = _unicode_scalar_value(left[i])
-                    if not stringdtype_unicode_valid(left_value):
-                        stringdtype_release_allocator(allocator)
-                        raise TypeError('Invalid unicode code point found')
-                    left_parts = stringdtype_unicode_parts(left_value)
-                    if use_na:
+                if use_na:
+                    for i in range(size):
+                        right_index = 0 if right_scalar else i * step
+                        left_value = _unicode_scalar_value(left[i])
+                        if not stringdtype_unicode_valid(left_value):
+                            stringdtype_release_allocator(allocator)
+                            raise TypeError('Invalid unicode code point found')
+                        left_parts = stringdtype_unicode_parts(left_value)
                         if invert:
                             result[i] = stringdtype_not_equal_unicode_na_data(
                                 data, right_index, allocator,
@@ -631,12 +678,30 @@ def _overload_equal(left, right, invert):
                                 right_na_kind, right_na[0], right_na[1],
                                 left_value, left_parts[0], left_parts[1],
                                 True)
-                    else:
+                elif invert:
+                    for i in range(size):
+                        right_index = 0 if right_scalar else i * step
+                        left_value = _unicode_scalar_value(left[i])
+                        if not stringdtype_unicode_valid(left_value):
+                            stringdtype_release_allocator(allocator)
+                            raise TypeError('Invalid unicode code point found')
+                        left_parts = stringdtype_unicode_parts(left_value)
+                        result[i] = not stringdtype_equal_unicode_data(
+                            data, right_index, allocator, left_value,
+                            left_parts[0], left_parts[1])
+                else:
+                    for i in range(size):
+                        right_index = 0 if right_scalar else i * step
+                        left_value = _unicode_scalar_value(left[i])
+                        if not stringdtype_unicode_valid(left_value):
+                            stringdtype_release_allocator(allocator)
+                            raise TypeError('Invalid unicode code point found')
+                        left_parts = stringdtype_unicode_parts(left_value)
                         result[i] = stringdtype_equal_unicode_data(
                             data, right_index, allocator, left_value,
                             left_parts[0], left_parts[1])
                 stringdtype_release_allocator(allocator)
-                return result if use_na else (~result if invert else result)
+                return result
 
             return impl
 
@@ -721,7 +786,7 @@ def _overload_equal(left, right, invert):
             size = right.size if left_scalar else left.size
             result = np.empty(size, np.bool_)
             if size == 0:
-                return ~result if invert else result
+                return result
             allocators = stringdtype_acquire_allocators(left, right)
             left_allocator = allocators[0]
             right_allocator = allocators[1]
@@ -732,10 +797,10 @@ def _overload_equal(left, right, invert):
             if use_na:
                 left_na = stringdtype_na_name(left)
                 right_na = stringdtype_na_name(right)
-            for i in range(size):
-                left_index = 0 if left_scalar else i * left_step
-                right_index = 0 if right_scalar else i * right_step
-                if use_na:
+            if use_na:
+                for i in range(size):
+                    left_index = 0 if left_scalar else i * left_step
+                    right_index = 0 if right_scalar else i * right_step
                     if invert:
                         result[i] = stringdtype_not_equal_na_data(
                             left_data, left_index,
@@ -752,13 +817,24 @@ def _overload_equal(left, right, invert):
                             right_index, right_allocator,
                             right_na_kind, right_na[0], right_na[1],
                         )
-                else:
+            elif invert:
+                for i in range(size):
+                    left_index = 0 if left_scalar else i * left_step
+                    right_index = 0 if right_scalar else i * right_step
+                    result[i] = not stringdtype_equal_data(
+                        left_data, left_index, left_allocator,
+                        right_data, right_index, right_allocator,
+                    )
+            else:
+                for i in range(size):
+                    left_index = 0 if left_scalar else i * left_step
+                    right_index = 0 if right_scalar else i * right_step
                     result[i] = stringdtype_equal_data(
                         left_data, left_index, left_allocator,
                         right_data, right_index, right_allocator,
                     )
             stringdtype_release_allocators(allocators)
-            return result if use_na else (~result if invert else result)
+            return result
 
         return impl
 
