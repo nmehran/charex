@@ -4,8 +4,8 @@
 - NumPy: `2.4.6`
 - Numba: `0.65.1`
 - llvmlite: `0.47.0`
-- Size: `50000`
-- Repeat: `5`
+- Size: `250000`
+- Repeat: `7`
 
 Timings are medians from interleaved charex/NumPy calls with `3` calls per timed sample.
 
@@ -15,5 +15,5 @@ Regenerate from the repository root:
 
 ```bash
 python -m pip install -e ".[bench]"
-python charex/benchmarks/matrix.py --size 50000 --repeat 5
+python charex/benchmarks/matrix.py --size 250000 --repeat 7
 ```

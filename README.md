@@ -85,7 +85,7 @@ Regenerate the matrix from the repository root:
 
 ```bash
 python -m pip install -e ".[bench]"
-python charex/benchmarks/matrix.py --size 50000 --repeat 5
+python charex/benchmarks/matrix.py --size 250000 --repeat 7
 ```
 
 ### Comparison Operators
