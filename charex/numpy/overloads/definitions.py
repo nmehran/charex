@@ -580,11 +580,16 @@ def _equal_sub32_unicode_record(chr_array, start,
 
 @register_jitable(**JIT_OPTIONS)
 def _equal_sub32(chr_array, len_chr, size_chr,
-                 cmp_array, len_cmp, size_cmp, as_bytes, rstrip):
+                 cmp_array, len_cmp, size_cmp, as_bytes, rstrip,
+                 invert=False):
     """Native np.char.equal for same-width records below 32 code units."""
     if size_chr != size_cmp or size_chr >= 32:
-        return equal(chr_array, len_chr, size_chr,
-                     cmp_array, len_cmp, size_cmp, rstrip)
+        if invert:
+            return not_equal(chr_array, len_chr, size_chr,
+                             cmp_array, len_cmp, size_cmp, rstrip)
+        else:
+            return equal(chr_array, len_chr, size_chr,
+                         cmp_array, len_cmp, size_cmp, rstrip)
 
     _ensure_comparison_shape(len_chr, len_cmp)
     equal_to = np.empty(len_chr, 'bool')
@@ -592,13 +597,14 @@ def _equal_sub32(chr_array, len_chr, size_chr,
     step_cmp = (len_cmp > 1 and size_chr) or 0
     for i in range(len_chr):
         if as_bytes:
-            equal_to[i] = _equal_sub32_bytes_record(
+            result = _equal_sub32_bytes_record(
                 chr_array, stride, cmp_array, stride_cmp, size_chr, rstrip,
             )
         else:
-            equal_to[i] = _equal_sub32_unicode_record(
+            result = _equal_sub32_unicode_record(
                 chr_array, stride, cmp_array, stride_cmp, size_chr, rstrip,
             )
+        equal_to[i] = not result if invert else result
         stride += size_chr
         stride_cmp += step_cmp
     return equal_to
@@ -616,6 +622,20 @@ def equal_sub32_unicode(chr_array, len_chr, size_chr,
                         cmp_array, len_cmp, size_cmp, rstrip=True):
     return _equal_sub32(chr_array, len_chr, size_chr,
                         cmp_array, len_cmp, size_cmp, False, rstrip)
+
+
+@register_jitable(**JIT_OPTIONS)
+def not_equal_sub32_bytes(chr_array, len_chr, size_chr,
+                          cmp_array, len_cmp, size_cmp, rstrip=True):
+    return _equal_sub32(chr_array, len_chr, size_chr,
+                        cmp_array, len_cmp, size_cmp, True, rstrip, True)
+
+
+@register_jitable(**JIT_OPTIONS)
+def not_equal_sub32_unicode(chr_array, len_chr, size_chr,
+                            cmp_array, len_cmp, size_cmp, rstrip=True):
+    return _equal_sub32(chr_array, len_chr, size_chr,
+                        cmp_array, len_cmp, size_cmp, False, rstrip, True)
 
 
 @register_jitable(**JIT_OPTIONS, locals={'cmp_ord': types.int32})
@@ -665,11 +685,13 @@ def greater(chr_array, len_chr, size_chr,
 
 
 @register_jitable(**JIT_OPTIONS)
-def equal(chr_array, len_chr, size_chr,
-          cmp_array, len_cmp, size_cmp, rstrip=True):
-    """Native Implementation of np.char.equal"""
+def _equal(chr_array, len_chr, size_chr,
+           cmp_array, len_cmp, size_cmp, rstrip, invert):
     if 1 == size_chr == size_cmp and not rstrip:
-        return chr_array == cmp_array
+        if invert:
+            return chr_array != cmp_array
+        else:
+            return chr_array == cmp_array
 
     _ensure_comparison_shape(len_chr, len_cmp)
     equal_to = np.empty(len_chr, 'bool')
@@ -679,12 +701,29 @@ def equal(chr_array, len_chr, size_chr,
     if len_cmp == 1:
         cmp_len = _comparison_record_len(cmp_array, 0, size_cmp, rstrip)
     for i in range(len_chr):
-        equal_to[i] = _equal_records(chr_array, stride, size_chr,
-                                     cmp_array, stride_cmp, size_cmp,
-                                     rstrip, cmp_len)
+        result = _equal_records(chr_array, stride, size_chr,
+                                cmp_array, stride_cmp, size_cmp,
+                                rstrip, cmp_len)
+        equal_to[i] = not result if invert else result
         stride += size_chr
         stride_cmp += step_cmp
     return equal_to
+
+
+@register_jitable(**JIT_OPTIONS)
+def equal(chr_array, len_chr, size_chr,
+          cmp_array, len_cmp, size_cmp, rstrip=True):
+    """Native Implementation of np.char.equal"""
+    return _equal(chr_array, len_chr, size_chr,
+                  cmp_array, len_cmp, size_cmp, rstrip, False)
+
+
+@register_jitable(**JIT_OPTIONS)
+def not_equal(chr_array, len_chr, size_chr,
+              cmp_array, len_cmp, size_cmp, rstrip=True):
+    """Native Implementation of np.char.not_equal"""
+    return _equal(chr_array, len_chr, size_chr,
+                  cmp_array, len_cmp, size_cmp, rstrip, True)
 
 
 @register_jitable(**JIT_OPTIONS)
@@ -697,16 +736,16 @@ def compare_chararrays(chr_array, len_chr, size_chr,
     if len(cmp) == 1:
         cmp_ord = ord(cmp)
         if cmp_ord == 60:
-            return ~greater_equal(chr_array, len_chr, size_chr,
-                                  cmp_array, len_cmp, size_cmp, inv, rstrip)
+            return greater(chr_array, len_chr, size_chr,
+                           cmp_array, len_cmp, size_cmp, not inv, rstrip)
         elif cmp_ord == 62:
             return greater(chr_array, len_chr, size_chr,
                            cmp_array, len_cmp, size_cmp, inv, rstrip)
     elif len(cmp) == 2 and ord(cmp[1]) == 61:
         cmp_ord = ord(cmp[0])
         if cmp_ord == 60:
-            return ~greater(chr_array, len_chr, size_chr,
-                            cmp_array, len_cmp, size_cmp, inv, rstrip)
+            return greater_equal(chr_array, len_chr, size_chr,
+                                 cmp_array, len_cmp, size_cmp, not inv, rstrip)
         elif cmp_ord == 61:
             return equal(chr_array, len_chr, size_chr,
                          cmp_array, len_cmp, size_cmp, rstrip)
@@ -714,8 +753,8 @@ def compare_chararrays(chr_array, len_chr, size_chr,
             return greater_equal(chr_array, len_chr, size_chr,
                                  cmp_array, len_cmp, size_cmp, inv, rstrip)
         elif cmp_ord == 33:
-            return ~equal(chr_array, len_chr, size_chr,
-                          cmp_array, len_cmp, size_cmp, rstrip)
+            return not_equal(chr_array, len_chr, size_chr,
+                             cmp_array, len_cmp, size_cmp, rstrip)
     raise ValueError("comparison must be '==', '!=', '<', '>', '<=', '>='")
 
 

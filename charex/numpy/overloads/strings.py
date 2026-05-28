@@ -61,7 +61,9 @@ from charex.numpy.stringdtype import (
     utf8_startswith_stringdtype_sliced_na_data,
 )
 from charex.numpy.overloads.definitions import (
-    equal, equal_sub32_bytes, equal_sub32_unicode, greater, greater_equal,
+    equal, not_equal, equal_sub32_bytes, equal_sub32_unicode,
+    not_equal_sub32_bytes, not_equal_sub32_unicode,
+    greater, greater_equal,
 )
 from charex.numpy.overloads.char import (
     _CHAR_INFO_FUNCTIONS, ov_char_count, ov_char_endswith, ov_char_find,
@@ -78,6 +80,16 @@ import numpy as np
 
 
 _STRINGS = getattr(np, 'strings', None)
+_NUMPY_VERSION = tuple(int(part) for part in np.__version__.split('.')[:2])
+_NUMPY_LT_2_1 = _NUMPY_VERSION < (2, 1)
+
+
+def _unsupported_stringdtype_loop(op):
+    def impl(value, pattern, start=0, end=None):
+        raise TypeError(
+            f"ufunc '{op}' did not contain a loop with signature matching types")
+
+    return impl
 
 
 def _validate_stringdtype_array(value):
@@ -860,11 +872,15 @@ def _overload_equal(left, right, invert):
             return None
         return _numpy_fallback('not_equal' if invert else 'equal')
 
+    if invert:
+        kernel = equal_kernel(left, right, not_equal, not_equal_sub32_bytes,
+                              not_equal_sub32_unicode)
+    else:
+        kernel = equal_kernel(left, right, equal, equal_sub32_bytes,
+                              equal_sub32_unicode)
     register_left, register_right, left_dim, right_dim = registered
     return equal_dispatch(register_left, register_right, left_dim, right_dim,
-                          equal_kernel(left, right, equal, equal_sub32_bytes,
-                                       equal_sub32_unicode),
-                          False, invert)
+                          kernel, False)
 
 
 def _overload_order(left, right, op):
@@ -1379,6 +1395,11 @@ def _overload_affix(value, pattern, start, end, suffix):
 
             return impl
 
+        if _NUMPY_LT_2_1 and pattern_stringdtype \
+                and (_is_unicode_scalar_like(value) or _is_unicode_array(value)):
+            return _unsupported_stringdtype_loop(
+                'endswith' if suffix else 'startswith')
+
         if _is_unicode_scalar_like(value) and pattern_stringdtype:
             _validate_stringdtype_array(pattern)
             pattern_na_kind = _stringdtype_na_kind(pattern)
@@ -1863,6 +1884,10 @@ def _overload_search(value, pattern, start, end, op):
                 return result
 
             return impl
+
+        if _NUMPY_LT_2_1 and pattern_stringdtype \
+                and (_is_unicode_scalar_like(value) or _is_unicode_array(value)):
+            return _unsupported_stringdtype_loop(op)
 
         if _is_unicode_scalar_like(value) and pattern_stringdtype:
             _validate_stringdtype_array(pattern)

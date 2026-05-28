@@ -12,8 +12,9 @@ from charex.numpy.overloads._shared import (
     register_single as _register_single,
 )
 from charex.numpy.overloads.definitions import (
-    greater_equal, greater, equal,
+    greater_equal, greater, equal, not_equal,
     equal_sub32_bytes, equal_sub32_unicode,
+    not_equal_sub32_bytes, not_equal_sub32_unicode,
     compare_chararrays,
     count, endswith, startswith, find, rfind, index, rindex, str_len,
     str_len_bytes, _str_len_loop,
@@ -173,10 +174,11 @@ def ov_char_equal(x1, x2):
 def ov_char_not_equal(x1, x2):
     register_x1, register_x2, x1_dim, x2_dim = _register_pair(x1, x2)
     return _equal_dispatch(register_x1, register_x2, x1_dim, x2_dim,
-                           _equal_kernel(x1, x2, equal, equal_sub32_bytes,
-                                         equal_sub32_unicode),
-                           True, invert=True,
-                           scalar_as_array=True)
+                           _equal_kernel(
+                               x1, x2, not_equal, not_equal_sub32_bytes,
+                               not_equal_sub32_unicode,
+                           ),
+                           True, scalar_as_array=True)
 
 
 @overload(np.char.greater_equal, **OPTIONS)

@@ -217,23 +217,22 @@ def equal_kernel(left, right, generic, bytes_sub32, unicode_sub32):
 
 
 def equal_dispatch(register_left, register_right, left_dim, right_dim,
-                   equal_impl, rstrip, invert=False, scalar_as_array=False):
+                   kernel, rstrip, scalar_as_array=False):
     left_scalar_like = left_dim <= 0 < right_dim
 
     if left_dim > 0 or right_dim > 0:
         def impl(left, right):
             if left_scalar_like:
-                result = equal_impl(*register_right(right, False),
-                                    *register_left(left, False), rstrip)
+                result = kernel(*register_right(right, False),
+                                *register_left(left, False), rstrip)
             else:
-                result = equal_impl(*register_left(left, False),
-                                    *register_right(right, False), rstrip)
-            return ~result if invert else result
+                result = kernel(*register_left(left, False),
+                                *register_right(right, False), rstrip)
+            return result
     else:
         def impl(left, right):
-            result = equal_impl(*register_left(left, False),
-                                *register_right(right, False), rstrip)[0]
-            result = ~result if invert else result
+            result = kernel(*register_left(left, False),
+                            *register_right(right, False), rstrip)[0]
             return np.array(result) if scalar_as_array else result
     return impl
 
@@ -245,30 +244,32 @@ def order_dispatch(register_left, register_right, left_dim, right_dim,
 
     if op == 'greater_equal':
         kernel = greater_equal_impl
-        invert_result = False
+        reverse_compare = False
     elif op == 'greater':
         kernel = greater_impl
-        invert_result = False
+        reverse_compare = False
     elif op == 'less':
-        kernel = greater_equal_impl
-        invert_result = True
-    else:
         kernel = greater_impl
-        invert_result = True
+        reverse_compare = True
+    else:
+        kernel = greater_equal_impl
+        reverse_compare = True
 
     if left_dim > 0 or right_dim > 0:
         def impl(left, right):
             if left_scalar_like:
                 result = kernel(*register_right(right, False),
-                                *register_left(left, False), True, rstrip)
+                                *register_left(left, False),
+                                not reverse_compare, rstrip)
             else:
                 result = kernel(*register_left(left, False),
-                                *register_right(right, False), False, rstrip)
-            return ~result if invert_result else result
+                                *register_right(right, False),
+                                reverse_compare, rstrip)
+            return result
     else:
         def impl(left, right):
             result = kernel(*register_left(left, False),
-                            *register_right(right, False), False, rstrip)[0]
-            result = ~result if invert_result else result
+                            *register_right(right, False),
+                            reverse_compare, rstrip)[0]
             return np.array(result) if scalar_as_array else result
     return impl

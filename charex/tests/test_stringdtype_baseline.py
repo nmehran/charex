@@ -110,11 +110,24 @@ def strings_impl(impl_name):
     return getattr(StringsInformation(), impl_name)
 
 
+def is_unsupported_ufunc_loop(error):
+    return 'did not contain a loop' in str(error)
+
+
 def assert_same_outcome(implementation, baseline, *args):
     try:
         baseline(*copy_args(args))
-    except Exception:
-        assert_same_exception(implementation, baseline, *args)
+    except Exception as expected:
+        if not is_unsupported_ufunc_loop(expected):
+            assert_same_exception(implementation, baseline, *args)
+            return
+
+        impl_args = copy_args(args)
+        before = copy_args(impl_args)
+        with pytest.raises(Exception) as actual:
+            implementation(*impl_args)
+        assert is_unsupported_ufunc_loop(actual.value)
+        assert_arrays_unchanged(impl_args, before)
     else:
         assert_same(implementation, baseline, *args)
 
@@ -147,8 +160,16 @@ def assert_same_view_exception(implementation, baseline, *args):
 def assert_same_view_outcome(implementation, baseline, *args):
     try:
         baseline(*args)
-    except Exception:
-        assert_same_view_exception(implementation, baseline, *args)
+    except Exception as expected:
+        if not is_unsupported_ufunc_loop(expected):
+            assert_same_view_exception(implementation, baseline, *args)
+            return
+
+        before = copy_args(args)
+        with pytest.raises(Exception) as actual:
+            implementation(*args)
+        assert is_unsupported_ufunc_loop(actual.value)
+        assert_arrays_unchanged(args, before)
     else:
         assert_same_view(implementation, baseline, *args)
 
@@ -255,8 +276,10 @@ def test_stringdtype_zero_dimensional_broadcast_matches_numpy(
     value = np.array('abcabc', dtype=STRING_DTYPE())
     pattern = np.array('a', dtype=STRING_DTYPE())
 
-    assert_same(strings_impl(impl_name), baseline, values, pattern)
-    assert_same(strings_impl(impl_name), baseline, value, patterns)
+    assert_same_outcome(
+        strings_impl(impl_name), baseline, values, pattern)
+    assert_same_outcome(
+        strings_impl(impl_name), baseline, value, patterns)
 
 
 @pytest.mark.parametrize('impl_name, baseline', [
@@ -283,8 +306,10 @@ def test_stringdtype_mixed_unicode_scalar_variants_match_numpy(
     value = scalar_factory('abcabcé🙂')
     pattern = scalar_factory('a')
 
-    assert_same(strings_impl(impl_name), baseline, values, pattern)
-    assert_same(strings_impl(impl_name), baseline, value, patterns)
+    assert_same_outcome(
+        strings_impl(impl_name), baseline, values, pattern)
+    assert_same_outcome(
+        strings_impl(impl_name), baseline, value, patterns)
 
 
 @pytest.mark.parametrize('impl_name, baseline', [
@@ -305,7 +330,8 @@ def test_stringdtype_mixed_zero_dimensional_unicode_nul_matches_numpy(
     pattern = np.array('a\x00x', dtype='U8')
 
     assert_same(strings_impl(impl_name), baseline, values, pattern)
-    assert_same(strings_impl(impl_name), baseline, value, patterns)
+    assert_same_outcome(
+        strings_impl(impl_name), baseline, value, patterns)
 
 
 @pytest.mark.parametrize('impl_name, baseline', [
@@ -333,12 +359,12 @@ def test_stringdtype_mixed_unicode_arrays_match_numpy(
 
     assert_same(strings_impl(impl_name), baseline,
                 values, unicode_patterns)
-    assert_same(strings_impl(impl_name), baseline,
-                unicode_values, patterns)
+    assert_same_outcome(strings_impl(impl_name), baseline,
+                                    unicode_values, patterns)
     assert_same(strings_impl(impl_name), baseline,
                 value, unicode_patterns)
-    assert_same(strings_impl(impl_name), baseline,
-                unicode_values, pattern)
+    assert_same_outcome(strings_impl(impl_name), baseline,
+                                    unicode_values, pattern)
 
 
 @pytest.mark.parametrize('impl_name, baseline', [
@@ -362,8 +388,8 @@ def test_stringdtype_mixed_unicode_array_nul_matches_numpy(
 
     assert_same(strings_impl(impl_name), baseline,
                 values, unicode_patterns)
-    assert_same(strings_impl(impl_name), baseline,
-                unicode_values, patterns)
+    assert_same_outcome(strings_impl(impl_name), baseline,
+                                    unicode_values, patterns)
 
 
 @pytest.mark.parametrize('impl_name, baseline', [
@@ -387,8 +413,8 @@ def test_stringdtype_mixed_noncontiguous_unicode_array_matches_numpy(
 
     assert_same(strings_impl(impl_name), baseline,
                 values, unicode_patterns)
-    assert_same(strings_impl(impl_name), baseline,
-                unicode_values, patterns)
+    assert_same_outcome(strings_impl(impl_name), baseline,
+                                    unicode_values, patterns)
 
 
 @pytest.mark.parametrize('impl_name, baseline', [
@@ -412,8 +438,8 @@ def test_stringdtype_mixed_unicode_array_shape_mismatch_matches_numpy(
 
     assert_same_exception(strings_impl(impl_name), baseline,
                           values, unicode_patterns)
-    assert_same_exception(strings_impl(impl_name), baseline,
-                          unicode_values, patterns)
+    assert_same_outcome(strings_impl(impl_name), baseline,
+                                    unicode_values, patterns)
 
 
 @pytest.mark.parametrize('impl_name, baseline', [
@@ -513,8 +539,8 @@ def test_stringdtype_mixed_unicode_array_invalid_unicode_matches_numpy(
 
     assert_same_exception(strings_impl(impl_name), baseline,
                           values, unicode_values)
-    assert_same_exception(strings_impl(impl_name), baseline,
-                          unicode_values, values)
+    assert_same_outcome(strings_impl(impl_name), baseline,
+                                    unicode_values, values)
 
 
 def test_numpy_stringdtype_strlen_counts_codepoints():
@@ -1542,8 +1568,10 @@ def test_stringdtype_noncontiguous_affix_mixed_python_str_matches_numpy(
         'x', '🙂abc', 'z', 'éfg', 'y', '', 'w', 'abc',
     ])[::-2]
 
-    assert_same_view(getattr(strings, impl_name), baseline, values, scalar)
-    assert_same_view(getattr(strings, impl_name), baseline, scalar, values)
+    assert_same_view_outcome(
+        getattr(strings, impl_name), baseline, values, scalar)
+    assert_same_view_outcome(
+        getattr(strings, impl_name), baseline, scalar, values)
 
 
 @pytest.mark.parametrize('impl_name', [
@@ -1576,8 +1604,10 @@ def test_stringdtype_array_affix_mixed_python_str_matches_numpy(
         '', 'éabc', '🙂abc',
     ])
 
-    assert_same(getattr(strings, impl_name), baseline, values, scalar, *args)
-    assert_same(getattr(strings, impl_name), baseline, scalar, values, *args)
+    assert_same_outcome(
+        getattr(strings, impl_name), baseline, values, scalar, *args)
+    assert_same_outcome(
+        getattr(strings, impl_name), baseline, scalar, values, *args)
 
 
 @pytest.mark.parametrize('impl_name, baseline', [
@@ -1600,10 +1630,10 @@ def test_stringdtype_array_affix_long_mixed_python_str_matches_numpy(
     strings = StringsInformation()
     values = stringdtype_array(values)
 
-    assert_same(getattr(strings, impl_name), baseline,
-                values, scalar, *args)
-    assert_same(getattr(strings, impl_name), baseline,
-                scalar, values, *args)
+    assert_same_outcome(
+        getattr(strings, impl_name), baseline, values, scalar, *args)
+    assert_same_outcome(
+        getattr(strings, impl_name), baseline, scalar, values, *args)
 
 
 @pytest.mark.parametrize('impl_name, baseline', [
@@ -1616,8 +1646,10 @@ def test_stringdtype_array_affix_mixed_python_str_invalid_unicode_matches_numpy(
     strings = StringsInformation()
     values = stringdtype_array(['a', 'b'])
 
-    assert_same_exception(getattr(strings, impl_name), baseline, values, scalar)
-    assert_same_exception(getattr(strings, impl_name), baseline, scalar, values)
+    assert_same_outcome(
+        getattr(strings, impl_name), baseline, values, scalar)
+    assert_same_outcome(
+        getattr(strings, impl_name), baseline, scalar, values)
 
 
 @pytest.mark.parametrize('impl_name, baseline', [
@@ -1911,8 +1943,10 @@ def test_stringdtype_array_search_mixed_python_str_matches_numpy(
         '', 'éfgé', '🙂a🙂',
     ])
 
-    assert_same(getattr(strings, impl_name), baseline, values, scalar, *args)
-    assert_same(getattr(strings, impl_name), baseline, scalar, values, *args)
+    assert_same_outcome(
+        getattr(strings, impl_name), baseline, values, scalar, *args)
+    assert_same_outcome(
+        getattr(strings, impl_name), baseline, scalar, values, *args)
 
 
 @pytest.mark.parametrize('impl_name, baseline', [
@@ -1937,10 +1971,10 @@ def test_stringdtype_array_search_long_mixed_python_str_matches_numpy(
     strings = StringsInformation()
     values = stringdtype_array(values)
 
-    assert_same(getattr(strings, impl_name), baseline,
-                values, scalar, *args)
-    assert_same(getattr(strings, impl_name), baseline,
-                scalar, values, *args)
+    assert_same_outcome(
+        getattr(strings, impl_name), baseline, values, scalar, *args)
+    assert_same_outcome(
+        getattr(strings, impl_name), baseline, scalar, values, *args)
 
 
 @pytest.mark.parametrize('impl_name, baseline', [
@@ -1956,8 +1990,10 @@ def test_stringdtype_array_index_mixed_python_str_matches_numpy(
     value = 'abcabcé🙂'
     pattern = 'a'
 
-    assert_same(getattr(strings, impl_name), baseline, values, pattern, *args)
-    assert_same(getattr(strings, impl_name), baseline, value, patterns, *args)
+    assert_same_outcome(
+        getattr(strings, impl_name), baseline, values, pattern, *args)
+    assert_same_outcome(
+        getattr(strings, impl_name), baseline, value, patterns, *args)
 
 
 @pytest.mark.parametrize('impl_name, baseline', [
@@ -1973,8 +2009,10 @@ def test_stringdtype_array_index_long_mixed_python_str_matches_numpy(
     patterns = stringdtype_array(['a' * 64, 'é' * 32, '🙂' * 16, ''])
     value = 'x' + 'a' * 128 + 'é' * 64 + '🙂' * 32
 
-    assert_same(getattr(strings, impl_name), baseline, values, 'a' * 32)
-    assert_same(getattr(strings, impl_name), baseline, value, patterns)
+    assert_same_outcome(
+        getattr(strings, impl_name), baseline, values, 'a' * 32)
+    assert_same_outcome(
+        getattr(strings, impl_name), baseline, value, patterns)
 
 
 @pytest.mark.parametrize('impl_name, baseline', [
@@ -1987,9 +2025,10 @@ def test_stringdtype_array_index_mixed_python_str_not_found_matches_numpy(
     values = stringdtype_array(['abc', 'def'])
     patterns = stringdtype_array(['a', 'z'])
 
-    assert_same_exception(getattr(strings, impl_name), baseline, values, 'z')
-    assert_same_exception(getattr(strings, impl_name), baseline, 'abc',
-                          patterns)
+    assert_same_outcome(
+        getattr(strings, impl_name), baseline, values, 'z')
+    assert_same_outcome(
+        getattr(strings, impl_name), baseline, 'abc', patterns)
 
 
 @pytest.mark.parametrize('impl_name, baseline', [
@@ -2002,10 +2041,10 @@ def test_stringdtype_array_index_long_mixed_python_str_not_found_matches_numpy(
     values = stringdtype_array(['a' * 128, 'b' * 128])
     patterns = stringdtype_array(['a' * 64, 'z' * 64])
 
-    assert_same_exception(getattr(strings, impl_name), baseline,
-                          values, 'z' * 64)
-    assert_same_exception(getattr(strings, impl_name), baseline,
-                          'a' * 128, patterns)
+    assert_same_outcome(
+        getattr(strings, impl_name), baseline, values, 'z' * 64)
+    assert_same_outcome(
+        getattr(strings, impl_name), baseline, 'a' * 128, patterns)
 
 
 @pytest.mark.parametrize('impl_name, baseline', [
@@ -2021,8 +2060,10 @@ def test_stringdtype_array_search_mixed_python_str_invalid_unicode_matches_numpy
     strings = StringsInformation()
     values = stringdtype_array(['a', 'b'])
 
-    assert_same_exception(getattr(strings, impl_name), baseline, values, scalar)
-    assert_same_exception(getattr(strings, impl_name), baseline, scalar, values)
+    assert_same_outcome(
+        getattr(strings, impl_name), baseline, values, scalar)
+    assert_same_outcome(
+        getattr(strings, impl_name), baseline, scalar, values)
 
 
 @pytest.mark.parametrize('impl_name, baseline', [
