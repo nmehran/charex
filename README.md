@@ -77,7 +77,8 @@ See [docs/release-0.4.md](docs/release-0.4.md) for the release scope.
 
 ## Performance Matrix
 
-Current Numba 0.65.1 `np.char` benchmark artifacts are in
+Current Numba 0.65.1 fixed-width `np.char` and StringDType benchmark artifacts
+are in
 [docs/benchmarks/numba-v-0.65.1](docs/benchmarks/numba-v-0.65.1/).
 
 Regenerate the matrix from the repository root:
@@ -91,17 +92,21 @@ python charex/benchmarks/matrix.py --size 50000 --repeat 5
 
 ![comparison-operators-bytes.png](docs/benchmarks/numba-v-0.65.1/comparison-operators-bytes.png)
 ![comparison-operators-strings.png](docs/benchmarks/numba-v-0.65.1/comparison-operators-strings.png)
+![stringdtype-comparison.png](docs/benchmarks/numba-v-0.65.1/stringdtype-comparison.png)
 
 ### Occurrence Information
 
 ![char-occurrence-bytes.png](docs/benchmarks/numba-v-0.65.1/char-occurrence-bytes.png)
 ![char-occurrence-strings.png](docs/benchmarks/numba-v-0.65.1/char-occurrence-strings.png)
+![stringdtype-occurrence.png](docs/benchmarks/numba-v-0.65.1/stringdtype-occurrence.png)
 
 ### Property Information
 
 ![char-properties-bytes.png](docs/benchmarks/numba-v-0.65.1/char-properties-bytes.png)
 ![char-properties-strings.png](docs/benchmarks/numba-v-0.65.1/char-properties-strings.png)
 ![char-numerics-strings.png](docs/benchmarks/numba-v-0.65.1/char-numerics-strings.png)
+![stringdtype-properties.png](docs/benchmarks/numba-v-0.65.1/stringdtype-properties.png)
+![stringdtype-numerics.png](docs/benchmarks/numba-v-0.65.1/stringdtype-numerics.png)
 
 The previous Numba 0.59 matrix is archived under
 [charex/benchmarks/numba-v-0.59](charex/benchmarks/numba-v-0.59/).

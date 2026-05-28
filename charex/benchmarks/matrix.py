@@ -117,6 +117,111 @@ def jit_isnumeric(values):
     return np.char.isnumeric(values)
 
 
+@njit(nogil=True, cache=True)
+def jit_strings_equal(left, right):
+    return np.strings.equal(left, right)
+
+
+@njit(nogil=True, cache=True)
+def jit_strings_not_equal(left, right):
+    return np.strings.not_equal(left, right)
+
+
+@njit(nogil=True, cache=True)
+def jit_strings_greater(left, right):
+    return np.strings.greater(left, right)
+
+
+@njit(nogil=True, cache=True)
+def jit_strings_greater_equal(left, right):
+    return np.strings.greater_equal(left, right)
+
+
+@njit(nogil=True, cache=True)
+def jit_strings_less(left, right):
+    return np.strings.less(left, right)
+
+
+@njit(nogil=True, cache=True)
+def jit_strings_less_equal(left, right):
+    return np.strings.less_equal(left, right)
+
+
+@njit(nogil=True, cache=True)
+def jit_strings_count(values, sub):
+    return np.strings.count(values, sub)
+
+
+@njit(nogil=True, cache=True)
+def jit_strings_find(values, sub):
+    return np.strings.find(values, sub)
+
+
+@njit(nogil=True, cache=True)
+def jit_strings_rfind(values, sub):
+    return np.strings.rfind(values, sub)
+
+
+@njit(nogil=True, cache=True)
+def jit_strings_startswith(values, sub):
+    return np.strings.startswith(values, sub)
+
+
+@njit(nogil=True, cache=True)
+def jit_strings_endswith(values, sub):
+    return np.strings.endswith(values, sub)
+
+
+@njit(nogil=True, cache=True)
+def jit_strings_str_len(values):
+    return np.strings.str_len(values)
+
+
+@njit(nogil=True, cache=True)
+def jit_strings_isalpha(values):
+    return np.strings.isalpha(values)
+
+
+@njit(nogil=True, cache=True)
+def jit_strings_isalnum(values):
+    return np.strings.isalnum(values)
+
+
+@njit(nogil=True, cache=True)
+def jit_strings_isdigit(values):
+    return np.strings.isdigit(values)
+
+
+@njit(nogil=True, cache=True)
+def jit_strings_islower(values):
+    return np.strings.islower(values)
+
+
+@njit(nogil=True, cache=True)
+def jit_strings_isspace(values):
+    return np.strings.isspace(values)
+
+
+@njit(nogil=True, cache=True)
+def jit_strings_istitle(values):
+    return np.strings.istitle(values)
+
+
+@njit(nogil=True, cache=True)
+def jit_strings_isupper(values):
+    return np.strings.isupper(values)
+
+
+@njit(nogil=True, cache=True)
+def jit_strings_isdecimal(values):
+    return np.strings.isdecimal(values)
+
+
+@njit(nogil=True, cache=True)
+def jit_strings_isnumeric(values):
+    return np.strings.isnumeric(values)
+
+
 COMPARISON_FUNCS = [
     ('equal', jit_equal, np.char.equal),
     ('not_equal', jit_not_equal, np.char.not_equal),
@@ -150,6 +255,50 @@ NUMERIC_STRING_FUNCS = [
     ('isdigit', jit_isdigit, np.char.isdigit),
     ('isnumeric', jit_isnumeric, np.char.isnumeric),
 ]
+
+
+_STRINGS = getattr(np, 'strings', None)
+_STRING_DTYPE = getattr(getattr(np, 'dtypes', None), 'StringDType', None)
+
+if _STRINGS is None:
+    STRINGS_COMPARISON_FUNCS = []
+    STRINGS_OCCURRENCE_FUNCS = []
+    STRINGS_PROPERTY_FUNCS = []
+    STRINGS_NUMERIC_FUNCS = []
+else:
+    STRINGS_COMPARISON_FUNCS = [
+        ('equal', jit_strings_equal, _STRINGS.equal),
+        ('not_equal', jit_strings_not_equal, _STRINGS.not_equal),
+        ('greater', jit_strings_greater, _STRINGS.greater),
+        ('greater_equal', jit_strings_greater_equal, _STRINGS.greater_equal),
+        ('less', jit_strings_less, _STRINGS.less),
+        ('less_equal', jit_strings_less_equal, _STRINGS.less_equal),
+    ]
+
+    STRINGS_OCCURRENCE_FUNCS = [
+        ('count', jit_strings_count, _STRINGS.count),
+        ('find', jit_strings_find, _STRINGS.find),
+        ('rfind', jit_strings_rfind, _STRINGS.rfind),
+        ('startswith', jit_strings_startswith, _STRINGS.startswith),
+        ('endswith', jit_strings_endswith, _STRINGS.endswith),
+    ]
+
+    STRINGS_PROPERTY_FUNCS = [
+        ('str_len', jit_strings_str_len, _STRINGS.str_len),
+        ('isalpha', jit_strings_isalpha, _STRINGS.isalpha),
+        ('isalnum', jit_strings_isalnum, _STRINGS.isalnum),
+        ('isdigit', jit_strings_isdigit, _STRINGS.isdigit),
+        ('islower', jit_strings_islower, _STRINGS.islower),
+        ('isspace', jit_strings_isspace, _STRINGS.isspace),
+        ('istitle', jit_strings_istitle, _STRINGS.istitle),
+        ('isupper', jit_strings_isupper, _STRINGS.isupper),
+    ]
+
+    STRINGS_NUMERIC_FUNCS = [
+        ('isdecimal', jit_strings_isdecimal, _STRINGS.isdecimal),
+        ('isdigit', jit_strings_isdigit, _STRINGS.isdigit),
+        ('isnumeric', jit_strings_isnumeric, _STRINGS.isnumeric),
+    ]
 
 
 TIMING_BATCH = 3
@@ -272,38 +421,79 @@ def byte_values(size):
     }
 
 
-def comparison_records(kind, values, repeat):
+def stringdtype_values(size):
+    dtype = _STRING_DTYPE()
+    base16 = np.array(['item%012d' % i for i in range(size)], dtype=dtype)
+    same16 = base16.copy()
+    first16 = np.array(['X' + value[1:] for value in base16], dtype=dtype)
+    last16 = np.array([value[:-1] + 'X' for value in base16], dtype=dtype)
+    trail16 = np.array([value[:8] + ' ' * 8 for value in base16],
+                       dtype=dtype)
+
+    base64 = np.array([('item%012d' % i).ljust(64, 'a')
+                       for i in range(size)], dtype=dtype)
+    last64 = np.array([value[:-1] + 'X' for value in base64], dtype=dtype)
+
+    occurrence = np.array(['alpha beta alpha %06d' % i
+                           for i in range(size)], dtype=dtype)
+    properties = np.resize(
+        np.array(['Alpha', 'alpha', 'abc123', 'Title Case', 'UPPER',
+                  'lower', ' ', '', 'αβγ', '١٢٣', 'Ⅷ', '一二'],
+                 dtype=dtype),
+        size,
+    )
+    numerics = np.resize(
+        np.array(['123', '١٢٣', 'Ⅷ', '一二', 'abc', '', '3.14'],
+                 dtype=dtype),
+        size,
+    )
+    return {
+        'comparison': [
+            ('equal16', base16, same16),
+            ('first16', base16, first16),
+            ('last16', base16, last16),
+            ('trail16', trail16, base16),
+            ('last64', base64, last64),
+        ],
+        'occurrence': occurrence,
+        'properties': properties,
+        'numerics': numerics,
+    }
+
+
+def comparison_records(kind, values, repeat, funcs=COMPARISON_FUNCS):
     records = []
-    for method, jit_func, numpy_func in COMPARISON_FUNCS:
+    for method, jit_func, numpy_func in funcs:
         for case, left, right in values['comparison']:
             records.append(bench('comparison', kind, method, case,
                                  jit_func, numpy_func, (left, right), repeat))
     return records
 
 
-def occurrence_records(kind, values, repeat):
-    sub = 'alpha' if kind == 'strings' else b'alpha'
+def occurrence_records(kind, values, repeat, funcs=OCCURRENCE_FUNCS, sub=None):
+    if sub is None:
+        sub = 'alpha' if kind != 'bytes' else b'alpha'
     records = []
-    for method, jit_func, numpy_func in OCCURRENCE_FUNCS:
+    for method, jit_func, numpy_func in funcs:
         records.append(bench('occurrence', kind, method, 'hit',
                              jit_func, numpy_func,
                              (values['occurrence'], sub), repeat))
     return records
 
 
-def property_records(kind, values, repeat):
+def property_records(kind, values, repeat, funcs=PROPERTY_FUNCS):
     records = []
-    for method, jit_func, numpy_func in PROPERTY_FUNCS:
+    for method, jit_func, numpy_func in funcs:
         records.append(bench('properties', kind, method, 'mixed',
                              jit_func, numpy_func,
                              (values['properties'],), repeat))
     return records
 
 
-def numeric_records(values, repeat):
+def numeric_records(values, repeat, kind='strings', funcs=NUMERIC_STRING_FUNCS):
     records = []
-    for method, jit_func, numpy_func in NUMERIC_STRING_FUNCS:
-        records.append(bench('numerics', 'strings', method, 'mixed',
+    for method, jit_func, numpy_func in funcs:
+        records.append(bench('numerics', kind, method, 'mixed',
                              jit_func, numpy_func,
                              (values['numerics'],), repeat))
     return records
@@ -453,6 +643,18 @@ def write_plots(records, output_dir, size, repeat):
                     f'charex {group} {kind} ({title_suffix})',
                 ))
 
+    for group in ('comparison', 'occurrence', 'properties'):
+        subset = [
+            record for record in records
+            if record['group'] == group and record['kind'] == 'stringdtype'
+        ]
+        if subset:
+            filename = f'stringdtype-{group}.png'
+            written.append(write_plot(
+                subset, output_dir, filename,
+                f'charex StringDType {group} ({title_suffix})',
+            ))
+
     numerics = [
         record for record in records
         if record['group'] == 'numerics' and record['kind'] == 'strings'
@@ -462,11 +664,26 @@ def write_plots(records, output_dir, size, repeat):
             numerics, output_dir, 'char-numerics-strings.png',
             f'charex numeric string predicates ({title_suffix})',
         ))
+    stringdtype_numerics = [
+        record for record in records
+        if record['group'] == 'numerics' and record['kind'] == 'stringdtype'
+    ]
+    if stringdtype_numerics:
+        written.append(write_plot(
+            stringdtype_numerics, output_dir, 'stringdtype-numerics.png',
+            f'charex StringDType numeric predicates ({title_suffix})',
+        ))
     return written
 
 
 def write_readme(output_dir, size, repeat):
     output_path = output_dir / 'README.md'
+    stringdtype = ''
+    if _STRINGS is not None and _STRING_DTYPE is not None:
+        stringdtype = (
+            '\nThis matrix includes fixed-width `np.char` inputs and '
+            'NumPy 2.x `StringDType` inputs through `np.strings`.\n'
+        )
     output_path.write_text(
         '# charex benchmark matrix\n\n'
         f'- Python: `{python_version()}`\n'
@@ -476,7 +693,8 @@ def write_readme(output_dir, size, repeat):
         f'- Size: `{size}`\n'
         f'- Repeat: `{repeat}`\n\n'
         f'Timings are medians from interleaved charex/NumPy calls with '
-        f'`{TIMING_BATCH}` calls per timed sample.\n\n'
+        f'`{TIMING_BATCH}` calls per timed sample.\n'
+        f'{stringdtype}\n'
         'Regenerate from the repository root:\n\n'
         '```bash\n'
         'python -m pip install -e ".[bench]"\n'
@@ -509,6 +727,16 @@ def main():
     records.extend(property_records('strings', strings, args.repeat))
     records.extend(property_records('bytes', bytes_, args.repeat))
     records.extend(numeric_records(strings, args.repeat))
+    if _STRINGS is not None and _STRING_DTYPE is not None:
+        stringdtype = stringdtype_values(args.size)
+        records.extend(comparison_records(
+            'stringdtype', stringdtype, args.repeat, STRINGS_COMPARISON_FUNCS))
+        records.extend(occurrence_records(
+            'stringdtype', stringdtype, args.repeat, STRINGS_OCCURRENCE_FUNCS))
+        records.extend(property_records(
+            'stringdtype', stringdtype, args.repeat, STRINGS_PROPERTY_FUNCS))
+        records.extend(numeric_records(
+            stringdtype, args.repeat, 'stringdtype', STRINGS_NUMERIC_FUNCS))
 
     print(f'wrote {write_csv(records, args.output_dir, args.size, args.repeat)}')
     for path in write_plots(records, args.output_dir, args.size, args.repeat):

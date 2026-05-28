@@ -51,3 +51,10 @@ N-D/broadcasting work begins.
 `0.5.0` is reserved for the shape/layout release: fixed-width and StringDType
 N-D same-shape support, general broadcasting, and the corresponding audit and
 benchmark refresh.
+
+## Benchmarks
+
+The Numba 0.65.1 benchmark matrix in
+[docs/benchmarks/numba-v-0.65.1](benchmarks/numba-v-0.65.1/) includes
+fixed-width `np.char` inputs and NumPy 2.x `StringDType` inputs through
+`np.strings`.

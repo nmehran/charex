@@ -9,6 +9,8 @@
 
 Timings are medians from interleaved charex/NumPy calls with `3` calls per timed sample.
 
+This matrix includes fixed-width `np.char` inputs and NumPy 2.x `StringDType` inputs through `np.strings`.
+
 Regenerate from the repository root:
 
 ```bash
