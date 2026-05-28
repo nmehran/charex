@@ -543,6 +543,7 @@ def _set_log_ticks(axis, values, ratio=False):
 
     axis.set_yscale('log')
     lower, upper = axis.get_ylim()
+    max_ticks = 5
 
     def candidate_ticks(multiples):
         ticks = []
@@ -554,29 +555,40 @@ def _set_log_ticks(axis, values, ratio=False):
                     ticks.append(value)
         return ticks
 
+    def rounded_ticks():
+        span = upper - lower
+        if span <= 0:
+            return []
+        target_step = span / (max_ticks - 1)
+        magnitude = 10.0 ** np.floor(np.log10(target_step))
+        for unit in (1, 2, 2.5, 5, 10):
+            step = unit * magnitude
+            if step >= target_step:
+                break
+        ticks = []
+        value = np.ceil(lower / step) * step
+        while value <= upper:
+            if value > 0:
+                ticks.append(float(value))
+            value += step
+        return ticks
+
+    def limit_ticks(ticks):
+        ticks = sorted(set(ticks))
+        if len(ticks) <= max_ticks:
+            return ticks
+        indexes = np.linspace(0, len(ticks) - 1, max_ticks)
+        return [ticks[int(round(index))] for index in indexes]
+
     ticks = candidate_ticks((1, 2, 3, 4, 5, 10))
     if ratio and len(ticks) < 4:
         ticks = candidate_ticks(
             (1, 1.1, 1.2, 1.25, 1.3, 1.4, 1.5, 1.75,
              2, 2.5, 3, 4, 5, 7.5, 10)
         )
-    if ratio and len(ticks) < 4:
-        step = (upper - lower) / 3
-        if step > 0:
-            magnitude = 10.0 ** np.floor(np.log10(step))
-            for unit in (1, 2, 2.5, 5, 10):
-                nice_step = unit * magnitude
-                if nice_step >= step:
-                    break
-            start = np.ceil(lower / nice_step) * nice_step
-            value = start
-            while value <= upper:
-                if value > 0:
-                    ticks.append(value)
-                value += nice_step
-    if not ticks:
-        ticks = [value for value in values if value > 0]
-    axis.set_yticks(sorted(set(ticks)))
+    if len(ticks) < 4:
+        ticks = rounded_ticks()
+    axis.set_yticks(limit_ticks(ticks))
     formatter = _format_ratio_tick if ratio else _format_log_tick
     axis.yaxis.set_major_formatter(FuncFormatter(formatter))
     axis.yaxis.set_minor_formatter(NullFormatter())
