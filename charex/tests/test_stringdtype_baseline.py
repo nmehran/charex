@@ -17,10 +17,20 @@ from charex.tests.support import (
 )
 
 
-STRINGS = getattr(np, 'strings', None)
+class _MissingStrings:
+    def __getattr__(self, name):
+        def missing(*args, **kwargs):
+            raise RuntimeError('np.strings is unavailable')
+
+        missing.__name__ = name
+        return missing
+
+
+_NUMPY_STRINGS = getattr(np, 'strings', None)
+STRINGS = _NUMPY_STRINGS if _NUMPY_STRINGS is not None else _MissingStrings()
 STRING_DTYPE = getattr(getattr(np, 'dtypes', None), 'StringDType', None)
 pytestmark = pytest.mark.skipif(
-    STRINGS is None or STRING_DTYPE is None,
+    _NUMPY_STRINGS is None or STRING_DTYPE is None,
     reason='StringDType requires NumPy 2.x',
 )
 
