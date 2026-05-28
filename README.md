@@ -10,9 +10,9 @@ import charex
 ```
 
 The implementation aims to match NumPy behavior exactly while balancing strong
-fixed-width string performance with a compact code surface. Fast paths are kept
-when they are broadly useful and still leave the implementation simple enough to
-review.
+performance for fixed-width strings and NumPy 2.x `StringDType`. Fast paths are
+kept when they are broadly useful and still leave the implementation
+reviewable.
 
 ## Compatibility
 
