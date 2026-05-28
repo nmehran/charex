@@ -60,8 +60,20 @@ Additional `np.char` operation:
 
 - `compare_chararrays`
 
-Inputs may be scalars or one-dimensional C-contiguous arrays of fixed-width `S`
-or `U` dtype. NumPy 2.x `StringDType` is not supported.
+Fixed-width `S`/`U` inputs may be scalars, 0-D arrays, or 1-D arrays,
+including contiguous, read-only, positive-stride, negative-stride,
+zero-stride, and empty views.
+
+On NumPy 2.x, `np.strings` also supports `StringDType` inputs for the same
+read-only operation catalog. The supported `StringDType` shape scope is scalar,
+0-D, and 1-D arrays, including strided views. Default `StringDType()` and
+`StringDType(na_object=...)` variants are supported with NumPy-matching
+operation-specific null behavior.
+
+N-D arrays, general broadcasting, and transformation/output-producing string
+operations are not part of this release.
+
+See [docs/release-0.4.md](docs/release-0.4.md) for the release scope.
 
 ## Performance Matrix
 

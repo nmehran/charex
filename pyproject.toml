@@ -4,8 +4,8 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "charex"
-version = "0.1.0"
-description = "Numba overloads for NumPy fixed-width string operations"
+version = "0.4.0"
+description = "Numba overloads for NumPy string operations"
 readme = "README.md"
 requires-python = ">=3.10,<3.15"
 license = "BSD-2-Clause"
